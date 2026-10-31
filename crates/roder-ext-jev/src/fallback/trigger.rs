@@ -17,7 +17,8 @@
 //!
 //! Never when a different driver does not fix the cause, and never as a way
 //! around a stop that protects the user: `needs_input` (a value the goal
-//! lacks), `needs_confirmation` (the irreversible-action gate),
+//! lacks), `needs_login` (a sign-in only the user can make),
+//! `needs_confirmation` (the irreversible-action gate),
 //! `access_denied` (a bot wall, a CAPTCHA, a refusal), a page that did not
 //! load, a page outside the allowed origins, a confirm or prompt Jev
 //! declined, a provider that could not be reached, a key, billing or other
@@ -193,6 +194,7 @@ mod tests {
         for status in [
             JevStatus::Done,
             JevStatus::NeedsInput,
+            JevStatus::NeedsLogin,
             JevStatus::NeedsConfirmation,
             JevStatus::AccessDenied,
             JevStatus::TimedOut,
@@ -319,6 +321,7 @@ mod tests {
             JevStatus::Unavailable,
             JevStatus::BudgetExceeded,
             JevStatus::NeedsInput,
+            JevStatus::NeedsLogin,
             JevStatus::NeedsConfirmation,
             JevStatus::AccessDenied,
         ] {

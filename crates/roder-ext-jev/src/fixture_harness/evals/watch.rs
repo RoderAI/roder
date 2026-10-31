@@ -38,7 +38,8 @@ pub(crate) struct Lap {
 /// How a settle ended: the page's own `{reason, waited_ms}`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct Settled {
-    /// `quiet`, `listbox`, `cap`, or `unanswered` when the page gave none.
+    /// `quiet`, `listbox`, `response` (it waited on a request the input
+    /// started), `cap`, or `unanswered` when the page gave none.
     pub(crate) reason: String,
     pub(crate) waited_ms: u64,
 }

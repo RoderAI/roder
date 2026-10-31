@@ -302,6 +302,7 @@ mod consent_tests;
 mod cover_tests;
 mod decision_fallback_live;
 mod decision_fallback_tests;
+mod decision_request_tests;
 mod dialog_tests;
 mod digest_tests;
 mod evals;
@@ -337,6 +338,7 @@ mod tests;
 mod toggle_tests;
 mod twin_tests;
 mod uncover_tests;
+mod wall_tests;
 
 #[cfg(test)]
 mod completion_tests;

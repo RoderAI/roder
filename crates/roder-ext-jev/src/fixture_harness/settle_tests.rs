@@ -1,5 +1,6 @@
 //! The in-page settle against pages that are static, render late from an
-//! XHR, spin forever, or never go quiet. Timings are written as JSONL to
+//! XHR or fetch, spin forever, never go quiet, or only name a loader in a
+//! class. Timings are written as JSONL to
 //! `target/jev-fixtures/settle_timing.jsonl`; run with `--nocapture` to see
 //! the medians.
 
@@ -43,10 +44,9 @@ struct Scenario {
     label: &'static str,
     on_open: &'static str,
     on_click: &'static str,
-    /// False where drawing in time depends on the machine: a reply with no
-    /// indicator is only waited for while it lands inside the quiet window.
-    must_draw: bool,
     floor_ms: f64,
+    /// The most the settle may take, where a fast settle is the point.
+    settle_ceiling_ms: f64,
 }
 
 /// `SETTLE_CAP` plus room for the DevTools round trips on a busy machine.
@@ -107,8 +107,8 @@ async fn settle_waits_for_late_renders_and_is_bounded() {
             label: "Show note",
             on_open: "Nothing yet",
             on_click: "Note shown",
-            must_draw: true,
             floor_ms: 190.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
         },
         // A link whose server answers after 400 ms: the old document's wait
         // dies with it and carries on in the new one.
@@ -117,28 +117,53 @@ async fn settle_waits_for_late_renders_and_is_bounded() {
             label: "Slow landing",
             on_open: "Nothing yet",
             on_click: "You arrived.",
-            must_draw: true,
             floor_ms: 390.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
         },
-        // A loading indicator holds the settle past the quiet window.
+        // A declared loading indicator holds the settle past the quiet
+        // window.
         Scenario {
             page: "settle-xhr.html?latency=600",
             label: "Load results",
             on_open: "Search results",
             on_click: "3 results loaded",
-            must_draw: true,
             floor_ms: 590.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
         },
-        // No indicator: a reply inside the quiet window is still waited for,
-        // when it is handled in time. Under load its handler can queue past
-        // the window, so only the window itself is a floor.
+        // No indicator: the page stays quiet and unchanged until the reply,
+        // so the request the click started holds the settle, however long
+        // inside the cap it takes, over XHR or fetch.
         Scenario {
             page: "settle-xhr.html?latency=150&indicator=0",
             label: "Load results",
             on_open: "Search results",
             on_click: "3 results loaded",
-            must_draw: false,
             floor_ms: 190.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
+        },
+        Scenario {
+            page: "settle-xhr.html?latency=600&indicator=0",
+            label: "Load results",
+            on_open: "Search results",
+            on_click: "3 results loaded",
+            floor_ms: 590.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
+        },
+        Scenario {
+            page: "settle-xhr.html?latency=1000&indicator=0&transport=fetch",
+            label: "Load results",
+            on_open: "Search results",
+            on_click: "3 results loaded",
+            floor_ms: 990.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
+        },
+        Scenario {
+            page: "settle-xhr.html?latency=1500&indicator=0",
+            label: "Load results",
+            on_open: "Search results",
+            on_click: "3 results loaded",
+            floor_ms: 1490.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
         },
         // An SPA that loads its content on start is drawn by the first read.
         Scenario {
@@ -146,8 +171,8 @@ async fn settle_waits_for_late_renders_and_is_bounded() {
             label: "Load results",
             on_open: "3 results loaded",
             on_click: "3 results loaded",
-            must_draw: true,
             floor_ms: 390.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
         },
         // A spinner that never stops is ignored after 1.5 s.
         Scenario {
@@ -155,8 +180,19 @@ async fn settle_waits_for_late_renders_and_is_bounded() {
             label: "Search",
             on_open: "Endless search",
             on_click: "Endless search",
-            must_draw: true,
             floor_ms: 1490.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
+        },
+        // Class names that say loader, skeleton or spinner are not an
+        // indicator: this idle page used to hold every settle for the 1.5 s
+        // loading grace.
+        Scenario {
+            page: "settle-loader-class.html",
+            label: "Show note",
+            on_open: "Nothing yet",
+            on_click: "Note shown",
+            floor_ms: 190.0,
+            settle_ceiling_ms: 1200.0,
         },
         // A page that never goes quiet pays the 2.5 s cap. The floor sits
         // well under it but above the loading grace: a renderer stalled for
@@ -167,8 +203,8 @@ async fn settle_waits_for_late_renders_and_is_bounded() {
             label: "Refresh",
             on_open: "Not refreshed",
             on_click: "Refreshed",
-            must_draw: true,
             floor_ms: 2000.0,
+            settle_ceiling_ms: SETTLE_CEILING_MS,
         },
     ];
     let mut all = Vec::new();
@@ -194,9 +230,9 @@ async fn settle_waits_for_late_renders_and_is_bounded() {
         .zip(scenarios.iter().flat_map(|scenario| [scenario; RUNS]))
     {
         assert!(row.open_rendered, "{row:?}");
-        assert!(row.rendered || !scenario.must_draw, "{row:?}");
+        assert!(row.rendered, "{row:?}");
         assert!(click_to_read(row) >= scenario.floor_ms, "{row:?}");
-        assert!(row.settle_ms < SETTLE_CEILING_MS, "{row:?}");
+        assert!(row.settle_ms < scenario.settle_ceiling_ms, "{row:?}");
     }
 }
 
@@ -263,4 +299,99 @@ async fn a_page_that_never_goes_quiet_stops_at_the_cap() {
         elapsed.as_secs_f64() * 1000.0 < SETTLE_CEILING_MS,
         "{elapsed:?}"
     );
+}
+
+/// Click `label` on `page` and settle, returning the settle's reply, how long
+/// it took, and the read after it.
+async fn click_and_settle(harness: &Harness, page: &str, label: &str) -> (Value, Duration, Value) {
+    let mut tab = harness.open(page).await.unwrap();
+    let observation = tab.observe().await.unwrap();
+    let action = find(&observation, "click", label)
+        .unwrap_or_else(|| panic!("{label} on {page}: {observation:#}"))
+        .clone();
+    tab.act(&action, &observation, None, Duration::from_millis(100))
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let outcome = tab.settle().await.unwrap();
+    let took = started.elapsed();
+    let next = tab.observe().await.unwrap();
+    tab.close().await.ok();
+    (outcome, took, next)
+}
+
+/// A click answered over XHR with no indicator: the settle says it waited
+/// for the response, and the read after it shows the results.
+#[tokio::test]
+async fn a_quiet_page_waits_for_the_request_its_click_started() {
+    let harness = harness_or_skip!();
+    let (outcome, _, next) = click_and_settle(
+        &harness,
+        "settle-xhr.html?latency=900&indicator=0",
+        "Load results",
+    )
+    .await;
+    assert_eq!(outcome["reason"], "response", "{outcome}");
+    assert!(outcome["waited_ms"].as_u64().unwrap() >= 850, "{outcome}");
+    assert!(outcome.get("unchanged").is_none(), "{outcome}");
+    assert!(text(&next).contains("3 results loaded"), "{next:#}");
+}
+
+/// A page that showed its own reaction, even one only a class names as
+/// loading, is read as it stands: neither its open request nor the class
+/// holds the settle.
+#[tokio::test]
+async fn a_page_that_reacted_is_not_held_for_its_request() {
+    let harness = harness_or_skip!();
+    let (outcome, took, next) = click_and_settle(
+        &harness,
+        "settle-xhr.html?latency=2000&indicator=class",
+        "Load results",
+    )
+    .await;
+    assert_eq!(outcome["reason"], "quiet", "{outcome}");
+    assert!(took < Duration::from_millis(1200), "{took:?} {outcome}");
+    assert!(text(&next).contains("Loading results"), "{next:#}");
+}
+
+/// A request the page started before the input is not the input's: a click
+/// that changes nothing settles at quiet, not when that request answers.
+#[tokio::test]
+async fn a_request_open_before_the_input_does_not_hold_the_settle() {
+    let harness = harness_or_skip!();
+    let mut page = harness
+        .open("settle-xhr.html?latency=2000&indicator=0")
+        .await
+        .unwrap();
+    page.evaluate("fetch('/pages/settle-data.html?delay=3000'); true")
+        .await
+        .unwrap();
+    let observation = page.observe().await.unwrap();
+    let idle = find(&observation, "click", "Check again")
+        .unwrap_or_else(|| panic!("{observation:#}"))
+        .clone();
+    page.act(&idle, &observation, None, Duration::from_millis(100))
+        .await
+        .unwrap();
+    let started = Instant::now();
+    let outcome = page.settle().await.unwrap();
+    assert_eq!(outcome["reason"], "quiet", "{outcome}");
+    assert!(started.elapsed() < Duration::from_millis(1200), "{outcome}");
+}
+
+/// A request the click started that never answers in time ends the settle
+/// at the cap, not later.
+#[tokio::test]
+async fn a_request_that_never_answers_stops_at_the_cap() {
+    let harness = harness_or_skip!();
+    let (outcome, took, next) = click_and_settle(
+        &harness,
+        "settle-xhr.html?latency=6000&indicator=0",
+        "Load results",
+    )
+    .await;
+    assert_eq!(outcome["reason"], "cap", "{outcome}");
+    assert!(took >= Duration::from_millis(2400), "{took:?}");
+    assert!(took.as_secs_f64() * 1000.0 < SETTLE_CEILING_MS, "{took:?}");
+    assert!(!text(&next).contains("3 results loaded"), "{next:#}");
 }

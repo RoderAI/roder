@@ -56,7 +56,8 @@ async fn activation_correction_keeps_target_probabilities_gate_and_both_usages()
     assert_eq!(decision.choice, "e1");
     assert_eq!(decision.target.as_deref(), Some("1"));
     assert!((decision.confidence - 0.64).abs() < 1e-9);
-    assert_eq!(decision.target_confidence, Some(0.97));
+    // The page's only target is answered locally, never asked.
+    assert_eq!(decision.target_confidence, Some(1.0));
     assert_eq!(
         decision.probabilities,
         Map::from_iter([("e1".into(), json!(1.0))])
@@ -128,7 +129,13 @@ async fn activation_audit_ignores_missing_unused_targets_and_non_done_operations
         .as_object_mut()
         .unwrap()
         .remove("click_target");
-    let (client, transport, page) = setup(vec![Ok(reply)]);
+    let (client, transport, mut page) = setup(vec![Ok(reply)]);
+    // Two targets, so the target choice is the service's to answer (a single
+    // one is answered locally) and its answer can be missing.
+    page["actions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"id":"e2","kind":"click","node":4,"role":"button","label":"Cancel"}));
     assert_eq!(
         client.choose(&page, "Submit", &[]).await.unwrap().operation,
         "DONE"

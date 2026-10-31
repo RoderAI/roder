@@ -17,9 +17,9 @@
 //! - `off`: Jev's result as it was.
 //!
 //! Either way the fallback inherits Jev's rules ([`guard`]) and never runs
-//! after `needs_input`, `needs_confirmation`, `access_denied` or a page that
-//! did not load: a different driver does not fix those, and it must never
-//! be a way around a block or a confirmation.
+//! after `needs_input`, `needs_login`, `needs_confirmation`, `access_denied`
+//! or a page that did not load: a different driver does not fix those, and
+//! it must never be a way around a block or a confirmation.
 
 pub(crate) mod guard;
 pub(crate) mod handover;

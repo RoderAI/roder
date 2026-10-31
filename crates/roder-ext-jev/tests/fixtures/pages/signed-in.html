@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Signed in</title></head>
+<body>
+  <h1>Signed in</h1>
+  <!-- Shows back the address it was asked for, as typed into it (the query
+       string, percent-encoded) and as JSON (decoded, then escaped), the way
+       a debug page or an error echo would. -->
+  <p id="raw"></p>
+  <p id="json"></p>
+  <a id="again" href="#">Open this address again</a>
+  <script>
+    document.getElementById('raw').textContent = 'You asked for ' + location.search;
+    const params = Object.fromEntries(new URLSearchParams(location.search));
+    document.getElementById('json').textContent = 'Parameters: ' + JSON.stringify(params);
+    document.getElementById('again').href = location.href;
+  </script>
+</body>
+</html>

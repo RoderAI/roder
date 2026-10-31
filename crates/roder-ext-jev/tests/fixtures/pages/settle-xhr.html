@@ -4,25 +4,40 @@
 <body>
   <h1>Search results</h1>
   <button type="button" id="load">Load results</button>
+  <!-- Does nothing: a click that neither changes the page nor asks. -->
+  <button type="button" id="idle">Check again</button>
   <div id="status"></div>
   <ul id="results"></ul>
   <script>
-    // `?latency=<ms>` is the server's reply latency; `?indicator=0` renders
-    // nothing while the request is in flight, like a page with no spinner;
-    // `?autoload=1` also loads once on its own at start, like an SPA.
+    // `?latency=<ms>` is the server's reply latency; `?autoload=1` also
+    // loads once on its own at start, like an SPA; `?transport=fetch` asks
+    // with fetch instead of XMLHttpRequest. `?indicator=` is what shows while
+    // the request is in flight: a declared progressbar (the default), `0` for
+    // nothing, like a page with no spinner, or `class` for a box whose only
+    // sign of loading is its class name.
     const query = new URLSearchParams(location.search);
     const latency = Number(query.get('latency') || 600);
-    const indicator = query.get('indicator') !== '0';
+    const indicator = query.get('indicator') || 'progressbar';
+    const url = '/pages/settle-data.html?delay=' + latency;
+    const request = query.get('transport') === 'fetch'
+      ? () => fetch(url).then(reply => reply.text())
+      : () => new Promise(resolve => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', url);
+          xhr.onload = () => resolve(xhr.responseText);
+          xhr.send();
+        });
     const load = () => {
       const status = document.getElementById('status');
-      if (indicator) status.innerHTML = '<div class="loading">Loading results</div>';
-      const request = new XMLHttpRequest();
-      request.open('GET', '/pages/settle-data.html?delay=' + latency);
-      request.onload = () => {
-        document.getElementById('results').innerHTML = request.responseText;
+      if (indicator === 'progressbar') {
+        status.innerHTML = '<div role="progressbar" aria-label="Loading">Loading results</div>';
+      } else if (indicator === 'class') {
+        status.innerHTML = '<div class="loading">Loading results</div>';
+      }
+      request().then(html => {
+        document.getElementById('results').innerHTML = html;
         status.textContent = '3 results loaded';
-      };
-      request.send();
+      });
     };
     document.getElementById('load').addEventListener('click', load);
     if (query.get('autoload') === '1') load();

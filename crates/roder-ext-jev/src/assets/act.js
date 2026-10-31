@@ -2,10 +2,12 @@
 // Jev-owned. Resolves an observed node to a hit-tested click point, with no
 // side effect but scrolling. Returns null for a target that went away, is
 // hidden or disabled, or cannot be brought into the viewport (a stale page),
-// {covered:true} when it is there but another element would take the click,
-// and otherwise {x, y, scrolled, announced}: whether it scrolled, and whether
+// {covered:true, by, controls, opens} when it is there but another element would
+// take the click (what covers it and what that offers to press), and
+// otherwise {x, y, scrolled, announced, opens}: whether it scrolled, whether
 // the target says a click opens a popup (a menu, a listbox, a dialog) that
-// the settle should wait for. Node ids are code-owned and always refer to an
+// the settle should wait for, and whether it says a click opens a new
+// window, whose tab page/tabs.rs then waits for. Node ids are code-owned and always refer to an
 // observed element, never to a model-generated selector. Scrolling only when
 // needed, the multi-point, nested-control hit test and the popup
 // announcement follow fastbrowse's browser/page.py (MIT). Choosing a select
@@ -110,23 +112,68 @@
   // the caller scrubs it, puts it on one line and cuts it. An ancestor of
   // the target is no cover's name (its text holds the target's own), and a
   // field's value is never read, bar a button's own label.
-  const nameOf=x=>{
+  const said=x=>{
     for (let n=x, i=0; n && i<4 && n!==n.ownerDocument.body && n!==n.ownerDocument.documentElement;
          n=tree.up(n), i++) {
       const holds=tree.within(e,n);
       const field=n.matches('input,textarea,select');
       const button=n.matches('input[type="button"],input[type="submit"],input[type="reset"]');
-      const said=(n.getAttribute('aria-label')||n.getAttribute('title')||n.getAttribute('alt')||
+      const name=(n.getAttribute('aria-label')||n.getAttribute('title')||n.getAttribute('alt')||
         (field ? n.getAttribute('placeholder') : '')||(button ? n.value : '')||
         (holds||field ? '' : n.innerText)||'').replace(/\s+/g,' ').trim();
-      if (said) return said.slice(0,400);
+      if (name) return name.slice(0,400);
       if (holds) break;
     }
-    return x?.tagName?.toLowerCase() || null;
+    return null;
   };
-  if (!point) return {covered:true, by:cover ? nameOf(cover) : null};
+  // What the cover offers to press, so a caller or the fallback can close
+  // it: the visible buttons and links of the layer that holds it (the
+  // largest branch holding what was hit but not the target), or, when that
+  // holds none (a bare backdrop beside its dialog), of an open dialog or
+  // popover elsewhere on the page, which then names a cover that names
+  // nothing itself; eight at most, and as untrusted as the name.
+  const offered=hit=>{
+    let layer=hit;
+    for (let x=tree.up(hit); x && !tree.within(e,x) && x!==x.ownerDocument.body &&
+         x!==x.ownerDocument.documentElement; x=tree.up(x)) layer=x;
+    const PRESS='button,[role="button"],a[href],input[type="button"],input[type="submit"]';
+    const listed=root=>[...(root.matches?.(PRESS) ? [root] : []), ...root.querySelectorAll(PRESS)]
+      .filter(x=>!tree.within(e,x) && !tree.within(x,e) && c.visible(x));
+    let found=layer.nodeType===1 ? listed(layer) : [], from=layer;
+    if (!found.length) {
+      for (const d of layer.ownerDocument.querySelectorAll('dialog[open],[role="dialog"],'+
+           '[role="alertdialog"],[aria-modal="true"],:popover-open')) {
+        if (tree.within(e,d) || !c.visible(d)) continue;
+        found=listed(d);
+        if (found.length) { from=d; break; }
+      }
+    }
+    const named=x=>(x.getAttribute('aria-label')||x.getAttribute('title')||
+      (x.matches('input') ? x.value : x.innerText)||'').replace(/\s+/g,' ').trim().slice(0,80);
+    return {from, controls:[...new Set(found.map(named).filter(Boolean))].slice(0,8)};
+  };
+  // A click that opens a new window: a link, or a form's submit, that names
+  // a new browsing context (as fastbrowse's page/act.rs reads it), or a
+  // control that says it opens a new tab or window, as accessible ones do,
+  // or whose own handler calls window.open. Its tab may be announced well
+  // after the settle, so page/tabs.rs waits for it.
+  const fresh=name=>(name ?? '').trim().toLowerCase()==='_blank';
+  const link=e.closest('a[href],area[href]');
+  const says=[e.getAttribute('aria-label'), e.getAttribute('title'), e.innerText, link?.getAttribute('title')]
+    .some(t=>/\bnew (tab|window)\b/i.test(t||''));
+  const handler=[e, e.parentElement].some(x=>/\bwindow\.open\s*\(/.test(x?.getAttribute('onclick')||''));
+  const opens=(!!link && fresh(link.hasAttribute('target') ? link.getAttribute('target')
+      : e.ownerDocument.querySelector('base[target]')?.getAttribute('target'))) ||
+    (!!e.form && ['submit','image'].includes(e.type) &&
+      fresh(e.getAttribute('formtarget') ?? e.form.getAttribute('target'))) || says || handler;
+  if (!point) {
+    if (!cover) return {covered:true, by:null, controls:[], opens};
+    const {from, controls}=offered(cover);
+    const by=said(cover) || (from!==cover ? said(from) : null) || cover.tagName?.toLowerCase() || null;
+    return {covered:true, by, controls, opens};
+  }
   const popup=e.getAttribute('aria-haspopup'), expanded=e.getAttribute('aria-expanded');
   const announced=expanded!=='true' && ((!!popup && popup!=='false') || expanded==='false' ||
     !!e.getAttribute('aria-controls') || !!e.getAttribute('aria-owns'));
-  return {...point, scrolled, announced};
+  return {...point, scrolled, announced, opens};
 })

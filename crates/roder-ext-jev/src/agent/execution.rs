@@ -112,9 +112,10 @@ impl Agent {
         let text = written.as_ref().map(|written| written.value.clone());
         let secret = secret::is_secret(&action);
         if secret && let Some(text) = &text {
-            self.secrets.remember(text);
+            let url = self.observation["url"].as_str();
+            self.secrets.remember_at(text, url);
         }
-        let (covered, refused, uncovered, cover) = match self
+        let (covered, refused, uncovered, (cover, offers)) = match self
             .browser
             .act(
                 &action,
@@ -126,15 +127,21 @@ impl Agent {
         {
             // A refusal is recorded and the run goes on: the next decision
             // sees the page as it stands.
-            Ok(outcome) => (false, outcome.refused, outcome.uncovered, None),
+            Ok(outcome) => (
+                false,
+                outcome.refused,
+                outcome.uncovered,
+                (None, Vec::new()),
+            ),
             // Nothing was dispatched, but the attempt is a step that changed
             // nothing: a target that stays covered stalls the run instead of
             // paying for a decision per retry until the model-call budget.
             Err(error) if error.is::<Covered>() => {
-                let cover = error
+                let named = error
                     .downcast_ref::<Covered>()
-                    .and_then(|covered| self.cover_name(covered));
-                (true, None, None, cover)
+                    .map(|covered| (self.cover_name(covered), self.cover_controls(covered)))
+                    .unwrap_or_default();
+                (true, None, None, named)
             }
             Err(error) => return Err(error),
         };
@@ -164,6 +171,8 @@ impl Agent {
             "covered": covered,
             // What covered it, as the page names it (not sent to the model).
             "covered_by": cover,
+            // What it offers to press, as the page names it (not sent either).
+            "covered_controls": (!offers.is_empty()).then_some(offers),
             "refused": refused.map(|reason| self.secrets.scrub(&reason)),
             "uncovered": uncovered.map(|how| self.secrets.scrub(&how)),
             "text_helper": written.as_ref().map(|written| written.model.clone()),

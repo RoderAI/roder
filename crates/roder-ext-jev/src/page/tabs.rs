@@ -3,8 +3,13 @@
 //! A link with `target="_blank"` or a `window.open` leaves the page Jev reads
 //! unchanged, so upstream read the click as a no-op and three of them ended
 //! the run `blocked`, while the new tab was left open in the background.
-//! After each input settles, Jev lists the browser's targets once and adopts
-//! a page opened by one of its own tabs: it attaches, repeats the tab setup
+//! After each input settles, Jev lists the browser's targets and adopts a
+//! page opened by one of its own tabs. It looks once, unless act.js read the
+//! click as opening a new window (a link or form naming `_blank`, a control
+//! that says it opens a new tab or window, or an inline `window.open`
+//! handler): then it looks again for up to five seconds, since a page can
+//! open the window after a fetch or a timer and Chrome can announce the tab
+//! late, and a click read as a no-op would be clicked again. It attaches, repeats the tab setup
 //! (viewport, focus emulation, dialogs, the quiet clock, autoconsent), waits for it to
 //! load, and reads it from then on. The observation after that says so as
 //! `opened_tab`, and the loop records it on the step. A tab that closes
@@ -18,11 +23,20 @@
 //! gesture and the flag would change the user's own browser.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context;
 use serde_json::{Value, json};
 
 use super::{Page, close_target};
+
+/// How long a click expected to open a window waits for its tab to be
+/// announced: a page may open it after a fetch or a timer, and Chrome can
+/// announce it late on a loaded machine. fastbrowse's
+/// `POPUP_ANNOUNCE_SECONDS` (MIT).
+const POPUP_ANNOUNCE: Duration = Duration::from_secs(5);
+/// How often that wait looks at the browser's targets.
+const POPUP_POLL: Duration = Duration::from_millis(100);
 
 /// One tab Jev owns: its target, the session attached to it, and the owned
 /// tab that opened it, if one did.
@@ -91,10 +105,24 @@ impl Page {
     }
 
     /// Adopt the newest page a Jev tab opened since the last look, if any.
-    /// A failure leaves the run on the tab it was on.
-    pub(super) async fn follow_popup(&mut self) {
-        let Ok(Some(target)) = self.opened_target().await else {
-            return;
+    /// With `expected` (act.js read the click as opening a new window), a tab
+    /// not announced yet is waited for, up to [`POPUP_ANNOUNCE`]; any other
+    /// input looks once. A failure leaves the run on the tab it was on.
+    pub(super) async fn follow_popup(&mut self, expected: bool) {
+        let deadline = tokio::time::Instant::now()
+            + if expected {
+                POPUP_ANNOUNCE
+            } else {
+                Duration::ZERO
+            };
+        let target = loop {
+            match self.opened_target().await {
+                Ok(Some(target)) => break target,
+                Ok(None) if tokio::time::Instant::now() < deadline => {
+                    tokio::time::sleep(POPUP_POLL).await;
+                }
+                _ => return,
+            }
         };
         if self.adopt(&target).await.is_ok() {
             self.opened_tab = true;

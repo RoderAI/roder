@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Garden shop</title>
+  <style>
+    body { font: 15px sans-serif; margin: 16px; }
+    #backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.5); }
+    #offer { position: fixed; top: 80px; left: 50%; transform: translateX(-50%); width: 360px;
+             background: #fff; padding: 16px; border: 2px solid #333; }
+  </style>
+</head>
+<body>
+  <!-- A members' offer laid over the shop, on a backdrop beside it: what
+       closes it is not a close word but "No thanks, take me to the shop",
+       so Jev cannot tell how to dismiss it and "Add to basket" stays
+       covered. The step names the offer and what it offers to press. -->
+  <h1>Garden shop</h1>
+  <p>Tomato seeds, 50 per packet. <span id="basket">Basket: 0</span></p>
+  <button type="button" id="add" onclick="window.added = (window.added || 0) + 1; document.getElementById('basket').textContent = 'Basket: ' + window.added">Add to basket</button>
+  <div id="backdrop"></div>
+  <div id="offer" role="dialog" aria-label="Members-only offer">
+    <p>Join today and get 20% off every order.</p>
+    <button type="button" onclick="window.joined = true">Join for £5</button>
+    <button type="button" onclick="document.getElementById('backdrop').remove(); document.getElementById('offer').remove()">No thanks, take me to the shop</button>
+  </div>
+</body>
+</html>

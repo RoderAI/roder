@@ -45,6 +45,28 @@ fn a_covered_step_names_its_cover_among_the_page_supplied_lines() {
 }
 
 #[test]
+fn a_covered_step_says_what_its_cover_offers_to_press() {
+    let mut data = blocked(json!("Members-only offer"));
+    data["actions"][0]["covered_controls"] = json!([
+        "Join for £5",
+        "No \"thanks\",\n take me to the shop",
+        " ",
+        "x".repeat(200)
+    ]);
+    let text = digest(&data, NOW);
+    let part = page_part(&text);
+    assert!(
+        part.contains(
+            "covered by \"Members-only offer\", which offers \"Join for £5\", \
+             \"No 'thanks', take me to the shop\", \"xxx"
+        ),
+        "{text}"
+    );
+    // Each control is held to its own short line.
+    assert!(!part.contains(&"x".repeat(61)), "{text}");
+}
+
+#[test]
 fn a_cover_with_no_name_reads_as_before() {
     let text = digest(&blocked(Value::Null), NOW);
     assert!(

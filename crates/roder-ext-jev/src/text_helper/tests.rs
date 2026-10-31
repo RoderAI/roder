@@ -40,20 +40,45 @@ fn fixture_day() -> NaiveDate {
 }
 
 #[test]
-fn today_names_the_weekday_and_the_next_two_months() {
+fn today_names_the_weekday_the_next_two_months_and_the_next_seven_days() {
     assert_eq!(
         today(fixture_day()),
-        "2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026"
+        "2026-09-27 (Sunday). In one month: October 2026; in two months: November 2026. \
+         Next seven days: Monday 2026-09-28, Tuesday 2026-09-29, Wednesday 2026-09-30, \
+         Thursday 2026-10-01, Friday 2026-10-02, Saturday 2026-10-03, Sunday 2026-10-04"
     );
     // Across a year end, and from the last day of a long month.
     assert_eq!(
         today(NaiveDate::from_ymd_opt(2026, 11, 30).unwrap()),
-        "2026-11-30 (Monday). In one month: December 2026; in two months: January 2027"
+        "2026-11-30 (Monday). In one month: December 2026; in two months: January 2027. \
+         Next seven days: Tuesday 2026-12-01, Wednesday 2026-12-02, Thursday 2026-12-03, \
+         Friday 2026-12-04, Saturday 2026-12-05, Sunday 2026-12-06, Monday 2026-12-07"
     );
     assert_eq!(
-        today(NaiveDate::from_ymd_opt(2027, 1, 31).unwrap()),
-        "2027-01-31 (Sunday). In one month: February 2027; in two months: March 2027"
+        today(NaiveDate::from_ymd_opt(2026, 12, 29).unwrap()),
+        "2026-12-29 (Tuesday). In one month: January 2027; in two months: February 2027. \
+         Next seven days: Wednesday 2026-12-30, Thursday 2026-12-31, Friday 2027-01-01, \
+         Saturday 2027-01-02, Sunday 2027-01-03, Monday 2027-01-04, Tuesday 2027-01-05"
     );
+}
+
+/// "Next Monday" on a Sunday is tomorrow, and on a Monday a week away: the
+/// first Monday the list names, whichever day today is.
+#[test]
+fn the_next_named_weekday_is_listed_within_a_week() {
+    let start = NaiveDate::from_ymd_opt(2026, 9, 27).unwrap();
+    for today_is in start.iter_days().take(7) {
+        let listed = today(today_is);
+        let week = listed.split("Next seven days: ").nth(1).unwrap();
+        let monday = week
+            .split(", ")
+            .find_map(|day| day.strip_prefix("Monday "))
+            .unwrap();
+        let monday = NaiveDate::parse_from_str(monday, "%Y-%m-%d").unwrap();
+        let ahead = (monday - today_is).num_days();
+        assert!((1..=7).contains(&ahead), "{today_is}: {listed}");
+        assert_eq!(monday.weekday(), chrono::Weekday::Mon);
+    }
 }
 
 #[test]

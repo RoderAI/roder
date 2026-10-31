@@ -120,8 +120,10 @@ const KEYED_RULES: [(&str, &str); 8] = [
     (
         "forms",
         "Fill required fields before submitting. For date pickers, CLICK the field, date, then \
-         confirmation. If Search/Submit is visible and the required fields are ready, CLICK it \
-         immediately.",
+         confirmation. Choose a form's mode (its tab, trip or account type, category) before \
+         typing any value: switching it changes and clears the fields. Set requested filters \
+         before submitting where the form offers them. If Search/Submit is visible and the \
+         required fields are ready, CLICK it immediately.",
     ),
     (
         "search",

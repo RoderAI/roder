@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Refuses install</title></head>
+<body>
+  <!-- A page whose scripts break Object.defineProperty, so the observation
+       scripts cannot be installed in a document that loaded before Jev
+       registered them; it is read with the scripts sent whole. -->
+  <script>Object.defineProperty = () => { throw new TypeError('locked'); };</script>
+  <form><label>Message <input name="message"></label> <button type="button">Send</button></form>
+</body>
+</html>

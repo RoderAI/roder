@@ -18,6 +18,7 @@ mod freshness;
 mod open;
 mod resume;
 mod settle;
+mod snapshot;
 mod tabs;
 mod uncover;
 
@@ -34,7 +35,7 @@ use crate::engine::{JevActOutcome, JevBrowser, JevDialog, JevPageFacts, StaleObs
 use fingerprint::fingerprint_with_frames;
 pub(crate) use open::{LoadFailed, close_target, create_target};
 pub(crate) use resume::TabsGone;
-use settle::{NAVIGATED, TRACK_JS, is_navigation};
+use settle::{NAVIGATED, is_navigation};
 pub(crate) use tabs::{OwnedTab, TabLedger};
 use tabs::{SharedLedger, Tab};
 
@@ -164,7 +165,10 @@ impl Page {
                     error
                 }
             })?;
-        if result.get("exceptionDetails").is_some() {
+        if let Some(details) = result.get("exceptionDetails") {
+            if snapshot::is_uninstalled(details) {
+                return Err(snapshot::Uninstalled.into());
+            }
             return Err(StaleObservation::new("Document changed during evaluation").into());
         }
         Ok(result["result"]["value"].clone())
@@ -177,21 +181,21 @@ impl Page {
     pub(crate) async fn settle(&mut self) -> Option<Value> {
         let action = self.after_input.take()?;
         let settled = self.settle_page(Some(&action)).await;
-        self.follow_popup().await;
+        self.follow_popup(action["opens"] == json!(true)).await;
         Some(settled)
     }
 
     /// Read the page: settle any pending input, snapshot, then fingerprint.
-    /// The snapshot also (re)installs the quiet clock, for a document that
-    /// loaded before it was registered. Dialogs answered since the last read
+    /// The snapshot is a short call on the scripts the document installed
+    /// once (see `snapshot`), and also (re)installs the quiet clock, for a
+    /// document that loaded before it was registered. Dialogs answered since the last read
     /// are added as `dialogs` and as lines before the page text, after the
     /// fingerprint is taken: a dismissed confirm is news for the model but
     /// not a change to the page, so it cannot hide a stall.
     pub(crate) async fn observe(&mut self) -> anyhow::Result<Value> {
         self.settle().await;
-        let snapshot = format!("{TRACK_JS}\n({CONTEXT_JS})({SNAPSHOT_JS})");
         for attempt in 0..OBSERVE_ATTEMPTS {
-            match self.evaluate_snapshot(&snapshot).await {
+            match self.read(snapshot::Read::Observe).await {
                 Ok(Value::Null) => {
                     return Err(StaleObservation::new("Document is navigating").into());
                 }
@@ -370,7 +374,7 @@ mod tests {
         assert!(SNAPSHOT_JS.contains("checkVisibility"));
         // The press re-check drops the guard's last entry as the text around
         // the control, so that entry must stay last.
-        assert!(SNAPSHOT_JS.contains("cut(scope?.innerText||'',6000).toWellFormed()];"));
+        assert!(SNAPSHOT_JS.contains("scope ? scopes.get(scope) : digest('')];"));
         assert!(act::ACT_JS.contains("tree.hit(x,y)"));
         assert!(SNAPSHOT_JS.contains("document.elementFromPoint(x,y)"));
         assert!(SNAPSHOT_JS.contains("shadowRoot?.elementFromPoint"));

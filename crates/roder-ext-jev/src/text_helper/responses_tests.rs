@@ -63,6 +63,7 @@ fn codex_with(
         http: JsonPoster::new(fast_policy()),
         codex: auth,
         codex_base_url: server.url.trim_end_matches("/v1/systemone").to_string(),
+        unroutable: Default::default(),
     }
 }
 

@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use crate::effects;
 use crate::engine::{
     Covered, JevBrowser, JevDecision, JevDecisionRecord, JevEngineConfig, JevPageFacts, JevStatus,
-    JevStop, JevStopCause, JevSuppressedClick, JevTextValue, StaleObservation,
+    JevStop, JevStopCause, JevSuppressedClick, JevTextValue, JevWall, StaleObservation,
 };
 use crate::secret::{self, SECRET, Secrets};
 
@@ -75,6 +75,10 @@ pub(crate) struct Agent {
     suppressed_click: Option<JevSuppressedClick>,
     /// What the caps on a run going round in circles remember.
     watch: loops::LoopWatch,
+    /// The fill the text resolver had no value for, when one ended the run.
+    missing_field: Option<Value>,
+    /// The sign-in wall a `needs_login` run stopped at.
+    wall: Option<JevWall>,
 }
 
 /// The kind of a history entry recording a refused cookie banner: not a
@@ -118,13 +122,15 @@ impl Agent {
             cause: None,
             suppressed_click: None,
             watch: loops::LoopWatch::default(),
+            missing_field: None,
+            wall: None,
         };
         agent.observe().await?;
         agent.look_again_while_empty().await?;
         if let Err(error) = agent.check_scope() {
             agent.stopped_before = Some(agent.fail(&error));
         } else if let Some(reason) = agent.refused_access().await {
-            agent.stop(JevStatus::AccessDenied);
+            agent.elapsed();
             agent.stopped_before = Some(reason);
         }
         Ok(agent)
@@ -320,7 +326,7 @@ mod opt_in;
 mod predict;
 mod repeat;
 mod result;
-pub(crate) use cover::tidy_cover;
+pub(crate) use cover::{offers, tidy_cover};
 pub(crate) use repeat::REPEAT_CONFIDENCE;
 pub(crate) use result::{controls, omitted};
 #[cfg(test)]

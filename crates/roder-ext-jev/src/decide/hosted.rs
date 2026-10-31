@@ -1,4 +1,5 @@
 //! Hosted Jev decision packing and on-demand context pages.
+use super::asking::Shed;
 use super::context_budget::{self, Bounded};
 use super::context_pages::Pages;
 use super::*;
@@ -31,13 +32,15 @@ impl JevTypeSafeDecisionClient {
             image_cost,
             reports: &reports,
         };
+        let open = super::asking::Open(&bounded);
         let mut pages = Pages::new(observation, history);
         let mut usages = Vec::new();
+        let mut sheds = 0;
         let started = Instant::now();
         for _ in 0..24 {
             let view = pages.view();
             let result = self
-                .decide_view(&view, goal, &pages.history(), gate, &bounded)
+                .decide_view(&view, goal, &pages.history(), gate, &open)
                 .await;
             match result {
                 Err(error) if error.is::<context_budget::TooLarge>() => {
@@ -59,6 +62,14 @@ impl JevTypeSafeDecisionClient {
                     if let Some(usage) = JevBilled::usage_of(&error) {
                         usages.push(usage.clone());
                     }
+                    // The service sheds large requests far more often than
+                    // small ones: a large one is asked again smaller, while a
+                    // small one still refused is an outage.
+                    let large = context_budget::sheddable(&reports.lock().unwrap());
+                    if Shed::is(&error) && large && pages.shed() {
+                        sheds += 1;
+                        continue;
+                    }
                     return Err(context_budget::with_usage(&usages, error));
                 }
                 Ok(mut decision) => {
@@ -72,7 +83,7 @@ impl JevTypeSafeDecisionClient {
                         "per_request_limit":context_budget::REQUEST_LIMIT,
                         "per_question_limit":context_budget::QUESTION_LIMIT,
                         "estimate":"UTF-8 byte upper estimate plus image patch reserve; provider is authoritative",
-                        "requests":*reports.lock().unwrap(), "pages_read":pages.reads(), "context_reads":pages.read_history(),
+                        "requests":*reports.lock().unwrap(), "shed":sheds, "pages_read":pages.reads(), "context_reads":pages.read_history(),
                     });
                     decision.latency_ms = started.elapsed().as_millis() as u64;
                     return Ok(decision);

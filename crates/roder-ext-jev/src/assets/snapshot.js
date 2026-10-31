@@ -153,15 +153,35 @@
   const every=selector=>roots.flatMap(root=>[...root.querySelectorAll(selector)]);
   // Only whether a secret is filled, never its value.
   const held=e=>secret(e) ? e.value!=='' : e.value;
+  // What freshness only compares for equality (a field's state, the text
+  // around a control, the page text) is kept as a digest: sent whole, the
+  // guards and marker cost more to return than the snapshot takes to build.
+  // Not cryptographic: a page that wants a guard to hold can leave its DOM
+  // alone. The two-lane mix follows fastbrowse's snapshot.js (MIT).
+  const digest=text=>{
+    let a=0xdeadbeef, b=0x41c6ce57;
+    for (let i=0; i<text.length; i++) {
+      const c=text.charCodeAt(i);
+      a=Math.imul(a^c,2654435761); b=Math.imul(b^c,1597334677);
+    }
+    a=Math.imul(a^(a>>>16),2246822507)^Math.imul(b^(b>>>13),3266489909);
+    b=Math.imul(b^(b>>>16),2246822507)^Math.imul(a^(a>>>13),3266489909);
+    return (b>>>0).toString(16).padStart(8,'0')+(a>>>0).toString(16).padStart(8,'0');
+  };
+  const digestOf=value=>digest(JSON.stringify(value)??'');
   cache.pageKey=()=>[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,
-    roots.flatMap(root=>[...root.querySelectorAll('input,textarea,select')]).filter(offerable)
-      .map(e=>[identity(e),held(e),e.checked,e.selectedIndex,e.disabled,e.readOnly])];
-  cache.guard=e=>{
+    digestOf(roots.flatMap(root=>[...root.querySelectorAll('input,textarea,select')]).filter(offerable)
+      .map(e=>[identity(e),held(e),e.checked,e.selectedIndex,e.disabled,e.readOnly]))];
+  // A guard's fields stay apart, so a stale decision can name what changed;
+  // only the text around the control is a digest. `scopes` memoizes it for
+  // one pass: sibling controls share their card, row or form.
+  const guardOf=(e,scopes)=>{
     if (!e?.isConnected || !visible(e)) return null;
     // A generic clickable is its own scope: its parent may be a grid of a
     // thousand cards.
     const scope=e.closest('form,dialog,[role="dialog"],article,li,tr,[role="row"]') ||
       (generic.has(e) ? e : e.parentElement);
+    if (scope && !scopes.has(scope)) scopes.set(scope,digest(cut(scope.innerText||'',6000)));
     // A label's value and checked state are its checkbox's.
     return [identity(e),role(e),asText(name(e)),plain(held(source(e))),plain(source(e).checked),
       plain(e.selectedIndex),plain(e.readOnly),e.matches(':disabled'),
@@ -169,8 +189,9 @@
       // missing aria-disabled to "false" does not make a decision stale.
       e.getAttribute('aria-disabled')==='true',
       e.getAttribute('aria-expanded'),e.getAttribute('aria-checked'),e.getAttribute('aria-selected'),
-      e.getAttribute('href'),e.form ? identity(e.form) : null,cut(scope?.innerText||'',6000).toWellFormed()];
+      e.getAttribute('href'),e.form ? identity(e.form) : null,scope ? scopes.get(scope) : digest('')];
   };
+  cache.guard=e=>guardOf(e,new Map());
   // Pagers and load-more controls end the list they continue, past any cap
   // that counts from the viewport, so they are always kept. The narrow rules
   // (a link to an address marked rel=next or labelled Next, or a control
@@ -357,7 +378,7 @@
   // Only what is on screen counts: a list growing below the fold must not make a decision stale.
   const semantics=actions.filter(a=>!a.offscreen).map(({rect,...action})=>action);
   const marker=[performance.timeOrigin,location.href,scrollX,scrollY,innerWidth,innerHeight,
-    document.title,pageText,disabled_controls,semantics,page_key[6]];
+    digest(document.title),digest(pageText),digestOf(disabled_controls),digestOf(semantics),page_key[6]];
   // Nearest first, in document order on screen (the sort is stable), then cap
   // offscreen controls on their own and everything together, keeping pagers.
   // The caps count controls: a select's options are one, so a long list of
@@ -405,7 +426,8 @@
     '[aria-modal="true"]').some(x=>visible(x)) ||
     every('[role="listbox"],[role="menu"]').some(x=>visible(x) && floating(x)) ||
     actions.some(a=>a.role==='option' && generic.has(cache.nodes.get(a.node)));
-  for (const a of actions) if (!(a.node in guards)) guards[a.node]=cache.guard(cache.nodes.get(a.node));
+  const scopes=new Map();
+  for (const a of actions) if (!(a.node in guards)) guards[a.node]=guardOf(cache.nodes.get(a.node),scopes);
   actions.forEach((a,i)=>{a.id='e'+(i+1);if(a.node)a.ref='j'+performance.timeOrigin+'-'+a.node});
   if (scrollY+innerHeight<height-2) actions.push({id:'scroll_down',kind:'scroll',label:'Scroll down',delta:560});
   if (scrollY>0) actions.push({id:'scroll_up',kind:'scroll',label:'Scroll up',delta:-560});

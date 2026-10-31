@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign in to Acme</title></head>
+<body>
+  <h1>Sign in to Acme</h1>
+  <!-- A single sign-on wall: no password or code field, only identity
+       providers, none of which this browser can reach. Billing is behind
+       it, and only the user can get past it. -->
+  <p>Use your work account to see billing and invoices.</p>
+  <button type="button" class="idp">Continue with Google</button>
+  <button type="button" class="idp">Continue with Microsoft</button>
+  <button type="button" class="idp">Sign in with SSO</button>
+  <p id="note" role="status"></p>
+  <script>
+    for (const button of document.querySelectorAll('.idp')) {
+      button.addEventListener('click', () => {
+        document.getElementById('note').textContent =
+          'Your identity provider could not be reached from this browser.';
+      });
+    }
+  </script>
+</body>
+</html>

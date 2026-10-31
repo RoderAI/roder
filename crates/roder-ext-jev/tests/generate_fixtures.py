@@ -14,9 +14,11 @@ reapply them after regenerating: TARGET's closing sentences about offscreen
 elements and `context` (prompts.json, and the rules in choose_request.json's body and
 serialized form), the offscreen "Next page" link in action_space.json, and the
 `date` key after `goal` in field_context.json's context (recorded as of
-2026-09-27), the `other_fields` key after `field` there (the fixture page's
-"Cabin" select), and both in the user message of every
-field_text_requests.json body.
+2026-09-27, with the next seven days), the `other_fields` key after `field`
+there (the fixture page's "Cabin" select), and both in the user message of every
+field_text_requests.json body; NEXT_ACTION's form-mode rule and TEXT_VALUE's
+relative-day rule (prompts.json and every body carrying them); and the
+`provider` routing in the openrouter field_text_requests.json bodies.
 """
 
 import hashlib

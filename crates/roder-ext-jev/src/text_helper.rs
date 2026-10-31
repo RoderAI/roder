@@ -7,9 +7,12 @@
 //! the Codex sign-in the same prompt and context go to the Responses API
 //! instead, with the reply held to a JSON schema (see [`responses`]); both
 //! replies pass the same checks. The field
-//! context is Jev's: it adds today's date, and the ISO format a native date
-//! or time input takes.
+//! context is Jev's: it adds today's date with the next seven days, and the
+//! ISO format a native date or time input takes. Two transport additions
+//! come from fastbrowse: OpenRouter's provider routing, and one retry with
+//! four times the output cap for a reply cut off at it.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -23,7 +26,7 @@ use crate::http::{JsonPoster, PostFailure, RetryPolicy};
 use crate::prompts::TEXT_VALUE;
 use crate::python_json;
 use crate::text_model::{Effort, TextModel, Transport, is_deepseek};
-use crate::usage::JevBilled;
+use crate::usage::{JevBilled, JevCallUsage};
 use responses::{CODEX_BASE_URL, CodexAuth, RoderCodexAuth, SignInUnusable};
 
 const MAX_VALUE_CHARS: usize = 2000;
@@ -55,10 +58,13 @@ fn grounded(context: &Value, value: &str) -> bool {
             .is_some_and(|goal| goal.contains(value.trim()))
 }
 
-/// Today with its weekday and the next two months, each named by its
-/// distance, in fastbrowse's exact words (MIT, page.py `today`): told the
-/// date alone, its field writer booked "the next Monday" a week late, and
-/// told the coming months as a bare list, it took the last for "next month".
+/// Today with its weekday, the next two months, each named by its distance,
+/// and the seven days after it, each with its weekday (after fastbrowse,
+/// MIT, page.py `today` and `next_days`): told the date alone, its field
+/// writer booked "the next Monday" a week late; told the coming months as a
+/// bare list, it took the last for "next month"; and told the weekday but
+/// left to count, it still booked a relative day a week late. A relative
+/// day is looked up in the list instead.
 pub(crate) fn today(date: NaiveDate) -> String {
     let next_month = |date: NaiveDate| {
         let (year, month) = match date.month() {
@@ -69,8 +75,15 @@ pub(crate) fn today(date: NaiveDate) -> String {
     };
     let first = next_month(date);
     let second = next_month(first);
+    let next_days = date
+        .iter_days()
+        .skip(1)
+        .take(7)
+        .map(|day| day.format("%A %Y-%m-%d").to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "{}. In one month: {}; in two months: {}",
+        "{}. In one month: {}; in two months: {}. Next seven days: {next_days}",
         date.format("%Y-%m-%d (%A)"),
         first.format("%B %Y"),
         second.format("%B %Y")
@@ -203,7 +216,36 @@ fn reasoning(base_url: &str, reasoning: Option<Effort>) -> (String, Value) {
     }
 }
 
-/// The exact body upstream posts to the text helper.
+/// The output cap of a field's first request.
+const MAX_TOKENS: u64 = 1024;
+
+/// How much larger the cap is on the one retry after a reply ran into it
+/// (fastbrowse's `TRUNCATION_RETRY_FACTOR`): the same prompt under the same
+/// cap would be cut off again.
+const TRUNCATION_RETRY_FACTOR: u64 = 4;
+
+/// Whether `base_url` is OpenRouter's, by its host: a proxy whose path or
+/// query merely names openrouter.ai is not.
+fn is_openrouter(base_url: &str) -> bool {
+    reqwest::Url::parse(base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|host| host == "openrouter.ai")
+}
+
+/// OpenRouter routing (after fastbrowse's `openrouter_provider_routing`):
+/// only to endpoints that honour every parameter sent, so `response_format`
+/// is never a hint an endpoint ignores, and among those the fastest, which
+/// keeps fallbacks while following the faster endpoint. A model with no
+/// such endpoint (a non-reasoning model is sent `reasoning` too, and
+/// OpenRouter then answers 404) is asked again without
+/// `require_parameters`; see [`TextHelper::chat`].
+fn openrouter_routing() -> Value {
+    json!({"sort": "latency", "require_parameters": true})
+}
+
+/// The body posted to the text helper: upstream's exact body, plus
+/// OpenRouter's provider routing when the endpoint is OpenRouter's.
 pub(crate) fn request_body(
     context: &Value,
     model: &str,
@@ -212,10 +254,13 @@ pub(crate) fn request_body(
 ) -> Value {
     let mut body = Map::new();
     body.insert("model".into(), json!(model));
-    body.insert("max_tokens".into(), json!(1024));
+    body.insert("max_tokens".into(), json!(MAX_TOKENS));
     body.insert("response_format".into(), json!({"type": "json_object"}));
     let (key, value) = reasoning(base_url, effort);
     body.insert(key, value);
+    if is_openrouter(base_url) {
+        body.insert("provider".into(), openrouter_routing());
+    }
     body.insert(
         "messages".into(),
         json!([
@@ -231,11 +276,46 @@ fn endpoint(base_url: &str) -> String {
     format!("{}/chat/completions", base_url.trim_end_matches('/'))
 }
 
-/// Accept only `{"text": "..."}` with a usable value, as upstream does. A
+/// Drop OpenRouter's `require_parameters` from `body`; whether it was set.
+fn unconstrain(body: &mut Value) -> bool {
+    body.get_mut("provider")
+        .and_then(Value::as_object_mut)
+        .and_then(|provider| provider.remove("require_parameters"))
+        .is_some()
+}
+
+/// The run's end for a chat-completions call that got no reply.
+fn chat_stop(failure: &PostFailure) -> anyhow::Error {
+    let message = match failure {
+        PostFailure::Connection => "Text helper connection failed; nothing typed.".to_string(),
+        PostFailure::Status(status, _) => {
+            format!("Text helper returned HTTP {status}; nothing typed.")
+        }
+        PostFailure::InvalidBody => NO_VALUE.to_string(),
+        PostFailure::Failed(detail) => format!("Text helper failed ({detail}); nothing typed."),
+    };
+    failure.stop(message)
+}
+
+/// The reply without a Markdown code fence around or after it (after
+/// fastbrowse's `unfenced`, which takes only a fence on both sides). Under
+/// `json_object` the default writer still ends about one reply in eight
+/// with a bare "```" after the object; the object itself is intact.
+fn unfenced(content: &str) -> &str {
+    let trimmed = content.trim();
+    let opened = trimmed
+        .strip_prefix("```")
+        .map_or(trimmed, |rest| rest.strip_prefix("json").unwrap_or(rest));
+    opened.strip_suffix("```").unwrap_or(opened).trim()
+}
+
+/// Accept only `{"text": "..."}` with a usable value, as upstream does,
+/// once any code fence is taken off. A
 /// null or blank value is the helper saying the goal lacks it (`Ok(None)`),
 /// which ends the run as `needs_input`; any other bad reply is an `error`.
 pub(crate) fn parse_value(content: &str) -> anyhow::Result<Option<String>> {
-    let parsed: Value = serde_json::from_str(content).map_err(|_| anyhow::anyhow!(NO_VALUE))?;
+    let parsed: Value =
+        serde_json::from_str(unfenced(content)).map_err(|_| anyhow::anyhow!(NO_VALUE))?;
     let object = parsed.as_object().context(NO_VALUE)?;
     if object.len() != 1 {
         bail!(NO_VALUE);
@@ -262,6 +342,9 @@ pub(crate) struct TextHelper {
     http: JsonPoster,
     codex: Arc<dyn CodexAuth>,
     codex_base_url: String,
+    /// OpenRouter found no endpoint honouring every parameter for this
+    /// model, so `require_parameters` is left off for the rest of the run.
+    unroutable: AtomicBool,
 }
 
 impl TextHelper {
@@ -275,6 +358,7 @@ impl TextHelper {
             http: JsonPoster::new(policy),
             codex: Arc::new(RoderCodexAuth),
             codex_base_url: CODEX_BASE_URL.into(),
+            unroutable: AtomicBool::new(false),
         }
     }
 
@@ -298,6 +382,64 @@ impl TextHelper {
         }
     }
 
+    /// Post one chat-completions body. A reply that ran into its output cap
+    /// (`finish_reason: length`) is cut off mid-value, so it is asked once
+    /// more with [`TRUNCATION_RETRY_FACTOR`] times the cap; a second cut
+    /// is no value. Both calls were billed, so their usage is summed, and a
+    /// retry that fails keeps the cut-off reply's usage on its error.
+    ///
+    /// A 404 to a body that asked OpenRouter for `require_parameters` means
+    /// no endpoint of the model takes every parameter (Llama, DeepSeek V3 or
+    /// GPT-4.1 mini given `reasoning`): it was not billed, so it is asked
+    /// again without that constraint, which then stays off for the run.
+    async fn chat(
+        &self,
+        url: &str,
+        api_key: &str,
+        mut body: Value,
+    ) -> anyhow::Result<(anyhow::Result<String>, Value)> {
+        let mut billed: Vec<Value> = Vec::new();
+        if self.unroutable.load(Ordering::Relaxed) {
+            unconstrain(&mut body);
+        }
+        loop {
+            let result = match self.http.post(url, api_key, &body).await {
+                Ok(result) => result,
+                Err(PostFailure::Status(404, _)) if unconstrain(&mut body) => {
+                    self.unroutable.store(true, Ordering::Relaxed);
+                    continue;
+                }
+                Err(failure) => {
+                    let error = chat_stop(&failure);
+                    return Err(match billed.pop() {
+                        Some(usage) => JevBilled::new(usage, error).into(),
+                        None => error,
+                    });
+                }
+            };
+            billed.push(result.get("usage").cloned().unwrap_or_else(|| json!({})));
+            let truncated = result["choices"][0]["finish_reason"].as_str() == Some("length");
+            let cap = body["max_tokens"].as_u64().unwrap_or(MAX_TOKENS);
+            let content = if truncated {
+                Err(anyhow::anyhow!(NO_VALUE))
+            } else {
+                result["choices"][0]["message"]["content"]
+                    .as_str()
+                    .map(str::to_string)
+                    .context(NO_VALUE)
+            };
+            if truncated && billed.len() == 1 {
+                body["max_tokens"] = json!(cap * TRUNCATION_RETRY_FACTOR);
+                continue;
+            }
+            let usage = match billed.as_slice() {
+                [only] => only.clone(),
+                calls => serde_json::to_value(JevCallUsage::sum(calls))?,
+            };
+            return Ok((content, usage));
+        }
+    }
+
     async fn ask(&self, model: &TextModel, context: &Value) -> anyhow::Result<JevTextValue> {
         let started = Instant::now();
         // The provider has answered, so the call is billed even when it gave
@@ -310,33 +452,7 @@ impl TextHelper {
                 reasoning,
             } => {
                 let body = request_body(context, &model.model, base_url, *reasoning);
-                let result = self
-                    .http
-                    .post(&endpoint(base_url), api_key, &body)
-                    .await
-                    .map_err(|failure| {
-                        let message = match &failure {
-                            PostFailure::Connection => {
-                                "Text helper connection failed; nothing typed.".to_string()
-                            }
-                            PostFailure::Status(status, _) => {
-                                format!("Text helper returned HTTP {status}; nothing typed.")
-                            }
-                            PostFailure::InvalidBody => NO_VALUE.to_string(),
-                            PostFailure::Failed(detail) => {
-                                format!("Text helper failed ({detail}); nothing typed.")
-                            }
-                        };
-                        failure.stop(message)
-                    })?;
-                let content = result["choices"][0]["message"]["content"]
-                    .as_str()
-                    .map(str::to_string)
-                    .context(NO_VALUE);
-                (
-                    content,
-                    result.get("usage").cloned().unwrap_or_else(|| json!({})),
-                )
+                self.chat(&endpoint(base_url), api_key, body).await?
             }
             Transport::Codex { effort } => {
                 let body = responses::request_body(context, &model.model, *effort);
@@ -371,6 +487,10 @@ impl JevTextValueResolver for TextHelper {
 
 mod responses;
 
+#[cfg(test)]
+mod chat_tests;
+#[cfg(test)]
+mod live_tests;
 #[cfg(test)]
 mod responses_tests;
 #[cfg(test)]

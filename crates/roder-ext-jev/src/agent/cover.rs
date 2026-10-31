@@ -13,7 +13,7 @@
 //! `covered_by` is not one of them.
 
 use super::Agent;
-use crate::engine::Covered;
+use crate::engine::{COVER_CONTROLS, Covered};
 use crate::session::cut;
 
 /// A cover's name in the record, the digest and the brief is cut to this
@@ -67,6 +67,41 @@ impl Agent {
     pub(super) fn cover_name(&self, error: &Covered) -> Option<String> {
         tidy_cover(&self.secrets.scrub(error.cover()?))
     }
+
+    /// The controls `error` says what covered the target offers, each
+    /// scrubbed and tidied as a name is, then cut to [`CONTROL_CHARS`].
+    pub(super) fn cover_controls(&self, error: &Covered) -> Vec<String> {
+        error
+            .controls()
+            .iter()
+            .filter_map(|control| tidy_control(&self.secrets.scrub(control)))
+            .collect()
+    }
+}
+
+/// Each control a cover offers is cut to this many characters.
+pub(crate) const CONTROL_CHARS: usize = 60;
+
+/// A cover's control as it is shown: tidied as [`tidy_cover`] tidies a name,
+/// and cut to [`CONTROL_CHARS`].
+pub(crate) fn tidy_control(name: &str) -> Option<String> {
+    tidy_cover(name).map(|name| cut(&name, CONTROL_CHARS))
+}
+
+/// `, which offers "Close", "No thanks"`: what a cover offers to press, as
+/// the digest and the fallback's brief say it after its name, each control
+/// tidied and at most [`COVER_CONTROLS`] of them; empty when it offers none.
+pub(crate) fn offers<'a>(controls: impl IntoIterator<Item = &'a str>) -> String {
+    let controls = controls
+        .into_iter()
+        .filter_map(tidy_control)
+        .take(COVER_CONTROLS)
+        .map(|control| format!("\"{control}\""))
+        .collect::<Vec<_>>();
+    match controls.is_empty() {
+        true => String::new(),
+        false => format!(", which offers {}", controls.join(", ")),
+    }
 }
 
 #[cfg(test)]
@@ -104,6 +139,17 @@ mod tests {
         }
         // A name of nothing else is no name.
         assert_eq!(tidy_cover("\u{202e}\u{200b} \u{2066}\u{feff}"), None);
+    }
+
+    #[test]
+    fn a_control_is_tidied_and_cut_shorter_than_a_name() {
+        assert_eq!(
+            tidy_control("No \"thanks\",\n take me\u{202e} on"),
+            Some("No 'thanks', take me on".to_string())
+        );
+        let long = tidy_control(&"word ".repeat(40)).unwrap();
+        assert_eq!(long.chars().count(), CONTROL_CHARS);
+        assert_eq!(tidy_control(" \u{200b} "), None);
     }
 
     #[test]

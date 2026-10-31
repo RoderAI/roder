@@ -62,6 +62,11 @@ impl Agent {
                         "value": null,
                     }));
                 }
+                // Behind a sign-in, a value the goal lacks is the user's to
+                // give by signing in (see `look::sign_in_wall`).
+                if JevStop::status_of(&error) == JevStatus::NeedsInput {
+                    self.missing_field = Some(action.clone());
+                }
                 return Err(error);
             }
         };

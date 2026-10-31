@@ -95,6 +95,13 @@ pub(crate) fn next_step(status: &str) -> Option<&'static str> {
              the goal holds is sent to the hosted decision service and the typing model and \
              stored in the transcript. A text model must be configured."
         }
+        "needs_login" => {
+            "The site asks for a sign-in Jev cannot make; the wall below says what it wants \
+             (a password, a one-time code, or a sign-in such as single sign-on). Never guess \
+             credentials. Ask the user to sign in in this tab themselves, or for the code, then \
+             call again with url \"\"; a password or code written in the goal is sent to the \
+             hosted decision service and the typing model and stored in the transcript."
+        }
         "unavailable" => "A model provider could not be reached; wait a moment and retry.",
         "needs_confirmation" => {
             "Jev stopped before an action that may not be undone, named in why Jev stopped \
@@ -121,6 +128,7 @@ pub(crate) fn status_words(status: &str) -> &str {
         "budget_exceeded" => "ran out of budget",
         "timed_out" => "timed out",
         "needs_input" => "needs input",
+        "needs_login" => "needs a sign-in",
         "unavailable" => "could not reach its model",
         "needs_confirmation" => "needs confirmation",
         "access_denied" => "access denied",

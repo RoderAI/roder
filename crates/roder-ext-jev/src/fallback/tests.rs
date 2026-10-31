@@ -24,6 +24,34 @@ fn jev() -> JevRunResult {
     result
 }
 
+/// The fallback's brief says what covered a step's target offers to press,
+/// each control held to its own short line.
+#[test]
+fn the_brief_says_what_a_cover_offers_to_press() {
+    let mut jev = jev();
+    for (step, cover) in jev
+        .actions
+        .iter_mut()
+        .zip([Some("Members-only offer"), None])
+    {
+        step.covered = true;
+        step.covered_by = cover.map(str::to_string);
+        step.covered_controls = vec![
+            "Join for £5".into(),
+            "No thanks,\n take me \u{202e}to the shop".into(),
+        ];
+    }
+    jev.actions.truncate(2);
+    let text = super::prompt::opening("Buy it.", Trigger::Covered, &jev, "the page", 20, 120, true);
+    let offers =
+        "which offers \"Join for £5\", \"No thanks, take me to the shop\"; nothing was pressed)";
+    assert!(
+        text.contains(&format!("(covered by \"Members-only offer\", {offers}")),
+        "{text}"
+    );
+    assert!(text.contains(&format!("(covered, {offers}")), "{text}");
+}
+
 fn outcome(status: JevStatus) -> FallbackOutcome {
     FallbackOutcome {
         status,

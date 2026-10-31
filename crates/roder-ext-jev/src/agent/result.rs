@@ -27,6 +27,8 @@ impl Agent {
                 page_changed: entry["page_changed"].as_bool(),
                 covered: entry["covered"].as_bool().unwrap_or_default(),
                 covered_by: entry["covered_by"].as_str().map(str::to_string),
+                covered_controls: serde_json::from_value(entry["covered_controls"].clone())
+                    .unwrap_or_default(),
                 refused: entry["refused"].as_str().map(str::to_string),
                 uncovered: entry["uncovered"].as_str().map(str::to_string),
                 dialogs: serde_json::from_value(entry["dialogs"].clone()).unwrap_or_default(),
@@ -86,6 +88,7 @@ impl Agent {
                 .then_some(self.cause)
                 .flatten(),
             suppressed_click: self.suppressed_click.clone(),
+            wall: self.wall.clone(),
             untrusted: true,
             controls: controls(&self.observation),
             page: self.page_facts(),

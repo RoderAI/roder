@@ -5,9 +5,13 @@
 //! with no controls, which sent callers hunting for canvas widgets. Here the
 //! main document's HTTP status, its title, its text and its address are read
 //! for the marks such pages carry. Detection and honest reporting only: Jev
-//! never tries to get around a block.
+//! never tries to get around a block. A 401 that shows no challenge asks for
+//! a sign-in rather than refusing automation: it ends the run `needs_login`
+//! (see [`crate::wall`]), not `access_denied`.
 
 use reqwest::Url;
+
+use crate::engine::JevStatus;
 
 /// What kind of refusal a page is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -15,6 +19,8 @@ pub(crate) enum BlockKind {
     Forbidden,
     RateLimited,
     Challenge,
+    /// HTTP 401 with no challenge: the site wants a sign-in.
+    Unauthorized,
 }
 
 /// A page that refused automated access, with the evidence for it.
@@ -31,8 +37,17 @@ impl AccessBlock {
             BlockKind::Forbidden => "The site refused automated access",
             BlockKind::RateLimited => "The site rate-limited automated access",
             BlockKind::Challenge => "The site showed a check for automated access",
+            BlockKind::Unauthorized => "The site asked for a sign-in",
         };
         format!("{what} ({})", self.evidence)
+    }
+
+    /// The status a run stopped by this page ends with.
+    pub(crate) fn status(&self) -> JevStatus {
+        match self.kind {
+            BlockKind::Unauthorized => JevStatus::NeedsLogin,
+            _ => JevStatus::AccessDenied,
+        }
     }
 }
 
@@ -102,6 +117,7 @@ pub(crate) fn classify(
             let kind = match (code, found) {
                 (_, Some((_, BlockKind::Challenge))) => BlockKind::Challenge,
                 (429, _) | (_, Some((_, BlockKind::RateLimited))) => BlockKind::RateLimited,
+                (401, _) => BlockKind::Unauthorized,
                 _ => BlockKind::Forbidden,
             };
             let evidence = match found {
@@ -147,6 +163,28 @@ mod tests {
         // A 403 with nothing to act on needs no marker.
         let bare = classify(Some(403), "https://a.test/", "", "Forbidden", 0).unwrap();
         assert_eq!(bare.evidence, "HTTP 403, nothing to act on");
+    }
+
+    /// A 401 asks for a sign-in: `needs_login`, unless it shows a challenge.
+    #[test]
+    fn classify_a_401_as_a_sign_in_unless_it_shows_a_challenge() {
+        let bare = classify(Some(401), "https://a.test/", "", "", 0).unwrap();
+        assert_eq!(bare.kind, BlockKind::Unauthorized);
+        assert_eq!(bare.status(), JevStatus::NeedsLogin);
+        assert_eq!(
+            bare.reason(),
+            "The site asked for a sign-in (HTTP 401, nothing to act on)"
+        );
+        let denied = classify(Some(401), "https://a.test/", "Access Denied", "", 0).unwrap();
+        assert_eq!(denied.kind, BlockKind::Unauthorized);
+        let captcha = classify(Some(401), "https://a.test/", "", "Solve the captcha", 0).unwrap();
+        assert_eq!(captcha.kind, BlockKind::Challenge);
+        assert_eq!(captcha.status(), JevStatus::AccessDenied);
+        // A 401 sign-in form to fill is a page to act on.
+        assert_eq!(
+            classify(Some(401), "https://a.test/", "Sign in", "", 3),
+            None
+        );
     }
 
     #[test]

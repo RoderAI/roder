@@ -96,6 +96,73 @@
     }
   },
   {
+    "id": "trip_mode_first",
+    "covers": "a form whose mode tab rebuilds its fields: the mode is chosen before any value is typed, and the filter before submitting",
+    "page": "trip-modes.html",
+    "goal": "Search nonstop round-trip flights from Zurich to London, departing 2026-11-02 and returning 2026-11-09.",
+    "values": {
+      "From": "Zurich",
+      "To": "London",
+      "Depart": "2026-11-02",
+      "Return": "2026-11-09"
+    },
+    "expect": {
+      "status": "done",
+      "stopped": false,
+      "url_ends_with": "/submit/flights",
+      "posts": [
+        {
+          "path": "/submit/flights",
+          "fields": {
+            "trip": "round",
+            "from": "Zurich",
+            "to": "London",
+            "depart": "2026-11-02",
+            "return": "2026-11-09",
+            "nonstop": "on"
+          }
+        }
+      ]
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Round trip"
+        },
+        {
+          "fill": "From"
+        },
+        {
+          "fill": "To"
+        },
+        {
+          "fill": "Depart"
+        },
+        {
+          "fill": "Return"
+        },
+        {
+          "click": "Nonstop only"
+        },
+        {
+          "click": "Search"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Round trip",
+          "fill From",
+          "fill To",
+          "fill Depart",
+          "fill Return",
+          "click Nonstop only",
+          "click Search"
+        ],
+        "model_calls": 8
+      }
+    }
+  },
+  {
     "id": "select_dropdown",
     "covers": "choose a native select option, then submit it",
     "page": "checkout.html",
@@ -1399,18 +1466,16 @@
   },
   {
     "id": "one_time_code_missing",
-    "covers": "with no code from the resolver or the goal, no code is guessed: the run stops with nothing typed or posted, either asking for the code (needs_input, naming the field, which the scripted plan pins) or with the model declining to go on (blocked)",
+    "covers": "with no code from the resolver or the goal, no code is guessed: the run stops needs_login at a one-time-code wall with nothing typed or posted, whether it tried the field (which the scripted plan pins) or the model declined to go on",
     "page": "one-time-code.html",
     "goal": "Verify the sign-in.",
     "expect": {
-      "status": [
-        "needs_input",
-        "blocked"
-      ],
+      "status": "needs_login",
       "posts": [],
       "dom": {
         "document.querySelector('[name=code]').value": ""
-      }
+      },
+      "wall": "one_time_code"
     },
     "script": {
       "plan": [
@@ -1422,11 +1487,111 @@
         }
       ],
       "expect": {
-        "status": "needs_input",
+        "status": "needs_login",
         "stopped": true,
         "stopped_because_contains": "\"Code\"",
         "acts": 0,
         "model_calls": 1
+      }
+    }
+  },
+  {
+    "id": "password_wall",
+    "covers": "a sign-in whose password the goal does not give stops needs_login at a password wall, nothing posted",
+    "page": "login.html",
+    "goal": "Sign in as ada.lovelace and open my account.",
+    "values": {
+      "Username": "ada.lovelace"
+    },
+    "expect": {
+      "status": "needs_login",
+      "wall": "password",
+      "posts": [],
+      "dom": {
+        "document.querySelector('[name=password]').value": ""
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Username"
+        },
+        {
+          "fill": "Password"
+        },
+        {
+          "enter": "Password"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "fill Username"
+        ],
+        "stopped_because_contains": "\"Password\"",
+        "model_calls": 2
+      }
+    }
+  },
+  {
+    "id": "sso_wall",
+    "covers": "a single sign-on page with only provider buttons stops needs_login at a sign-in wall instead of blocked, and no fallback runs",
+    "page": "sso.html",
+    "goal": "Open my Acme billing page and tell me the balance due.",
+    "expect": {
+      "status": "needs_login",
+      "wall": "sign_in",
+      "posts": []
+    },
+    "script": {
+      "plan": [
+        {
+          "blocked": true
+        }
+      ],
+      "expect": {
+        "acts": 0,
+        "model_calls": 1,
+        "stopped_because_contains": "Sign-in required"
+      }
+    }
+  },
+  {
+    "id": "secret_in_get_address",
+    "covers": "a password with @, a space, & and a quote submitted by a GET form is scrubbed from the address and the page that echoes it percent-encoded and JSON-escaped",
+    "page": "login-get-echo.html",
+    "goal": "Sign in as ada with the password the value resolver holds.",
+    "values": {
+      "Username": "ada",
+      "Password": "p@ss word&\"7431"
+    },
+    "expect": {
+      "status": "done",
+      "url_ends_with": "password=[secret]",
+      "title": "Signed in",
+      "text_contains": [
+        "You asked for ?username=ada&password=[secret]",
+        "\"password\":\"[secret]\""
+      ]
+    },
+    "script": {
+      "plan": [
+        {
+          "fill": "Username"
+        },
+        {
+          "fill": "Password"
+        },
+        {
+          "click": "Sign in"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "fill Username",
+          "fill Password",
+          "click Sign in"
+        ],
+        "model_calls": 4
       }
     }
   },

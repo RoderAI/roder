@@ -1,0 +1,47 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"><title>Sign in</title>
+  <style>
+    html { height: 100%; }
+    body { margin: 0; position: relative; font: 15px sans-serif; }
+    #login { position: absolute; left: 20px; }
+    #login input, #login button { display: inline-block; margin-right: 6px; }
+    #ad { display: block; position: fixed; left: 0; right: 0; bottom: 0; height: 120px;
+          background: #fff; border-top: 1px solid #999; z-index: 9; }
+  </style>
+</head>
+<body>
+  <!-- A sign-in form whose Login button starts under an ad band fixed to the
+       window's foot (fastbrowse's anchored_form, from expandtesting-login).
+       ?scroll=0 makes a page that cannot scroll, so the button can only be
+       reached from the keyboard. ?cover=dialog|menu|full makes the band
+       something the page means to be answered (a dialog, an open menu) or
+       a cover over the whole window, which nothing is pressed through.
+       window.pressed, window.submitted and window.adClicks count what was
+       pressed; a press on the band counts as an ad click. A submit says who
+       signed in, beside the button. -->
+  <h1>Sign in</h1>
+  <form id="login" onsubmit="event.preventDefault(); window.submitted = (window.submitted || 0) + 1; document.getElementById('status').textContent = 'Signed in as ' + this.user.value + '.'">
+    <input name="user" aria-label="Username">
+    <input name="pass" type="password" aria-label="Password">
+    <button id="go" onclick="window.pressed = (window.pressed || 0) + 1">Login</button>
+    <span id="status"></span>
+  </form>
+  <ins id="ad" aria-label="Advertisement"><button type="button" onclick="window.adClicks++">Shop now</button></ins>
+  <script>
+    window.adClicks = 0;
+    const query = new URLSearchParams(location.search);
+    const scrolls = query.get('scroll') !== '0';
+    document.body.style.height = scrolls ? '3000px' : '100%';
+    if (!scrolls) document.body.style.overflow = 'hidden';
+    const ad = document.getElementById('ad');
+    ad.addEventListener('mousedown', () => window.adClicks++);
+    // The form starts in the band's place on the first screen.
+    document.getElementById('login').style.top = (innerHeight - 70) + 'px';
+    const cover = query.get('cover');
+    if (cover === 'dialog' || cover === 'menu') ad.setAttribute('role', cover);
+    if (cover === 'full') { ad.style.top = '0'; ad.style.height = 'auto'; }
+  </script>
+</body>
+</html>

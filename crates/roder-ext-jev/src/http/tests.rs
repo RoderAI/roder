@@ -17,7 +17,12 @@ pub(crate) enum Reply {
     Hang,
     /// Read the request, then close the socket without a response.
     Drop,
+    /// A status and body computed from the request's JSON body.
+    With(Answer),
 }
+
+/// Computes a status and body from a request body.
+type Answer = Arc<dyn Fn(&Value) -> (u16, String) + Send + Sync>;
 
 impl Reply {
     pub(crate) fn ok(body: &'static str) -> Self {
@@ -26,6 +31,11 @@ impl Reply {
 
     pub(crate) fn status(code: u16) -> Self {
         Self::Status(code, Vec::new(), r#"{"error":"scripted"}"#)
+    }
+
+    /// A reply computed from each request body; it repeats like any last reply.
+    pub(crate) fn with(answer: impl Fn(&Value) -> (u16, String) + Send + Sync + 'static) -> Self {
+        Self::With(Arc::new(answer))
     }
 
     /// A 200 sent as server-sent events.
@@ -98,30 +108,33 @@ async fn serve(
             queue.front().cloned().unwrap()
         }
     };
-    recorded.lock().unwrap().push((authorization, body));
-    match reply {
-        Reply::Status(code, headers, body) => {
-            let mut head = format!(
-                "HTTP/1.1 {code} Scripted\r\ncontent-length: {}\r\nconnection: close\r\n",
-                body.len()
-            );
-            if !headers
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
-            {
-                head.push_str("content-type: application/json\r\n");
-            }
-            for (name, value) in headers {
-                head.push_str(&format!("{name}: {value}\r\n"));
-            }
-            head.push_str("\r\n");
-            stream.write_all(head.as_bytes()).await.ok();
-            stream.write_all(body.as_bytes()).await.ok();
-            stream.shutdown().await.ok();
+    recorded.lock().unwrap().push((authorization, body.clone()));
+    let (code, headers, body) = match reply {
+        Reply::Status(code, headers, body) => (code, headers, body.to_string()),
+        Reply::With(answer) => {
+            let (code, body) = answer(&body);
+            (code, Vec::new(), body)
         }
-        Reply::Hang => tokio::time::sleep(Duration::from_secs(30)).await,
-        Reply::Drop => drop(stream),
+        Reply::Hang => return tokio::time::sleep(Duration::from_secs(30)).await,
+        Reply::Drop => return drop(stream),
+    };
+    let mut head = format!(
+        "HTTP/1.1 {code} Scripted\r\ncontent-length: {}\r\nconnection: close\r\n",
+        body.len()
+    );
+    if !headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("content-type"))
+    {
+        head.push_str("content-type: application/json\r\n");
     }
+    for (name, value) in headers {
+        head.push_str(&format!("{name}: {value}\r\n"));
+    }
+    head.push_str("\r\n");
+    stream.write_all(head.as_bytes()).await.ok();
+    stream.write_all(body.as_bytes()).await.ok();
+    stream.shutdown().await.ok();
 }
 
 /// The request's head, its `authorization` header and its JSON body.

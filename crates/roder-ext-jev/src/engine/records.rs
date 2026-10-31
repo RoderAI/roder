@@ -5,7 +5,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use super::{JevDialog, JevStatus, JevStopCause};
+use super::{JevDialog, JevStatus, JevStopCause, JevWall};
 use crate::secret::Secrets;
 use crate::usage::JevUsage;
 
@@ -29,11 +29,18 @@ pub struct JevActionRecord {
     /// one line and cut to 100 characters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub covered_by: Option<String>,
+    /// What covered it offers to press (its close control, an odd "No
+    /// thanks, take me to the site"), eight at most: page text, held to the
+    /// same rules as `covered_by` and cut to 60 characters each.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub covered_controls: Vec<String>,
     /// Why the page did not keep what the action asked for.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refused: Option<String>,
-    /// The target was covered and Jev dismissed what covered it first:
-    /// how (Escape, the layer's close control, a press outside it).
+    /// The target was covered and Jev got past what covered it first: how
+    /// (Escape, the layer's close control, a press outside it; scrolled
+    /// clear of a band fixed to the window, or pressed from the keyboard
+    /// under it).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uncovered: Option<String>,
     /// Dialogs the page opened after this action, and how Jev answered.
@@ -90,6 +97,7 @@ impl JevActionRecord {
             page_changed: Some(false),
             covered: false,
             covered_by: None,
+            covered_controls: Vec::new(),
             refused: None,
             uncovered: None,
             dialogs: Vec::new(),
@@ -191,6 +199,9 @@ pub struct JevRunResult {
     /// The click a blocked run ended on instead of making, when it did.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suppressed_click: Option<JevSuppressedClick>,
+    /// The sign-in wall a `needs_login` run stopped at.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wall: Option<JevWall>,
     pub untrusted: bool,
     /// The controls the final page offered Jev, in the order it observed
     /// them (on screen first). Page text, as untrusted as the rest.
@@ -233,6 +244,7 @@ impl JevRunResult {
             stopped_because: Some(reason.into()),
             stop_cause: (status == JevStatus::Blocked).then_some(JevStopCause::NotLoaded),
             suppressed_click: None,
+            wall: None,
             untrusted: true,
             controls: Vec::new(),
             page: None,

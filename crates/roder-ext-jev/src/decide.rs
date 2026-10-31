@@ -16,7 +16,7 @@ use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
 
 use crate::engine::{JevDecision, JevDecisionClient, JevDecisionTransport};
-use crate::http::{JsonPoster, PostFailure, RetryPolicy};
+use crate::http::RetryPolicy;
 use crate::irreversible;
 use crate::prompts::{NEXT_ACTION, TARGET};
 use crate::space::{ActionSpace, action_space};
@@ -24,12 +24,14 @@ use crate::usage::JevBilled;
 
 mod activation;
 mod answer;
+mod asking;
 mod context_budget;
 mod context_pages;
 mod hosted;
 pub(crate) mod route;
 use answer::read_answer;
 pub(crate) use answer::validate_choice;
+pub(crate) use asking::TypeSafeHttpTransport;
 
 pub(crate) struct DecisionOptions<'a> {
     pub gate: bool,
@@ -144,56 +146,6 @@ impl JevDecisionTransport for Imaged<'_> {
                 self.inner.decide(&request).await
             }
         }
-    }
-}
-
-/// The hosted decision service, over one pooled client for the whole run.
-pub(crate) struct TypeSafeHttpTransport {
-    url: String,
-    key: String,
-    http: JsonPoster,
-}
-
-impl TypeSafeHttpTransport {
-    pub(crate) fn new(url: impl Into<String>, key: impl Into<String>, policy: RetryPolicy) -> Self {
-        Self {
-            url: url.into(),
-            key: key.into(),
-            http: JsonPoster::new(policy),
-        }
-    }
-}
-
-#[async_trait]
-impl JevDecisionTransport for TypeSafeHttpTransport {
-    async fn decide(&self, request: &Value) -> anyhow::Result<Value> {
-        let headers = match images::has_assets(request) {
-            true => vec![(images::IMAGES_HEADER, "true".to_string())],
-            false => Vec::new(),
-        };
-        self.http
-            .post_with(&self.url, &self.key, &headers, request)
-            .await
-            .map_err(|failure| {
-                let message = match &failure {
-                    PostFailure::Connection => {
-                        "Model connection failed; no action executed.".to_string()
-                    }
-                    PostFailure::Status(status, None) => {
-                        format!("Model provider returned HTTP {status}; no action executed.")
-                    }
-                    PostFailure::Status(status, Some(detail)) => format!(
-                        "Model provider returned HTTP {status} ({detail}); no action executed."
-                    ),
-                    PostFailure::InvalidBody => {
-                        "Invalid TypeSafe response; no action executed.".to_string()
-                    }
-                    PostFailure::Failed(detail) => {
-                        format!("Model provider failed ({detail}); no action executed.")
-                    }
-                };
-                failure.stop_decision(message)
-            })
     }
 }
 
@@ -459,6 +411,8 @@ mod gate_tests;
 pub(crate) mod images;
 #[cfg(test)]
 mod images_tests;
+#[cfg(test)]
+pub(crate) mod shed_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

@@ -271,7 +271,7 @@ shows) the new tab closes it by id, where it used to leave it open.
 | `page.rs` | `browser.py` | Observe and fingerprint (opening the tab and navigation errors in `page/open.rs`, Jev's own settle in `page/settle.rs`, executing an action in `page/act.rs`, typing in `page/fill.rs`, and following new tabs in `page/tabs.rs`) |
 | `runner/` | (Jev's own) | Resolve Chrome and the models, then run the task's phases under one deadline |
 | `space.rs` | `model.action_space` | The indexed action space |
-| `decide.rs` | `model.choose` | The TypeSafe request body and validation |
+| `decide.rs` | `model.choose` | The TypeSafe request body and validation (what is actually sent, with single-option choices answered locally and shed batches split, in `decide/asking.rs`) |
 | `http/` | (Jev's own) | The shared JSON POST client and its retry policy |
 | `text_helper.rs` | `model.field_text` | The field-value request and its strict reply contract |
 | `agent.rs` | `agent.py` | The tick loop, budgets, statuses, stall detection |
@@ -281,7 +281,7 @@ shows) the new tab closes it by id, where it used to leave it open.
 | `usage.rs` | (Jev's own) | Summed token usage |
 | `prompts.rs` | `questions.py` | Instruction text, Jev-owned: upstream's plus two TARGET sentences |
 | `fallback/` | (Jev's own) | When Jev cannot progress: the triggers, the model-driven loop on Roder's direct CDP tools, the hand-over tools and the rules they inherit |
-| `page/uncover.rs` | (Jev's own) | Dismissing a popover, menu or dialog that covers a target |
+| `page/uncover.rs` | (Jev's own, after fastbrowse) | Reaching a covered target: dismissing a popover, menu or dialog over it, or scrolling it clear of a band fixed to the window and pressing it from the keyboard under one (`band.js`) |
 | `fixture_harness/` | (Jev's own, test-only) | Real-DOM tests and the end-to-end eval corpus |
 
 Two scripts must run inside the page and stay JavaScript, under
@@ -298,6 +298,61 @@ wait for the page to settle is Jev's own too: `track.js`, `settle.js` and
 and reporting whether the page kept it) and `fill.js` (the steps of a verified
 fill).
 
+### Installing the observation once per document
+
+`snapshot.js`, its parts and `context.js` come to about 70 KB of source.
+Sending the source with every read cost a transfer and a compile per call.
+Each document now installs the scripts once (`src/page/snapshot.rs`). The
+mechanism follows fastbrowse's `SnapshotScript` (MIT).
+
+- **Install.** The scripts are registered for every new document's top frame
+  with `Page.addScriptToEvaluateOnNewDocument`, next to the quiet clock. They
+  are defined as a read-only, non-enumerable global. Its name is keyed by a
+  digest of the scripts and a random per-process seed, so another build never
+  calls this one's function, and a page cannot plant one under the name in
+  advance.
+- **Read.** `observe()` and the `fresh()` marker check each send one short
+  call on that global (about 660 bytes). DevTools' `getEventListeners` exists
+  only in the evaluated expression's scope, so the call hands it to the
+  installed function as an argument.
+- **Lazy install.** A document that loaded before the registration, such as
+  a tab Jev attached to, has no global. The call throws a sentinel error
+  before doing anything, so Jev installs the scripts and calls again.
+- **Fallback.** A page that breaks `Object.defineProperty` refuses the
+  install, so it is read with the scripts sent whole
+  (`refuses-install.html`).
+
+Measured with `fixture_harness/snapshot_cost_tests.rs` on `big.html`, in a
+debug build on headless Chromium:
+
+| Measure | Before | After |
+|---|---|---|
+| Bytes sent per `observe()` | 69,755 | 664 |
+| Bytes sent per step of a scripted run (1,000 cards) | 228 KB | 33 KB |
+| Bytes received per step of that run | 209 KB | 124 KB |
+
+Time in the page barely changes, because Chrome caches the compiled
+source: about 60, 120 and 250 ms for 100, 400 and 1,000 cards.
+
+The guards, the page key and the freshness marker are compared only for
+equality, so the bulky parts are in-page digests: a 64-bit, two-lane string
+hash, following fastbrowse's `guardKey` (MIT).
+
+- **Guard.** It keeps every structured field. Only its last entry, the text of
+  the row, card or form around the control, is a digest. The digest is
+  computed once per scope in a snapshot, because sibling controls share their
+  card.
+- **Page key.** The form state (`page_key[6]`) is a digest.
+- **Marker.** The title, page text, disabled controls and on-screen actions are
+  digests.
+
+Every entry is still compared one by one, so a stale decision still names
+what changed (`target_context`, `form_state`, `title`, …). The page key and
+marker no longer carry field values or page text; a guard still carries its
+own control's label and value (a secret only as filled or not). On `big.html` with 1,000 cards, the
+observation shrank from 167 KB to 103 KB: its guards went from 77 KB to
+32 KB, and its marker from 19 KB to 172 bytes.
+
 ### Settling before a read
 
 Upstream waits two animation frames or 50 ms after input, which reads XHR and
@@ -305,16 +360,61 @@ SPA re-renders half drawn. Roder keeps a quiet clock inside the page instead.
 `track.js` runs a MutationObserver (subtree, child list, character data,
 attributes) plus capture listeners for input, change, scroll, wheel, pointer
 and key events, each of which restarts the clock. It is installed on every new
-document with `Page.addScriptToEvaluateOnNewDocument`, and again before every
-snapshot for a document that predates it. It is idempotent and creates the
+document with `Page.addScriptToEvaluateOnNewDocument`, and again by every
+installed snapshot read, for a document that predates it. It is idempotent and creates the
 whole `window.__jevFast` shape that `snapshot.js` expects.
 
 `settle.js` is one `awaitPromise` evaluate. It waits for the document to be
 past `loading`, quiet for 200 ms, and showing no loading indicator in the
-viewport (`aria-busy`, `progressbar`, an unvalued `progress`, or a class or id
-naming a spinner, loading, loader, skeleton or shimmer). Indicators stop
-counting after 1.5 s, and the whole settle stops at 2.5 s. A page that is
-already quiet returns at once.
+viewport. An indicator is only what the page declares: `aria-busy="true"`,
+`role="progressbar"` or an unvalued `progress`. Indicators stop counting after
+1.5 s, and the whole settle stops at 2.5 s. A page that is already quiet
+returns at once.
+
+Class and id names are not indicators any more. The settle used to treat any
+visible element whose class or id named a spinner, loading, loader, skeleton
+or shimmer as a loading indicator, so a design system's `loader-button__text`
+or `skeleton-layout` held every settle on that page for the full 1.5 s. On
+`settle-loader-class.html` the click settle went from a median 1507 ms to
+201 ms, and opening the page from 1668 ms to 306 ms. fastbrowse dropped the
+same list in 0.9.0 (MIT). A page whose only sign of loading is a class name is
+now read as it stands, and the model sees the loading text and waits or looks
+again.
+
+A page that answers an input over fetch or XHR stays quiet and unchanged until
+the response lands, and used to be read before it did: the model saw the old
+page and pressed again. The settle now also waits for those requests (the
+mechanism follows fastbrowse's `requests_open_since` and `changed_since`,
+MIT):
+
+- Every tab enables the Network domain when the quiet clock is installed.
+  `cdp.rs` keeps a ledger of the `Fetch` and `XHR` requests each session has
+  open (`requestWillBeSent` until `loadingFinished` or `loadingFailed`; a
+  detached session drops its requests). Document, image and script loads are
+  left out, because the ready check covers them.
+- The first `Input.*` call after a settle marks the ledger, so the requests
+  the whole action started count, and the requests the page had open before
+  it do not. Every settle takes the mark, so it never carries over to a later
+  action.
+- `track.js` keeps the time of the last document change apart from the last
+  input. `settle.js` reports the document `unchanged` when nothing has
+  changed since the input.
+- When `settle.js` returns quiet, the document is unchanged, and a request
+  started after the mark is still open on the tab's session, the settle reads
+  the connection until that request finishes. It then runs `settle.js` again
+  with `fresh`, so that quiet is counted from that moment and the response
+  handler has time to draw. All of this stays within the 2.5 s cap. Such a
+  settle reports `reason: "response"` with the whole wait, or `cap` if the
+  request never answers.
+- A page that already shows its own reaction (a "Saving…" line, a class-only
+  loader) is not held for its request; it is read as it stands.
+
+On `settle-xhr.html` with no indicator, 600, 1000 (fetch) and 1500 ms replies
+were drawn in 0 of 3 reads each before (the settle returned quiet at 201 ms).
+They are now drawn in 3 of 3, with click settles of 806, 1207 and 1707 ms.
+Over the keyless corpus nothing changed (53/53, 0 false greens, median wait
+199 ms, no `response` settles), because no task there answers a click over
+fetch.
 
 Two kinds of input promise something quiet cannot show, so for up to 1.2 s
 after them quiet is not enough (the rules follow fastbrowse, MIT):
@@ -450,7 +550,7 @@ hit point, then in one evaluate waits for a presented frame (two animation
 frames and a task, at most 100 ms, at once in a hidden tab) and re-checks the
 control and the point. The re-check compares the control's own guard state
 (identity, role, name, value, checked, disabled and ARIA state) but not the
-text of the row or form around it, which the freshness check read just before
+digest of the text of the row or form around it, which the freshness check read just before
 and which a hover tooltip or a ticker beside the field would change. A changed
 control is stale ("The control changed before the press"). A point that moved
 is followed with another move and check, for up to 1 s, then refused as stale
@@ -506,6 +606,21 @@ unchanged. Putting failure reasons in front of the chooser is a model-facing
 change with the `effect` variant's A/B still unrun (HTTP 402), so it is not
 done; `what_covered_a_step_is_not_in_the_chooser_request` pins the request
 (`fixture_harness/cover_tests.rs` and `tests/agent_cover.rs` pin the rest).
+
+**What the cover offers.** act.js also lists what the cover offers to press,
+so a caller or the fallback can close a cover Jev cannot tell how to dismiss
+(after fastbrowse's `covered_detail`, MIT): the visible buttons and links of
+the layer that holds the element hit (the largest branch holding it but not
+the target), or, when that holds none (a bare backdrop beside its dialog), of
+an open dialog or popover elsewhere on the page, which then also names a cover
+that names nothing itself. At most eight are kept (`Covered::with_controls`,
+`Covered::controls`); the loop scrubs each like the name, cuts it to 60
+characters and records them as `covered_controls`. The digest and the
+fallback's brief add them after the name: "covered by \"Members-only offer\",
+which offers \"Join for £5\", \"No thanks, take me to the shop\"; nothing was
+done" (`odd-close.html`, whose only way out is that last button). They are not
+sent to the decision service either: Jev already sees those buttons among the
+page's actions.
 
 ### Typing into a field
 
@@ -704,7 +819,8 @@ settles, Jev now lists the browser's targets once (`Target.getTargets`, about
 a millisecond) and adopts the newest page whose `openerId` is a tab Jev owns.
 Chrome reports the opener for `rel="noopener"` links too. Jev attaches to it,
 repeats the tab setup (viewport, focus emulation, the Page domain for
-dialogs, the quiet clock), shows it when the task is in the foreground,
+dialogs, the quiet clock and the Network domain), shows it when the task is
+in the foreground,
 waits for it to load, and reads it from then on. The next observation carries
 `opened_tab: true`. The loop records it on the step as `opened_tab` (shown
 in the tool result when true) and in the step's effect as "opened a new tab,
@@ -712,6 +828,18 @@ now active". Since the URL changed, the step also counts as a page change.
 The run moves to the new tab only once its setup has succeeded; a tab whose
 setup fails is closed with the page and the run stays where it was (it used
 to go on reading the half-prepared tab).
+A tab can arrive late: a page opens it after a fetch or a timer (an export,
+a signed download link), and Chrome can announce it late on a loaded
+machine. One look then saw nothing, the click read as a no-op, and Jev
+clicked again, opening a second tab. act.js now says whether a click is
+expected to open a window (`opens`): a link or form submit naming `_blank`
+(after fastbrowse's page/act.rs, MIT), a control whose label, title or text
+says it opens a new tab or window, or one whose own inline handler calls
+`window.open`. After such a click (or such a link pressed from the keyboard
+under a band fixed to the window) Jev looks again every 100 ms for up to 5 s
+(fastbrowse's `POPUP_ANNOUNCE_SECONDS`); any other input looks once, so a
+click that opens nothing costs nothing more
+(`tab_tests.rs`, `late-tab.html` with a 1 to 2.5 s delay).
 If the adopted tab closes itself (`window.close()`), the run goes back to the
 tab that opened it. When the page is closed, Jev closes every tab it owns,
 including any older tab its tabs opened that it never adopted. A foreground
@@ -825,8 +953,9 @@ offered as an `option`. `treeitem` and `menuitemcheckbox` join the roles.
 
 Listeners come from DevTools' `getEventListeners`, which is in scope only
 when `Runtime.evaluate` has `includeCommandLineAPI`, so `observe()` and the
-`fresh()` marker evaluate that way; nothing is added to the page and no
-extra DevTools call is made. It sees listeners bound to the element itself
+`fresh()` marker evaluate that way. The call hands it to the installed
+snapshot as an argument, since a function installed earlier cannot see that
+scope. No extra DevTools call is made. It sees listeners bound to the element itself
 (jQuery, d3, Vue, plain `addEventListener`); a handler delegated to an
 ancestor (React's root listener, jQuery's `.on('click', '.row')`) is seen
 only through the element's cursor, `tabindex` or role. Walking 28,600
@@ -1115,9 +1244,12 @@ Failing golden tests after that are the point: they say exactly what upstream
 changed, to adopt or decline. Five fixtures were re-recorded for Jev's own
 divergences, which a regeneration would revert: `prompts.json` and
 `choose_request.json` carry the two extra TARGET sentences,
-`choose_request.json` also the state's `date`, `field_context.json` and
+`choose_request.json` also the state's `date` (with the next seven days),
+`prompts.json` and both requests NEXT_ACTION's form-mode rule and
+TEXT_VALUE's relative-day rule, `field_context.json` and
 `field_text_requests.json` the field context's `date` and `other_fields` (all as of
-2026-09-27, passed in so the tests do not depend on the clock), and
+2026-09-27, passed in so the tests do not depend on the clock),
+`field_text_requests.json` OpenRouter's `provider` routing, and
 `action_space.json` has an offscreen "Next page" link. The fingerprint fixture is still upstream's
 output, and Jev's fingerprint still reproduces it, because it has no offscreen
 actions or contexts to leave out.
@@ -1271,7 +1403,7 @@ add a page and a test in `src/fixture_harness/`.
 ### End-to-end eval corpus
 
 On top of that harness, `src/fixture_harness/evals/` runs whole tasks from
-data: `tests/fixtures/evals/tasks.json` lists 53 tasks (a contact form,
+data: `tests/fixtures/evals/tasks.json` lists 56 tasks (a contact form,
 autocomplete search, a native select, pagination, a below-the-fold target, a
 covered target, twin buttons and table rows chosen by context, a delayed-render
 SPA, mid-decision navigation, stall detection, the 60-action budget, a value
@@ -1289,9 +1421,14 @@ and authorized) and a harmless Add to cart; six for banner refusal, on
 unless the task sets `refuse_cookie_banners: false`: a consent banner over
 the target with refusal off and on, a banner offering only Accept, a page
 with no banner, and a known consent platform's banner refused by
-autoconsent, and left covering the target with refusal off; and three for
-secret fields: a login form graded on its POST, a one-time code from the
-resolver, and one nobody supplies, ending `needs_input` naming the field).
+autoconsent, and left covering the target with refusal off; and six for
+secret fields and sign-in walls: a login form graded on its POST, a
+one-time code from the resolver, one nobody supplies (`needs_login` at a
+`one_time_code` wall), a login whose password the goal lacks (`needs_login`
+at a `password` wall), a single sign-on page with only provider buttons
+(`needs_login` at a `sign_in` wall, no fallback), and a password with `@`,
+a space, `&` and a quote sent by a GET form, scrubbed from the address and
+from the page's percent-encoded and JSON echoes of it).
 Each is graded on outcomes: final status and stop
 reason, final URL and title, visible text, recorded POST fields, and DOM
 values read from the final document just before the engine closes the tab.
@@ -1338,11 +1475,12 @@ values read from the final document just before the engine closes the tab.
   hold) from the text model; before, `login_form` and
   `one_time_code_resolved` got no resolver in that mode and ended
   `needs_input`, since the text model rightly refuses a password the goal
-  does not give. `one_time_code_missing` passes live on `needs_input` or
-  `blocked`, provided nothing is typed or posted: its point is that no code
-  is guessed, and a model that declines to go on without the code meets it
-  as surely as the text helper's refusal. The scripted plan still pins the
-  `needs_input` path and its stop reason naming the field. Live rows record
+  does not give. `one_time_code_missing` passes live only on `needs_login`
+  at a `one_time_code` wall with nothing typed or posted: its point is that
+  no code is guessed, and both a text helper that finds no code and a model
+  that declines to go on without one now end there (see "Sign-in walls").
+  The scripted plan pins the text-helper path and its stop reason naming
+  the field. Live rows record
   the text model (`telemetry.text_model`) and each text call's latency,
   usage and outcome (`telemetry.text`), never the value.
   With those fixes the live corpus passed 35 of 40 in both runs with
@@ -1625,6 +1763,26 @@ except to DeepSeek, which has no levels and gets `thinking: enabled`. Unset,
 the endpoint's default applies: DeepSeek `thinking: disabled`, OpenRouter
 `reasoning.enabled: false`, any other `reasoning.effort: low`.
 
+The field context's `date` lists the next seven days with their weekdays,
+and TEXT_VALUE says a day the goal names relative to today is looked up
+there, and that a date is written as a date, never as a weekday (without that
+clause the writer sometimes typed "next Monday" for an explicit date that
+fell in the list).
+
+A chat-completions request to OpenRouter (matched by the base URL's host)
+also sends `provider: {"sort": "latency", "require_parameters": true}`, after
+fastbrowse: it is routed only to endpoints that honour every parameter, so
+`response_format` is never ignored, and among those to the fastest. When
+OpenRouter answers 404 because no endpoint of the model takes every parameter
+(the default `reasoning` field rules out non-reasoning models such as Llama
+3.3, DeepSeek V3 or GPT-4.1 mini), the field is asked again without
+`require_parameters`, and the rest of the run leaves it off. A reply
+cut off at the output cap (`finish_reason: length`, cap 1,024 tokens) is
+asked once more with 4,096; cut off again it is no value ("Text helper
+returned no valid field value; nothing typed."), and both calls count in the
+run's text usage. A code fence around or after the reply's JSON object is taken
+off before the `{"text": ...}` checks.
+
 The Codex path posts to the ChatGPT backend's `/responses` with the request
 `roder-ext-openai-responses` builds from the same system prompt and field
 context (`store: false`, `stream: true`, `reasoning.effort`, and a strict
@@ -1814,8 +1972,8 @@ piling up in Jev's Chrome.
   `cdp.rs` has no reader task, so a socket idle between calls would queue
   events unread and leave dialogs unanswered. Each call connects afresh,
   attaches to each recorded tab and sets it up again (viewport, focus
-  emulation, the Page domain, the quiet clock and, for later documents,
-  autoconsent), since the DevTools session held them. Under 300 ms on the
+  emulation, the Page domain, the quiet clock, the Network domain and, for
+  later documents, autoconsent), since the DevTools session held them. Under 300 ms on the
   fixture page; `resume_is_fast` prints the time and asserts only a 2 s
   ceiling, since the suite's tests run in parallel on one shared Chrome.
 - **Tabs the user opened between calls.** Tabs stay open and shown for up to
@@ -2090,7 +2248,7 @@ Three checks the booking diagnosis called for, none of them a decision:
   describe the page (`JevBrowser::describe`, a default trait method that
   answers nothing; Jev's `Page` evaluates `describe.js`, which returns the
   navigation entry's `responseStatus` and the visible h1 to h3 and
-  `role=heading` texts). `block.rs` classifies it: a 401, 403 or 429 with a
+  `role=heading` texts). `block.rs` classifies it: a 403 or 429 with a
   refusal phrase ("Access Denied", "unusual traffic", "too many requests",
   "verify you are human", "are you a robot", "captcha", "checking your
   browser") in the title or the first 600 characters of text, or with
@@ -2107,7 +2265,35 @@ Three checks the booking diagnosis called for, none of them a decision:
   renamed `access_denied`. This is detection and honest reporting only: Jev
   never retries a block or tries to get around it, and the caller is told
   not to either. The OpenTable 403 on Jev's profile is reported, not worked
-  around.
+  around. A 401 asks for a sign-in rather than refusing automation: with no
+  challenge phrase and nothing to act on it ends the call `needs_login`
+  with a `sign_in` wall ("The site asked for a sign-in (HTTP 401, nothing
+  to act on)"); a 401 that shows a challenge is still `access_denied`.
+- **Sign-in walls (`wall.rs`).** A run that stops short at a sign-in it
+  cannot make ends `needs_login` with a typed `JevRunResult.wall`, ported
+  from fastbrowse's `credential_field` and `wall_kind` (MIT). Before, it
+  ended `needs_input` (the goal gave no password) or `blocked` (the model
+  gave up on the form), and a caller narrowed the task or fell back where
+  only the user could help. The page's own evidence decides: the text
+  resolver had no value for a password or one-time-code field, or for a
+  field in the same form as one; or a `blocked` run (not one outside the
+  allowed origins or whose page did not load) ended on a page with an empty
+  password or code field that names a sign-in in its title, a heading or a
+  control ("Sign in", "Verify"), or a page whose title or a heading names a
+  sign-in and that offers a control to make one ("Continue with Google",
+  "Sign in with SSO"). A header's "Sign in" link on an ordinary page is not
+  a wall, and a field for a new password (labelled new, confirm, repeat,
+  create, …), or any field of a form that holds one (a sign-up or a
+  password change), is a value the caller gives, so it stays
+  `needs_input`. "Continue with" names a sign-in only on a control. The
+  wall's `kind` is `password` when any field is a password, `one_time_code`
+  when all are codes, else `sign_in`; `origin` is the page's; `fields`
+  holds up to eight labels, untrusted and scrubbed like the page text.
+  `stopped_because` starts "Sign-in required at <origin>: the page asks for
+  a password ("Password")" and keeps the original reason after it. The
+  digest's result line names the kind and origin. It is a handoff and never
+  falls back: the next step asks the user to sign in in the tab or give the
+  code, and never to guess credentials.
 - **An empty first look is read again.** The diagnosis saw a first
   observation with no title, no text and nothing to act on, 221 ms into a
   run, and the model's BLOCKED accepted on it. Now a page with nothing to act
@@ -2159,6 +2345,7 @@ Three checks the booking diagnosis called for, none of them a decision:
 | `budget_exceeded` | The native action/request budget ran out (12 actions with automatic recovery available, otherwise 60; `JEV_MAX_ACTIONS` overrides). | Automatic fallback may continue the whole task in the same delegation; otherwise inspect unmet requirements. |
 | `timed_out` | `timeout_seconds` (or the host's deadline) ran out, in setup or the loop. | Retry with a larger `timeout_seconds`, or split the task. |
 | `needs_input` | A field needs a value nothing can supply: no text model, or the text model answered `{"text": null}` (or a blank value) because the goal lacks it. | Put every value in the goal and configure a text model. |
+| `needs_login` | The run reached a sign-in it cannot make: a password or one-time code (or a field of their form) the goal lacks, a `blocked` stop on a sign-in or single sign-on page, or an HTTP 401 with nothing to act on. `wall` says what it asks for (see "Sign-in walls"). | Never guess credentials: ask the user to sign in in this tab, or for the code, then call again with url `""`. |
 | `unavailable` | A model provider was still unreachable or overloaded (a failed connection, or 408, 429, 500, 502 to 504, 520 to 524, 529) after its retries. | Wait and retry. |
 | `error` | Anything else that ended the run early, such as a 401, or decision replies that stayed unusable after being asked again twice (`stop_cause` is `decision_unusable`, and `stopped_because` gives the count and the first reason). Only the unusable replies fall back (see "When it falls back"); after a fallback that ran, the status is the call's end state and Jev's own is `jev_status`. | Read why Jev stopped; retry once its cause is fixed. |
 | `needs_confirmation` | With the gate on, the chosen action may not be undone, and the run was not authorized, or was but the decision was not confident. `stopped_because` names the control; nothing was dispatched. | Ask the user to confirm that exact step, then call again with url `""` and `authorize_irreversible: true`. |
@@ -2173,7 +2360,7 @@ it as `error`, and a `JevStop` cannot claim `done` or `ready`. The `next_step`
 sentences follow fastbrowse's MCP server (MIT).
 
 **Handoffs are outcomes, not failed tool calls.** `needs_input`,
-`needs_confirmation` and `access_denied` are Jev doing its job: it found what
+`needs_login`, `needs_confirmation` and `access_denied` are Jev doing its job: it found what
 only the caller can settle and stopped with nothing dispatched. Roder's
 runtime stops a turn that is not interactive after five tool results in a row
 with `is_error` set, so reporting each of these as an error made a caller that
@@ -2305,6 +2492,30 @@ nothing on a canvas or behind an upload. More behaviours worth knowing:
   action executed" or "nothing typed") rather than a bare timeout. No
   operation offers more than 255 targets, TypeSafe's limit for one choice.
   This diverges from upstream's three attempts on 429, 503 and 529.
+- A hosted Jev request the service answers with a 5xx twice in a row stops
+  being retried as a batch: each of its questions is asked on its own, within
+  the retries the batch had left (each question's first request is its own;
+  any retry it needs comes out of the batch's), and the answers and usage are
+  merged, so the decision's usage counts every request. The gateway sheds
+  dense requests far more often than small ones (after fastbrowse 0.5.5 and
+  0.5.7). If a question alone is still refused after its retries, and the
+  request was large (state plus its largest question estimated above 24,000
+  bytes, about 8k tokens), the step is asked again smaller: first without the
+  targets outside the viewport (`context_window.offscreen_targets_omitted`
+  says how many, and that scrolling reaches them), then paged as an oversized
+  request is, halving the page on each further refusal. The decision's
+  `usage.context_budget.shed` counts these. A small request still refused
+  ends the run `unavailable`, as before.
+- A choice with a single option is answered without asking: that option with
+  probability 1 and confidence 1, and the question is left out of the request
+  (after fastbrowse's `asking_open`). A screenshot only that question carried
+  is left out with it, as it is from a split batch's parts that do not refer
+  to it. The step's operation question still
+  lists the target among each operation's `available_targets`. Probed
+  through OpenRouter on 2026-10-30, `jev-1.14-20261014` accepts such a choice
+  and answers it the same way, so this saves its tokens (60 of 462 input
+  tokens on a minimal step) rather than avoiding a refusal; fastbrowse saw
+  the TypeSafe route refuse one with a 503.
 - Embedded hosts get each decision's operation and target confidence
   (`JevDecision::call_confidence()` is the lower of the two) and the model
   version the service reports, in `JevRunResult.decisions` and on each action
@@ -2410,7 +2621,7 @@ put the old value back makes the result an error, "the choice did not stick".
 | `budget_exceeded` on Jev's own budget | yes |
 | `blocked` because the start page did not load, or a page was outside `JEV_ALLOWED_ORIGINS` | no |
 | `blocked` after Jev declined a confirm or prompt | no: that question is the caller's |
-| `needs_input`, `needs_confirmation`, `access_denied` | no: a different driver does not fix them, and must never get around a block or a confirmation |
+| `needs_input`, `needs_login`, `needs_confirmation`, `access_denied` | no: a different driver does not fix them, and must never get around a block or a confirmation |
 | `error` after the decision service kept sending replies Jev could not use (`decision_unusable`: three in a row, each failing validation, a refusal, or with a body that cannot be decoded) | yes, trigger `decision_unusable`; the owner's decision. Not after a declined confirm or prompt |
 | `done`, `timed_out`, `unavailable`, and any other `error` (an unreachable provider, a refused key, billing or access, a rate limit, a text-helper failure) | no |
 
@@ -2638,6 +2849,46 @@ outside) passes with Jev alone; the corpus tasks `popover_escape`,
 `popover_button` and `popover_outside` pin it, and `escape_popup`'s list is
 now closed the same way. A popover that only an unlabelled icon closes
 stays covered (`popover_icon_fallback`), and the fallback closes it.
+
+**Bands fixed to the window.** A band (an anchored ad, a sticky footer, a
+chat bubble) covers a place on the screen, not a control, and dismissing it
+pressed into it: a footer ad over a login form's button had Jev press Escape,
+then press outside the band, then stop covered (expandtesting-login, as
+fastbrowse found it). `band.js` now classes what covers the target first.
+It tries the centre and the four quarter points, as act.js does: a point that
+is the target's own (its inside, its label, a label's text) means nothing
+covers it, so a field's own decoration over its centre never refuses Enter;
+otherwise what took the centre is classed: a dialog, menu, listbox, popover or `aria-modal` element is an
+obstruction; an element positioned fixed or sticky, smaller than half the
+window and within 48 px of one of its edges, is a band, unless its text
+speaks of cookies or consent (a consent bar asks its question first and is
+left to banner refusal, as `cookie_platform_off` pins); anything else
+(a cover over most of the window, a box floating mid-window, a panel in the
+page's flow) is neither. Only a band is routed around (`route_around`, after
+fastbrowse's page/act.rs, MIT): the target is scrolled to the centre, the start
+and the end of what scrolls it in turn, a frame is let draw (the page's
+scroll handlers run), and the first alignment where a point is the target's
+own is pressed as any click, with its guard re-checked under the pointer. The
+step records `uncovered: "scrolled it clear of \"Advertisement\""`. Where no
+alignment frees it (a page that cannot scroll), and a band still covers it,
+the target is pressed from the keyboard with the key its semantics answer to
+(Space for a checkbox, radio or switch; Enter for a button, link, summary,
+tab, menu item, option or tree item; nothing else is pressed), a field is
+focused and typed into, and a select is chosen by script. The target is
+focused first, and right before the key the control's guard and what covers
+it are checked again (`keys_reach`): a focus or scroll handler that
+repurposed the control is a stale page, and one that opened a menu or
+dialog over it leaves it covered, with no key sent. Jev's own PRESS_ENTER
+goes through the same check, so Enter in a field a dialog or backdrop
+covers is now `Covered` too. Nothing in the band is pressed
+(`anchored-form.html`, with and without a page that scrolls, and with the
+band turned into a dialog, a menu or a full-window cover;
+`cover_tests.rs`). The fallback's own keyboard rule stays stricter: it
+refuses Enter or Space on a focused control under any cover
+(`fallback_rule_tests::a_covered_control_is_not_pressed_by_keyboard`, which
+now lets Jev give up at once, since its press on the bare backdrop moved the
+page's focus starting point past the button and the fallback's Tab then left
+the document, so the rule went untested).
 
 Escape and Enter are now sent without a native key code. Escape's Windows
 code 27, sent as macOS's native key code too, opened Chrome's "About Chrome"
@@ -2909,6 +3160,26 @@ secret field is offered to type into:
   from the page afterwards (address, title, text, labels, values, contexts,
   dialog messages, refusals and `stopped_because`), for a page that shows
   it back.
+- **In every encoding (`secret.rs`, `secret/forms.rs`).** A page or an
+  address rarely shows a secret as typed: a GET form sends `p@ss word&x` as
+  `password=p%40ss+word%26x`, and a debug echo or an error JSON escapes a
+  quote as `\"`. Following fastbrowse's `Redactor` (MIT), each typed secret
+  is looked for as typed, with its whitespace collapsed (as accessible
+  names and `innerText` do), percent-encoded as a form submission and as
+  `encodeURIComponent` write it (each with `%20` and with `+` for a space),
+  and JSON-escaped with and without `\uXXXX` for non-ASCII. Before, only the
+  raw value was scrubbed from the address and text, and the JSON-escaped
+  form only from the DOM snapshot, so the encoded password in a GET form's
+  address reached the decision request, the history, the evidence and the
+  digest. Matches that overlap become one `[secret]`, and a value inside
+  an existing `[secret]` is left, so scrubbing twice changes nothing (a
+  secret such as `secret` no longer turns `[secret]` into `[[secret]]`).
+  The host of an address on the origin where the secret was typed keeps
+  its name: a password that is an ordinary word (`practice` typed on
+  `practice.expandtesting.com`) would otherwise blank out the site's own
+  host in every address the run reports. It is still scrubbed from that
+  address's userinfo, path, query and fragment, and from any other host.
+  The origins travel with the secret to the session's next call.
 - **Where the value comes from.** The embedding host's
   `JevTextValueResolver` is the preferred source: given the field context
   (whose `field.input_type` says it is a secret), it can return an opaque
@@ -2917,7 +3188,9 @@ secret field is offered to type into:
   text helper derives the value from the goal like any other field, but
   answers for a secret field only with a value written in the goal word for
   word; anything else, including a code it made up, ends the run
-  `needs_input` with "The goal gives no value for the field "Code"; nothing
+  `needs_login` at the sign-in wall (a `one_time_code` wall for a code
+  field), with "Sign-in required at <origin>: the page asks for a one-time
+  code ("Code"). The goal gives no value for the field "Code"; nothing
   typed." A one-time code is normally not known when the task starts, so
   that is the usual outcome for one.
 - **What a goal holding a secret means.** The goal is sent to the hosted
@@ -2939,7 +3212,8 @@ Where a secret can still leak:
 - The goal, by the caller's choice, as above.
 - A typed secret shorter than 4 characters is not scrubbed from what the
   page shows back; nor is one the page transforms before showing it (upper
-  case, spaced, masked partly).
+  case, spaced, masked partly, base64, or percent-encoded with lower-case
+  hex).
 - The page and its server receive it, which is the point; a page script can
   send it anywhere.
 - A supervisor's own resolver, browser adapter or logs are outside Jev.

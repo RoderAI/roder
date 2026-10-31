@@ -7,9 +7,17 @@
 //! holds is never read. The value Jev types into one is recorded as
 //! [`SECRET`] on the step, and the loop scrubs it from everything it later
 //! reads off the page, in case the page shows it back (a "show password"
-//! toggle, an echo in an error message, a GET form's address).
+//! toggle, an echo in an error message, a GET form's address). It is found
+//! in every form a page or an address carries it in (see [`forms`]): a GET
+//! form puts `p@ss word` in the address as `p%40ss+word`.
+
+mod forms;
+#[cfg(test)]
+mod tests;
 
 use serde_json::Value;
+
+use forms::{forms, hosts, origin_of};
 
 /// What a step, a text-helper record or a scrubbed page shows instead of a
 /// typed secret. Its length is not given.
@@ -28,81 +36,157 @@ pub(crate) fn is_secret(action: &Value) -> bool {
     )
 }
 
+/// One typed secret: every form it is carried in, and the origins it was
+/// typed on.
+#[derive(Clone, PartialEq, Eq)]
+struct Secret {
+    forms: Vec<String>,
+    typed_on: Vec<String>,
+}
+
 /// The secrets typed in one run, kept only in memory to scrub them from
 /// what the page shows. A session hands them to its next call, so a value
 /// typed in one call is still scrubbed from the pages later calls read.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct Secrets(Vec<String>, bool);
+pub(crate) struct Secrets {
+    kept: Vec<Secret>,
+    /// Any secret was typed, including one too short to keep.
+    typed: bool,
+}
 
 /// Never the values: a result is debug-printed in logs and test failures.
 impl std::fmt::Debug for Secrets {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(formatter, "Secrets({} kept)", self.0.len())
+        write!(formatter, "Secrets({} kept)", self.kept.len())
     }
 }
 
 impl Secrets {
     /// Any secret input, including short values not retained for text scrubbing.
     pub(crate) fn has_input(&self) -> bool {
-        self.1
+        self.typed
     }
 
     /// How many are remembered.
     pub(crate) fn len(&self) -> usize {
-        self.0.len()
+        self.kept.len()
     }
 
     /// Remember every secret `other` holds too.
     pub(crate) fn extend(&mut self, other: &Secrets) {
-        self.1 |= other.1;
-        for secret in &other.0 {
-            self.remember(secret);
-        }
-    }
-
-    pub(crate) fn remember(&mut self, value: &str) {
-        self.1 = true;
-        let value = value.trim();
-        if value.chars().count() >= SCRUB_MIN_CHARS && !self.0.iter().any(|known| known == value) {
-            self.0.push(value.to_string());
-        }
-    }
-
-    /// `text` with every remembered secret replaced by [`SECRET`].
-    pub(crate) fn scrub(&self, text: &str) -> String {
-        self.0.iter().fold(text.to_string(), |text, secret| {
-            text.replace(secret.as_str(), SECRET)
-        })
-    }
-
-    /// DOM labels are JSON string literals. Match their escaped contents as
-    /// well as plain text and whitespace normalized by accessible-name helpers.
-    /// The serializer keeps short labels whole and replaces long ones entirely,
-    /// so an unmatched secret prefix cannot escape through label truncation.
-    pub(crate) fn scrub_dom(&self, text: &str) -> String {
-        self.0.iter().fold(text.to_string(), |mut text, secret| {
-            // ECMAScript \s includes BOM and excludes NEXT LINE (U+0085).
-            let normalized = secret
-                .split(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            for value in [secret.as_str(), normalized.as_str()] {
-                if value.is_empty() {
-                    continue;
+        self.typed |= other.typed;
+        for secret in &other.kept {
+            match self
+                .kept
+                .iter_mut()
+                .find(|known| known.forms == secret.forms)
+            {
+                Some(known) => {
+                    for origin in &secret.typed_on {
+                        if !known.typed_on.contains(origin) {
+                            known.typed_on.push(origin.clone());
+                        }
+                    }
                 }
-                let quoted = serde_json::to_string(value).expect("string serialization");
-                let escaped = &quoted[1..quoted.len() - 1];
-                text = text.replace(escaped, SECRET).replace(value, SECRET);
+                None => self.kept.push(secret.clone()),
             }
-            text
-        })
+        }
+    }
+
+    /// Remember a secret typed on a page whose address is not known.
+    pub(crate) fn remember(&mut self, value: &str) {
+        self.remember_at(value, None);
+    }
+
+    /// Remember a secret typed on the page at `url`. The host of an address
+    /// on that origin keeps the value: a password that is an ordinary word
+    /// must not blank out the site's own name in every address the run
+    /// reports, and the site publishes its host anyway.
+    pub(crate) fn remember_at(&mut self, value: &str, url: Option<&str>) {
+        self.typed = true;
+        let value = value.trim();
+        if value.chars().count() < SCRUB_MIN_CHARS {
+            return;
+        }
+        let secret = Secret {
+            forms: forms(value),
+            typed_on: url.and_then(origin_of).into_iter().collect(),
+        };
+        self.extend(&Secrets {
+            kept: vec![secret],
+            typed: true,
+        });
+    }
+
+    /// `text` with every remembered secret replaced by [`SECRET`], in any
+    /// form it is carried in: as typed, with its whitespace collapsed as
+    /// accessible names do, percent-encoded (`%20` or `+` for a space, as a
+    /// query string or `encodeURIComponent` writes it) or escaped inside a
+    /// JSON string. A value already replaced is left, so scrubbing twice
+    /// changes nothing.
+    pub(crate) fn scrub(&self, text: &str) -> String {
+        let spans = self.spans(text);
+        if spans.is_empty() {
+            return text.to_string();
+        }
+        let mut out = String::with_capacity(text.len());
+        let mut at = 0;
+        for (start, end) in spans {
+            out.push_str(&text[at..start]);
+            out.push_str(SECRET);
+            at = end;
+        }
+        out.push_str(&text[at..]);
+        out
+    }
+
+    /// Where the secrets sit in `text`, as byte ranges merged where they
+    /// overlap: never inside a [`SECRET`] marker, nor wholly inside the host
+    /// of an address on an origin the secret was typed on.
+    fn spans(&self, text: &str) -> Vec<(usize, usize)> {
+        if self.kept.is_empty() {
+            return Vec::new();
+        }
+        let markers: Vec<(usize, usize)> = text
+            .match_indices(SECRET)
+            .map(|(at, _)| (at, at + SECRET.len()))
+            .collect();
+        let hosts = match self.kept.iter().any(|secret| !secret.typed_on.is_empty()) {
+            true => hosts(text),
+            false => Vec::new(),
+        };
+        let mut found = Vec::new();
+        for secret in &self.kept {
+            for form in &secret.forms {
+                let mut from = 0;
+                while let Some(offset) = text[from..].find(form.as_str()) {
+                    let start = from + offset;
+                    let end = start + form.len();
+                    let within = |lo: usize, hi: usize| lo <= start && end <= hi;
+                    let published = hosts.iter().any(|(lo, hi, origin)| {
+                        within(*lo, *hi) && secret.typed_on.contains(origin)
+                    });
+                    if !published && !markers.iter().any(|(lo, hi)| within(*lo, *hi)) {
+                        found.push((start, end));
+                    }
+                    // One character on, so overlapping occurrences are found.
+                    from = start + text[start..].chars().next().map_or(1, char::len_utf8);
+                }
+            }
+        }
+        found.sort_by_key(|(start, end)| (*start, std::cmp::Reverse(*end)));
+        let mut merged: Vec<(usize, usize)> = Vec::new();
+        for (start, end) in found {
+            match merged.last_mut() {
+                Some(last) if start < last.1 => last.1 = last.1.max(end),
+                _ => merged.push((start, end)),
+            }
+        }
+        merged
     }
 
     fn scrub_in_place(&self, value: &mut Value) {
-        if let Value::String(text) = value
-            && self.0.iter().any(|secret| text.contains(secret.as_str()))
-        {
+        if let Value::String(text) = value {
             *text = self.scrub(text);
         }
     }
@@ -116,34 +200,23 @@ impl Secrets {
     }
 
     /// Scrub the parts of an observation that leave the loop: its address,
-    /// title and text (and the field values the text holds), each action's
-    /// label, value, current value, context
-    /// and section, the dialogs' messages, and the frames' origins and
-    /// text. The freshness marker, page key
-    /// and guards are compared with the live page and never leave it, so
-    /// they are kept; so is a select option's value, which choosing it needs.
+    /// title and text (and the field values the text holds), its DOM and
+    /// semantic snapshots, each action's label, value, current value,
+    /// context, section and form, the dialogs' messages, and the frames'
+    /// origins and text. The freshness marker, page key and guards are
+    /// compared with the live page and never leave it, so they are kept; so
+    /// is a select option's value, which choosing it needs.
     pub(crate) fn scrub_observation(&self, observation: &mut Value) {
-        if self.0.is_empty() {
+        if self.kept.is_empty() {
             return;
         }
-        for key in ["url", "title", "text"] {
+        for key in ["url", "title", "text", "dom_snapshot"] {
             if let Some(value) = observation.get_mut(key) {
                 self.scrub_in_place(value);
             }
         }
-        if let Some(Value::String(dom)) = observation.get_mut("dom_snapshot") {
-            *dom = self.scrub_dom(dom);
-        }
-        fn scrub_snapshot(secrets: &Secrets, value: &mut Value) {
-            match value {
-                Value::String(text) => *text = secrets.scrub_dom(text),
-                Value::Array(items) => items.iter_mut().for_each(|v| scrub_snapshot(secrets, v)),
-                Value::Object(map) => map.values_mut().for_each(|v| scrub_snapshot(secrets, v)),
-                _ => {}
-            }
-        }
         if let Some(snapshot) = observation.get_mut("snapshot") {
-            scrub_snapshot(self, snapshot);
+            self.scrub_evidence(snapshot);
         }
         crate::semantic::refresh(observation);
         for key in ["disabled_controls", "typed_values"] {
@@ -177,109 +250,5 @@ impl Secrets {
                 }
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use serde_json::json;
-
-    use super::*;
-
-    #[test]
-    fn dom_scrubbing_handles_json_escaping_and_accessible_name_whitespace() {
-        for secret in [
-            "ab\"cd",
-            "ab\\cd",
-            "ab\ncd",
-            "ab  cd",
-            "ab\u{feff}cd",
-            "ab\u{85}cd",
-        ] {
-            let mut secrets = Secrets::default();
-            secrets.remember(secret);
-            let normalized = secret
-                .split(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<_>>()
-                .join(" ");
-            let mut page = json!({"dom_snapshot":format!("- text {}\n- button {}\n- button Save", serde_json::to_string(secret).unwrap(), serde_json::to_string(&normalized).unwrap()),"actions":[]});
-            secrets.scrub_observation(&mut page);
-            assert_eq!(
-                page["dom_snapshot"],
-                "- text \"[secret]\"\n- button \"[secret]\"\n- button Save"
-            );
-        }
-    }
-
-    #[test]
-    fn short_secret_input_survives_session_transfer_without_storing_the_value() {
-        let mut first = Secrets::default();
-        first.remember("12");
-        assert_eq!(first.len(), 0);
-        assert!(first.has_input());
-        let mut next = Secrets::default();
-        next.extend(&first);
-        assert!(next.clone().has_input());
-        assert_eq!(next.len(), 0);
-        let mut page = json!({"actions":[{"form":{"fields":["echo-long-secret"],"submit_buttons":["echo-long-secret"]}}],"disabled_controls":[{"label":"echo-long-secret"}]});
-        next.remember("echo-long-secret");
-        next.scrub_observation(&mut page);
-        assert!(!page.to_string().contains("echo-long-secret"));
-    }
-
-    #[test]
-    fn only_passwords_and_one_time_codes_are_secret() {
-        assert!(is_secret(&json!({"input_type": "password"})));
-        assert!(is_secret(&json!({"input_type": "one-time-code"})));
-        assert!(!is_secret(&json!({"input_type": "text"})));
-        assert!(!is_secret(&json!({"kind": "fill"})));
-    }
-
-    #[test]
-    fn a_typed_secret_is_scrubbed_from_what_leaves_the_loop() {
-        let mut secrets = Secrets::default();
-        secrets.remember("hunter2-7431");
-        secrets.remember("12");
-        let mut page = json!({
-            "url": "https://x.test/login?password=hunter2-7431",
-            "title": "Hi",
-            "text": "Wrong password hunter2-7431 for 12 users",
-            "marker": ["hunter2-7431"],
-            "actions": [
-                {"kind": "fill", "label": "Shown hunter2-7431", "value": "hunter2-7431"},
-                {"kind": "select", "label": "x → hunter2-7431", "value": "hunter2-7431"},
-                {"kind": "click", "label": "Continue", "section": "Code hunter2-7431 sent"},
-            ],
-            "dialogs": [{"type": "alert", "message": "hunter2-7431?", "accepted": true}],
-            "frames": [{"origin": "https://accounts.test", "text": "Code hunter2-7431 confirmed"}],
-        });
-        secrets.scrub_observation(&mut page);
-        assert_eq!(page["url"], "https://x.test/login?password=[secret]");
-        // A two-character secret is not scrubbed.
-        assert_eq!(page["text"], "Wrong password [secret] for 12 users");
-        assert_eq!(page["actions"][0]["value"], "[secret]");
-        assert_eq!(page["actions"][1]["label"], "x → [secret]");
-        assert_eq!(page["actions"][1]["value"], "hunter2-7431");
-        assert_eq!(page["dialogs"][0]["message"], "[secret]?");
-        // The heading a control sits under, and a frame showing it back.
-        assert_eq!(page["actions"][2]["section"], "Code [secret] sent");
-        assert_eq!(page["frames"][0]["text"], "Code [secret] confirmed");
-        // Compared with the live page, never reported.
-        assert_eq!(page["marker"][0], "hunter2-7431");
-    }
-
-    #[test]
-    fn the_field_values_the_text_lists_are_scrubbed_with_it() {
-        let mut secrets = Secrets::default();
-        secrets.remember("hunter2-7431");
-        let mut page = json!({
-            "text": "Note\nhunter2-7431 here\nSave",
-            "typed_values": ["hunter2-7431 here", "plain"],
-        });
-        secrets.scrub_observation(&mut page);
-        // Still the same lines, so the page text can be told from the fields'.
-        assert_eq!(page["text"], "Note\n[secret] here\nSave");
-        assert_eq!(page["typed_values"], json!(["[secret] here", "plain"]));
     }
 }

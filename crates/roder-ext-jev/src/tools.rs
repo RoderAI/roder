@@ -39,7 +39,9 @@ pub fn jev_tool_spec() -> ToolSpec {
              itself, and serves Jev's typing helper from the current model when it is \
              OpenAI-compatible. The values it types come from the goal; it never guesses one, \
              and stops with status needs_input naming a field whose value the goal does not \
-             give. It can type into password and one-time-code fields, and never reads or \
+             give. A sign-in it cannot make (a password or one-time code the goal does not \
+             give, or a single sign-on wall) ends with status needs_login and a wall saying \
+             what it asks for. It can type into password and one-time-code fields, and never reads or \
              reports what such a field holds or what it typed there. The goal itself is sent \
              to the hosted decision service and to the typing model and is stored in the \
              transcript, so a password or code placed in the goal goes there too; an \
@@ -146,7 +148,7 @@ impl ToolExecutor for JevTool {
 /// The tool's result for the data a finished call returned: the text the
 /// caller reads, logged when `JEV_SESSION_LOG` asks, and whether the call
 /// counts as a failed tool call (see [`handoff`]: a first `needs_input`,
-/// `needs_confirmation` or `access_denied` does not).
+/// `needs_login`, `needs_confirmation` or `access_denied` does not).
 pub(crate) fn finished(call: ToolCall, thread: &str, mut data: serde_json::Value) -> ToolResult {
     let text = report::tool_text(&mut data);
     if let Some(dir) = session_log::dir() {

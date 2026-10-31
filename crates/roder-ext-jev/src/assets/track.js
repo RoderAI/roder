@@ -5,10 +5,14 @@
 (() => {
   const state = window.__jevFast ||= {ids:new WeakMap(), nodes:new Map(), next:1};
   if (state.lastMutation !== undefined) return;
-  const changed = () => { state.lastMutation = performance.now(); };
-  changed();
+  // `lastDom` is the last change to the document itself and `lastInput` the
+  // last input, so settle.js can tell a page that has not reacted to an
+  // input yet (one waiting on its own request) from one that has.
+  const mutated = () => { state.lastMutation = state.lastDom = performance.now(); };
+  const touched = () => { state.lastMutation = state.lastInput = performance.now(); };
+  mutated();
   const options={subtree:true, childList:true, characterData:true, attributes:true};
-  const observer=new MutationObserver(changed);
+  const observer=new MutationObserver(mutated);
   // An input handler can defer a redraw or a navigation without mutating
   // yet, so the clock also restarts at the input itself.
   const inputs=['input','change','scroll','wheel','pointermove','pointerdown','pointerup',
@@ -20,7 +24,7 @@
     if (watched.has(root)) return;
     watched.add(root);
     observer.observe(root, options);
-    if (root.nodeType===9) for (const event of inputs) root.addEventListener(event, changed, true);
+    if (root.nodeType===9) for (const event of inputs) root.addEventListener(event, touched, true);
   };
   state.watch(document);
   // What a field's suggestion lists show: the visible options of the lists

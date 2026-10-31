@@ -18,6 +18,11 @@
 //! No retry starts that would outlast the run (see [`RUN_DEADLINE`]), so the
 //! run reports the provider's failure rather than its own timeout.
 //!
+//! A caller may mark a request as a batch it can split (see [`Schedule`]):
+//! after two 5xx answers in a row it gives up its retries, so the caller can
+//! ask the batch's parts one at a time within the retries it had left
+//! (fastbrowse's `asking_split`, reimplemented).
+//!
 //! A reply sent as server-sent events (the Codex backend's Responses API
 //! only streams) is read to its end and reduced to its final `response`
 //! object (see [`sse`]), so callers see one JSON value either way.
@@ -171,6 +176,32 @@ struct Attempt {
     retry_after: Option<Duration>,
 }
 
+/// How many 5xx answers in a row make a splittable request give up its
+/// retries (see [`Schedule::split`]).
+pub(crate) const SPLIT_AFTER_5XX: usize = 2;
+
+/// Where a request starts in its retry schedule.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Schedule {
+    /// Retries this call already spent: a part of a split batch inherits
+    /// only the retries the batch had left.
+    pub(crate) spent: usize,
+    /// Whether the request is a batch that may be asked again in parts.
+    pub(crate) split: bool,
+}
+
+/// Why [`JsonPoster::post_scheduled`] returned no JSON.
+#[derive(Debug)]
+pub(crate) enum Posted {
+    Failed(PostFailure),
+    /// The provider answered with a 5xx [`SPLIT_AFTER_5XX`] times in a row:
+    /// the caller asks the batch's parts one at a time, `spent` retries in.
+    Split {
+        spent: usize,
+        failure: PostFailure,
+    },
+}
+
 /// A JSON POST client that owns its connection pool and retry policy.
 pub(crate) struct JsonPoster {
     client: reqwest::Client,
@@ -204,11 +235,35 @@ impl JsonPoster {
         headers: &[(&str, String)],
         body: &Value,
     ) -> Result<Value, PostFailure> {
+        match self
+            .post_scheduled(url, key, headers, body, Schedule::default())
+            .await
+        {
+            Ok((value, _)) => Ok(value),
+            Err(Posted::Failed(failure) | Posted::Split { failure, .. }) => Err(failure),
+        }
+    }
+
+    /// [`Self::post_with`] from `schedule.spent` retries in, returning the
+    /// reply with the number of requests sent for it. With `schedule.split`,
+    /// a request the provider answers with a 5xx [`SPLIT_AFTER_5XX`] times
+    /// in a row gives up its remaining retries as [`Posted::Split`], so the
+    /// caller can ask its parts one at a time within them.
+    pub(crate) async fn post_scheduled(
+        &self,
+        url: &str,
+        key: &str,
+        headers: &[(&str, String)],
+        body: &Value,
+        schedule: Schedule,
+    ) -> Result<(Value, usize), Posted> {
         let deadline = RUN_DEADLINE
             .try_with(|deadline| deadline.checked_sub(DEADLINE_RESERVE).unwrap_or(*deadline))
             .ok();
-        let mut retries = self.policy.delays.iter();
+        let mut retries = self.policy.delays.iter().skip(schedule.spent);
         let mut resends = 0;
+        let mut sent = 0;
+        let mut server_errors = 0;
         loop {
             // An attempt still waiting at the deadline fails as a timeout,
             // which the caller reports, rather than as the run's timeout.
@@ -218,9 +273,14 @@ impl JsonPoster {
                     .min(deadline.saturating_duration_since(Instant::now()))
                     .max(Duration::from_millis(1))
             });
+            sent += 1;
             let attempt = match self.attempt(url, key, headers, body, timeout).await {
-                Ok(value) => return Ok(value),
+                Ok(value) => return Ok((value, sent)),
                 Err(attempt) => attempt,
+            };
+            server_errors = match attempt.failure {
+                PostFailure::Status(status, _) if status >= 500 => server_errors + 1,
+                _ => 0,
             };
             let allowed = match attempt.retry {
                 Retry::Never => false,
@@ -232,11 +292,17 @@ impl JsonPoster {
             };
             let delay = match retries.next() {
                 Some(delay) if allowed => attempt.retry_after.unwrap_or(*delay),
-                _ => return Err(attempt.failure),
+                _ => return Err(Posted::Failed(attempt.failure)),
             };
+            if schedule.split && server_errors >= SPLIT_AFTER_5XX {
+                return Err(Posted::Split {
+                    spent: schedule.spent + sent,
+                    failure: attempt.failure,
+                });
+            }
             // A retry has to leave time for an answer before the run ends.
             if deadline.is_some_and(|deadline| Instant::now() + delay >= deadline) {
-                return Err(attempt.failure);
+                return Err(Posted::Failed(attempt.failure));
             }
             tokio::time::sleep(delay).await;
         }
@@ -375,5 +441,7 @@ fn retry_after(headers: &HeaderMap, cap: Duration) -> Option<Duration> {
     None
 }
 
+#[cfg(test)]
+mod split_tests;
 #[cfg(test)]
 pub(crate) mod tests;

@@ -42,6 +42,7 @@ mod text_helper;
 mod text_model;
 mod tools;
 mod usage;
+mod wall;
 
 use std::sync::Arc;
 
@@ -59,7 +60,7 @@ pub use engine::{
     JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
     JevEngineConfig, JevFrameText, JevOmitted, JevPageFacts, JevRunResult, JevStatus, JevStop,
     JevStopCause, JevSuppressedClick, JevSuppressedKind, JevTextValue, JevTextValueResolver,
-    StaleObservation,
+    JevWall, JevWallKind, StaleObservation,
 };
 pub use scope::JevOriginScope;
 pub use tools::{JevToolContributor, jev_tool_spec};

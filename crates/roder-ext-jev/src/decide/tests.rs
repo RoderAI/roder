@@ -69,6 +69,7 @@ fn what_covered_a_step_is_not_in_the_chooser_request() {
     for step in &mut history {
         step["covered"] = json!(true);
         step["covered_by"] = json!("Spring sale popup");
+        step["covered_controls"] = json!(["No thanks, take me to the site"]);
     }
     let (body, _, _) = request_body(
         &page,
@@ -80,6 +81,7 @@ fn what_covered_a_step_is_not_in_the_chooser_request() {
     let serialized = serde_json::to_string(&body).unwrap();
     assert_eq!(serialized, fixture["serialized"].as_str().unwrap());
     assert!(!serialized.contains("Spring sale popup"));
+    assert!(!serialized.contains("take me to the site"));
 }
 
 #[test]

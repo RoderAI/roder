@@ -15,6 +15,13 @@
 //! task is needed. Finding the browser websocket, decoding a message and the
 //! dialog rule are shared with Roder's direct CDP tools
 //! (`roder_ext_chrome::direct::devtools`), which Jev's fallback drives.
+//!
+//! The same reads keep the [`requests`] ledger from the Network events of
+//! the sessions that enabled that domain, and every `Input.*` call marks it,
+//! so the settle can wait for a fetch or XHR request the action started
+//! ([`Connection::await_requests`]).
+
+mod requests;
 
 use std::time::Duration;
 
@@ -26,6 +33,7 @@ use tokio_tungstenite::tungstenite::Message;
 use roder_ext_chrome::direct::devtools::{accepts_dialog, browser_websocket, decode_message};
 
 use crate::engine::JevDialog;
+use requests::Requests;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// A dialog message longer than this is cut; it is page text, not a document.
@@ -38,6 +46,8 @@ pub(crate) struct Connection {
     next_id: u64,
     /// Dialogs answered since the last [`Connection::take_dialogs`].
     dialogs: Vec<JevDialog>,
+    /// The fetch and XHR requests the pages have open.
+    requests: Requests,
 }
 
 impl Connection {
@@ -56,12 +66,41 @@ impl Connection {
             socket,
             next_id: 1,
             dialogs: Vec::new(),
+            requests: Requests::default(),
         })
     }
 
     /// The dialogs answered since the last call to this, oldest first.
     pub(crate) fn take_dialogs(&mut self) -> Vec<JevDialog> {
         std::mem::take(&mut self.dialogs)
+    }
+
+    /// The request mark the inputs sent since the last call to this took,
+    /// if any were sent.
+    pub(crate) fn take_input_mark(&mut self) -> Option<u64> {
+        self.requests.take_mark()
+    }
+
+    /// Whether a fetch or XHR request `session`'s page started after `mark`
+    /// is still waiting for its response.
+    pub(crate) fn requests_open_since(&self, session: &str, mark: u64) -> bool {
+        self.requests.open_since(session, mark)
+    }
+
+    /// Read events, answering dialogs, until no request `session`'s page
+    /// started after `mark` is open. False when `deadline` came first.
+    pub(crate) async fn await_requests(
+        &mut self,
+        session: &str,
+        mark: u64,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<bool> {
+        while self.requests.open_since(session, mark) {
+            if self.next_message("a response", deadline).await?.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn send_id(&mut self) -> u64 {
@@ -120,22 +159,16 @@ impl Connection {
         session: Option<&str>,
     ) -> anyhow::Result<Value> {
         let id = self.send_id();
+        if method.starts_with("Input.") {
+            self.requests.input_sent();
+        }
         self.send(id, method, params, session).await?;
         let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
         loop {
-            let message = tokio::time::timeout_at(deadline, self.socket.next())
-                .await
-                .map_err(|_| anyhow::anyhow!("{method} timed out"))?
-                .context("Chrome closed the DevTools connection")?
-                .with_context(|| format!("read the reply to {method}"))?;
-            let Message::Text(text) = message else {
-                continue;
-            };
-            let value = decode_message(&text)?;
-            if value["method"] == "Page.javascriptDialogOpening" {
-                self.answer_dialog(&value).await?;
-                continue;
-            }
+            let value = self
+                .next_message(method, deadline)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("{method} timed out"))?;
             if value["id"].as_u64() != Some(id) {
                 continue;
             }
@@ -144,6 +177,35 @@ impl Connection {
                 bail!("{method} failed: {detail}");
             }
             return Ok(value.get("result").cloned().unwrap_or(Value::Null));
+        }
+    }
+
+    /// The next message, an event already answered (a dialog) or noted (a
+    /// request), or `None` once `deadline` passes; `what` names the read in
+    /// errors. Only the read itself is bounded, so a dialog's answer is
+    /// never cut off half sent.
+    async fn next_message(
+        &mut self,
+        what: &str,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<Option<Value>> {
+        loop {
+            let Ok(message) = tokio::time::timeout_at(deadline, self.socket.next()).await else {
+                return Ok(None);
+            };
+            let message = message
+                .context("Chrome closed the DevTools connection")?
+                .with_context(|| format!("read the reply to {what}"))?;
+            let Message::Text(text) = message else {
+                continue;
+            };
+            let value = decode_message(&text)?;
+            if value["method"] == "Page.javascriptDialogOpening" {
+                self.answer_dialog(&value).await?;
+            } else if value.get("method").is_some() {
+                self.requests.on_event(&value);
+            }
+            return Ok(Some(value));
         }
     }
 }

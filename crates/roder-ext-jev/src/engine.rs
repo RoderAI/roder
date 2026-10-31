@@ -16,7 +16,8 @@ use crate::agent::Agent;
 use crate::prompts::MAX_STEPS;
 use crate::scope::JevOriginScope;
 use crate::secret::Secrets;
-pub use covered::Covered;
+pub use crate::wall::{JevWall, JevWallKind};
+pub use covered::{COVER_CONTROLS, Covered};
 pub use records::{
     JevActionRecord, JevControl, JevDecisionRecord, JevFrameText, JevOmitted, JevPageFacts,
     JevRunResult, JevSuppressedClick, JevSuppressedKind,
@@ -48,9 +49,10 @@ pub struct JevActOutcome {
     /// Why the page did not keep what the action asked for: a select it put
     /// back, or a fill whose text did not stay in the field.
     pub refused: Option<String>,
-    /// The target was covered by a popover, menu or dialog, and the browser
-    /// dismissed it first (how: Escape, its close control, or a press
-    /// outside it) before acting.
+    /// The target was covered, and the browser got past what covered it
+    /// before acting (how: Escape, a popover's close control or a press
+    /// outside it; scrolling it clear of a band fixed to the window; or
+    /// the keyboard, where the band still covers it).
     pub uncovered: Option<String>,
 }
 
@@ -175,6 +177,11 @@ pub enum JevStatus {
     /// A field needs a value nothing can supply: no text model, or the text
     /// model found none in the goal.
     NeedsInput,
+    /// The run reached a sign-in it cannot complete: a password or one-time
+    /// code (or a field of their form) the goal gives no value for, a
+    /// `blocked` stop on a page that shows a sign-in wall, or an HTTP 401
+    /// with nothing to act on. The result's `wall` says what it asks for.
+    NeedsLogin,
     /// A model provider stayed unreachable or overloaded through its retries.
     Unavailable,
     /// Anything else that ended the run early.
@@ -183,9 +190,9 @@ pub enum JevStatus {
     /// may not be undone (see [`JevEngineConfig::with_irreversible_gate`]);
     /// `stopped_because` names the control. Nothing was dispatched.
     NeedsConfirmation,
-    /// The site refused automated access: an HTTP 401, 403 or 429 page, a
-    /// challenge or "unusual traffic" wall, or an "Access Denied" page with
-    /// nothing to act on. Found on the first observation, it ends the run
+    /// The site refused automated access: an HTTP 403 or 429 page, a 401
+    /// that shows a challenge, a challenge or "unusual traffic" wall, or an
+    /// "Access Denied" page with nothing to act on. Found on the first observation, it ends the run
     /// before any decision; `stopped_because` gives the evidence. Jev only
     /// reports it and never tries to get around it.
     AccessDenied,
