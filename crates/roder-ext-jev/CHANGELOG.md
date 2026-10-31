@@ -1,3 +1,121 @@
+## 0.6.0 (2026-10-31)
+
+### Breaking Changes
+
+#### Jev saves downloads, waits out pages that clear themselves, and reads the HTTP status from the browser
+
+Breaking: `JevRunResult` gains `downloads` and `JevActionRecord` gains `downloads` (both `Vec<JevDownload>`: the file's `name`, `url`, `path` where the browser saved it, `size_bytes`, and `incomplete` / `repeated` flags). A link to a file or a button that saves one used to read as a click that changed nothing, so the model clicked the export again until the stall rule stopped the run. Jev's browser now saves the downloads of its tabs' browser context under `<temp>/jev-downloads` (each finished file in `kept/<guid>/<name>`), waits after an action for the files it started, and the next observation reports each one, with the start of a readable file's text, before the page text. A new file counts as the step's change; the same file saved again (same name and content) does not, and the stall rule still ends a run that keeps saving it. The tool's text lists the files with where they were saved.
+
+An opening page that may clear itself (a challenge such as "Just a moment...", or a 503, with nothing to act on) is now watched for up to 12 s, read again each time it changes, before it is classified, so a bot check that moves on or a busy site that retries no longer ends the call `access_denied` or costs decisions on an empty page. A plain 403 "Access Denied" or a 429 is not waited on. A 503 with a challenge phrase and nothing to act on is now an access block. A start page that still shows nothing after the empty-page reads, served without an error status, is loaded once more. `JevBrowser` gains two default methods for this, `reload` and `wait_for_change`.
+
+The page's HTTP status (`JevPageFacts.http_status`) is now the one the browser's Network events gave the committed document, so a file the page linked to, or a page script that shadows `performance`, no longer changes it.
+
+#### Jev's irreversible-action gate reads the page's evidence, stops password changes and forbidden downloads
+
+Breaking: `JevDecision` and `JevDecisionRecord` gain `downloads_forbidden: Option<f64>`, so a struct literal of either must set it (`None` when the gate did not ask).
+
+With the opt-in gate on (`JEV_CONFIRM_IRREVERSIBLE=1`), the shortlist of actions it asks about now reads more than the label: the last segment of a link's address (a one-click `/unsubscribe` link labelled "Stop these emails"), the heading or row a control sits under (a dialog's "Yes, I'm sure" under "Delete the Atlas project?"), agreement labels, and buttons that post their form, with the label-and-link evidence asked about first. The commitment words gain `deactivate`, `withdraw`, `terminate`, `renew`, `upgrade`, `downgrade`, `sell`, `bid`, `approve` and the same words in German, French, Spanish, Portuguese, Italian and Dutch (`bestellen`, `commander`, `comprar`...). Each question now quotes the element's label, where it sits, where a link goes and the form a submit sends, and observed actions carry `href`, `download` and `submits` for it. Play, pause and mute controls are never asked about unless they name a committed noun.
+
+Two new stops need no answer about the action: a submit or Enter in a form that sets a new password ends the run `needs_confirmation` unless the call is authorized and confident, and a click the page says saves a file (a `download` attribute, or a link to a `.zip`, `.exe`, `.csv`...) ends it when one more question, asked of the goal alone, says the task rules out downloading, whatever the authorization.
+
+Past the 8-question cap, only an Enter or a click whose label names a commitment fails closed; a click shortlisted only by its address, heading, row or posting form that the cap left unasked is dispatched, so a page of many "Add to cart" forms cannot stop a run. A sign-in wall now compares form ids as the snapshot gives them (numbers), so a missing value in a sign-up form is `needs_input` rather than `needs_login`.
+
+#### Jev ends `needs_login` at sign-in walls and scrubs secrets in every encoding
+
+Breaking: a run that reaches a sign-in it cannot make now ends with the new status `needs_login` (`JevStatus::NeedsLogin`) instead of `needs_input` or `blocked`, and `JevRunResult` gains `wall` (`JevWall` with `kind` `password`, `one_time_code` or `sign_in` as `JevWallKind`, the page's `origin`, and the labels of the `fields` it asked for). It applies when the goal gives no value for a password or one-time-code field (or a field in the same form as one), when a `blocked` run ends on a page that shows a sign-in or single sign-on wall, and to an HTTP 401 with nothing to act on, which was `access_denied`. `needs_login` is a handoff (not a failed tool call), never falls back, and its next step asks the user to sign in in the tab or give the code. A field for a new password, or any field of a form that holds one (a sign-up), is still `needs_input`.
+
+A typed password or code is now scrubbed from page reads, addresses, evidence and the result as typed, percent-encoded (a GET form's `password=p%40ss+word%26`, `encodeURIComponent`), JSON-escaped and with its whitespace collapsed. Scrubbing twice changes nothing, and the host of an address on the origin the secret was typed on keeps its name.
+
+### Features
+
+#### Reach controls under fixed bands, name what a cover offers, follow late tabs
+
+A target under a band fixed to the window (an anchored ad, a sticky footer, a chat bubble) is scrolled clear of it, or, where the page cannot scroll, pressed, typed into or chosen from the keyboard, with the control's guard and what covers it checked again right before the key; nothing in the band is pressed, and a dialog, menu, popover or full-window cover is never pressed through. Enter in a field a dialog or backdrop covers is now `Covered`. A covered step also records `covered_controls`, up to eight controls the cover offers to press (`Covered::with_controls`, `Covered::controls`, `COVER_CONTROLS`), shown in the digest and the fallback's brief and never sent to the decision service. A click act.js reads as opening a new window (a link or submit naming `_blank`, a control that says it opens a new tab or window, an inline `window.open` handler) waits up to 5 s for its tab, so a tab a page opens after a fetch or a timer is followed on the click that opened it.
+
+#### Ask the text model before an unsure repeat; opt-in consult and light recovery
+
+When Jev is unsure and about to repeat the click it just made, which the repeat guard would stop, the text model is now asked first (`JevConsultant`, `JevEngineConfig::with_consultant`, with Roder's text helper as the consultant). If it names the same control, the click goes ahead. If it names another control, that control is acted on instead, still gated. If it names nothing, the guard stops as before. This lets a feed's second "Load more" through: `mock_infinite_scroll` used to end `blocked` with 40 of 60 items. A repeated commitment, a repeat that adds something (such as "Add to cart") or posts a form, and a twin still stop.
+
+Two fastbrowse tiers ship off by default, because they did not measurably help on the live corpus or MiniWoB++:
+
+- `JEV_CONSULT_BELOW=0.55` (`with_consult_below`) consults before any step that acts under that call confidence. It may act on another observed control, which is still gated, with no answers and no confidence.
+- `JEV_LIGHT_RECOVERIES=2` (`with_light_recoveries`) gives a stalled, covered or looping run up to that many one-step recoveries before it ends `blocked`. A recovery spends the stall's evidence.
+
+`JEV_CONSULT=0` turns the consultant off entirely. The consultant is never offered a cookie-banner choice. Its calls are counted as text calls with their usage, and the run's `recoveries` record what each one did.
+
+#### Fill several fields of one form from one text call
+
+When Jev first types into an empty field of a `<form>` that has other empty
+text fields, the text helper is asked once for all of them (after
+fastbrowse's form writer). The chosen field's value is typed now, and the
+steps that later choose the other fields type the values it wrote without
+another text call, as long as each field is still the same node, reads the
+same and is still empty, and no button or link click, Enter or key has run
+since (any of which may submit the form or show what it rejected). Each field is still chosen by its own decision. A
+form with a password or one-time-code field is never batched, so no secret
+reaches the text model this way; a field the reply leaves out, one that
+changed since, and a form whose call failed fall back to one call per field.
+
+`JevTextValueResolver` gains `resolve_form`, returning `JevFormValues`; its
+default answers `None`, so a supervisor's resolver keeps answering one field
+at a time.
+
+#### Route Jev decisions through OpenRouter
+
+`JEV_DECISION_PROVIDER=openrouter` sends Jev's System One requests to `https://openrouter.ai/api/v1/systemone` with `OPENROUTER_API_KEY` (or the configured `openrouter` provider key), text only. `JEV_DECISION_URL` overrides the URL of either hosted Jev route. Run usage now carries the dollar `cost` a host reports when every call reported one, and live eval rows, tallies and summaries record decision cost and the model that answered.
+
+#### Jev's settle waits for the page's own requests and ignores loader class names
+
+After an input, a page that is quiet and unchanged while a fetch or XHR request that input started is still open is no longer read before the response lands: the settle waits for the response and then for quiet again, within the 2.5 s cap, and reports `reason: "response"`. Each tab now enables the Network domain for this. Class and id names such as `spinner`, `loader` or `skeleton` no longer count as loading indicators; only `aria-busy`, `role="progressbar"` and an unvalued `progress` hold the settle, so pages that merely name their components after loaders no longer pay a 1.5 s wait on every step.
+
+### Fixes
+
+#### Short date line in decision requests
+
+Jev decision requests carry today's date and the next two months only, as fastbrowse's do; the list of the next seven days goes to the field writer alone. With the list, the decision model answered BLOCKED on a one-control page in 6 of 400 requests, against 0 of 450 without.
+
+#### Answer one-option choices locally and recover from shed Jev requests
+
+A hosted Jev decision no longer sends a target choice with a single option: it is answered locally (that option, probability 1). A batch the service answers with a 5xx twice in a row is asked one question at a time within the retries it had left, and a large step that is still refused is asked again without its off-screen targets, then paged smaller, instead of ending the run `unavailable`. The decision's `usage.context_budget.shed` counts these retries.
+
+#### Read frames of another process on kept sessions, within a 5 s deadline each
+
+Each tab's setup turns on `Target.setAutoAttach` for iframes, and the connection keeps the sessions Chrome attaches to frames of another process (`cdp/frames.rs`), so reading such a frame's text is one evaluate instead of a target listing, an attach and a detach (about 90 ms down to 4 to 8 ms per read on the fixture site; pages without such frames drop `Target.getTargets` from every observation). Each frame's read now has its own 5 s deadline instead of the connection's 30 s, and a frame of another process that missed it gets 0.5 s on later reads for 30 s, so an advertisement whose renderer stopped answering costs one observation 5 s, not every observation 30 s. Frames stay read-only.
+
+#### Install Jev's observation scripts once per document, and keep freshness guards as digests
+
+Each document now installs `snapshot.js` and `context.js` once, under a
+read-only global with a random per-process key. The scripts are registered
+with `Page.addScriptToEvaluateOnNewDocument`, and an older document installs
+them lazily on its first read. Each observation and freshness check then
+sends a short call (about 660 bytes) instead of about 70 KB of script.
+
+Guards keep their structured fields but hold a digest of the text around
+the control. The page key and freshness marker hold digests of the form
+state, title, page text, disabled controls and on-screen actions, so stale
+diagnostics still name the field that changed.
+
+#### Multi-step eval tasks, a work gate, and transient provider time kept apart
+
+The eval corpus gains ten multi-step tasks ported from fastbrowse's mock site (a sign-in and basket, an order the shop rejects until its postcode is corrected, a six-item cart, a send that fails with 503 behind a thank-you page, a hidden instruction, a honeypot field, a consent banner with a delayed modal, an infinite feed, a pager to exhaust, and a wizard rejected for a choice two steps back), each graded on what the site holds and checked against runs that stop short and say DONE. The live tally now records median decision calls, text calls and wall time per task, and its baseline comparison flags a task whose median calls, input tokens or decision cost rose past a quarter as `MORE WORK`, which `JEV_EVAL_STRICT=1` fails on; wall time never gates. The hosted decision transport counts the time its requests lose to transient provider failures (retried attempts and backoff waits), and live eval rows report it as `transient_ms`, apart from the wall time.
+
+#### Richer step effects for Jev, and per-snapshot name and visibility caches
+
+A step's `effect` now names an HTTP status of 400 or more that a navigation
+landed on, and the fields its form still needs when an action set nothing
+(the snapshot marks required-and-empty and `aria-invalid` fields
+`blocking`). A click on an option, checkbox, radio or switch that set no value
+says so, and the stall rule counts it as a step that changed nothing; an
+autocomplete pick that leaves the typed text as it was counts as set.
+
+The observation reads each element's visibility, name and cursor once per
+snapshot, and `context.js` each title's and scope's text once per run;
+the caches end with the call, so later scripts read the page as it is.
+
+#### Relative dates, form-mode rule and text-helper routing
+
+Today's date given to Jev and the text helper now lists the next seven days with their weekdays, and the text helper is told to look a relative day ("next Monday") up there rather than count it, and to write a date as a date, never as a weekday. The next-action rules choose a form's mode (tab, trip or account type) before typing and set requested filters before submitting. Text-helper requests to OpenRouter carry `provider: {sort: "latency", require_parameters: true}` (dropped for the run after a 404 says no endpoint of the model takes every parameter), and a reply cut off at the output cap (`finish_reason: length`) is asked once more with four times the cap. A code fence around or after the text helper's JSON reply is ignored rather than failing the run.
+
 ## 0.5.2 (2026-10-30)
 
 ### Fixes
