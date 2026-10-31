@@ -4,8 +4,9 @@
 //! base request body and validation rules are pinned by upstream fixtures. The
 //! hosted Jev client adds measured browser evidence and workflow guidance through
 //! `jev_prompt`; other backends can explicitly retain the base request.
-//! Jev's state also carries today's date (see [`crate::text_helper::today`]):
-//! "next month" and "the next Monday" mean nothing without it.
+//! Jev's state also carries today's date and the next two months (see
+//! [`crate::text_helper::today_brief`]): "next month" means nothing without
+//! it. The list of the next seven days goes to the field writer alone.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -314,7 +315,7 @@ pub(crate) fn request_body(
     let mut body = json!({
         "model": model,
         "state": {
-            "date": crate::text_helper::today(today),
+            "date": crate::text_helper::today_brief(today),
             "page": Value::Object(page_view),
             "elements": space.elements.clone(),
             "recent_actions": recent,

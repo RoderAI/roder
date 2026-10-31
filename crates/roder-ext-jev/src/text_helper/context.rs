@@ -5,14 +5,12 @@
 use chrono::{Datelike, NaiveDate};
 use serde_json::{Map, Value, json};
 
-/// Today with its weekday, the next two months, each named by its distance,
-/// and the seven days after it, each with its weekday (after fastbrowse,
-/// MIT, page.py `today` and `next_days`): told the date alone, its field
-/// writer booked "the next Monday" a week late; told the coming months as a
-/// bare list, it took the last for "next month"; and told the weekday but
-/// left to count, it still booked a relative day a week late. A relative
-/// day is looked up in the list instead.
-pub(crate) fn today(date: NaiveDate) -> String {
+/// Today with its weekday and the next two months, each named by its
+/// distance: the `date` a Jev decision request carries (fastbrowse, MIT,
+/// policy.rs). The decision model is not given [`today`]'s list of days, as
+/// fastbrowse's is not: with it, the one-control opening of `delayed_spa`
+/// drew BLOCKED in 6 of 400 requests, against 0 of 450 without.
+pub(crate) fn today_brief(date: NaiveDate) -> String {
     let next_month = |date: NaiveDate| {
         let (year, month) = match date.month() {
             12 => (date.year() + 1, 1),
@@ -22,6 +20,22 @@ pub(crate) fn today(date: NaiveDate) -> String {
     };
     let first = next_month(date);
     let second = next_month(first);
+    format!(
+        "{}. In one month: {}; in two months: {}",
+        date.format("%Y-%m-%d (%A)"),
+        first.format("%B %Y"),
+        second.format("%B %Y")
+    )
+}
+
+/// [`today_brief`] and the seven days after today, each with its weekday:
+/// the `date` the field writer is told (after fastbrowse, MIT, page.py
+/// `today` and `next_days`). Told the date alone, it booked "the next
+/// Monday" a week late; told the coming months as a bare list, it took the
+/// last for "next month"; and told the weekday but left to count, it still
+/// booked a relative day a week late. A relative day is looked up in the
+/// list instead.
+pub(crate) fn today(date: NaiveDate) -> String {
     let next_days = date
         .iter_days()
         .skip(1)
@@ -29,12 +43,7 @@ pub(crate) fn today(date: NaiveDate) -> String {
         .map(|day| day.format("%A %Y-%m-%d").to_string())
         .collect::<Vec<_>>()
         .join(", ");
-    format!(
-        "{}. In one month: {}; in two months: {}. Next seven days: {next_days}",
-        date.format("%Y-%m-%d (%A)"),
-        first.format("%B %Y"),
-        second.format("%B %Y")
-    )
+    format!("{}. Next seven days: {next_days}", today_brief(date))
 }
 
 /// The ISO shape a native date or time input takes, by its type.

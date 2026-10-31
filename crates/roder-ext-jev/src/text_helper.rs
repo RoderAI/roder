@@ -396,7 +396,7 @@ mod context;
 pub(crate) mod form;
 mod responses;
 
-pub(crate) use context::{field_context, field_entry, other_fields, today};
+pub(crate) use context::{field_context, field_entry, other_fields, today, today_brief};
 
 #[cfg(test)]
 mod chat_tests;

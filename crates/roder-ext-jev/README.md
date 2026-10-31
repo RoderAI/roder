@@ -993,11 +993,12 @@ prompt change. Three operations appear only when offered:
 `PRESS_ENTER` (target: the field Jev typed into), plus a `PRESS_ESCAPE`
 control. The state carries today's
 `date` first, in fastbrowse's words ("2026-09-27 (Sunday). In one month:
-October 2026; in two months: November 2026"), then the next seven days with
-their weekdays (". Next seven days: Monday 2026-09-28, ..., Sunday
-2026-10-04"), so a day named relative to today is looked up, not counted;
-live corpus runs with the date alone passed 18/18 three times, like the two
-without, though the mean call confidence was 0.78 against 0.80. NEXT_ACTION
+October 2026; in two months: November 2026"); live corpus runs with the
+date passed 18/18 three times, like the two without, though the mean call
+confidence was 0.78 against 0.80. The next seven days with their weekdays
+go to the field writer only, as in fastbrowse: in the decision request they
+drew BLOCKED on `delayed_spa`'s one-control opening in 6 of 400 requests,
+against 0 of 450 without. NEXT_ACTION
 also has a form's mode (its tab, trip or account type, category) chosen
 before any value is typed, since switching it clears the fields, and
 requested filters set before submitting where the form offers them
