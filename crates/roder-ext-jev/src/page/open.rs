@@ -253,6 +253,7 @@ impl Page {
         // Dialogs are only reported, and so answered, with the Page domain on.
         self.call("Page.enable", json!({})).await?;
         self.allow_downloads().await;
+        self.follow_frames().await;
         Ok(())
     }
 

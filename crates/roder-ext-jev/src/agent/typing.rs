@@ -1,10 +1,13 @@
 //! Getting the value a fill types: from the configured resolver (a
-//! supervisor's, or Roder's text helper), never guessed. A secret field's
-//! value is recorded as [`SECRET`] wherever the run keeps it.
+//! supervisor's, or Roder's text helper), never guessed. An empty field of a
+//! form may take a value its form's one call already wrote (see
+//! `form_fill`). A secret field's value is recorded as [`SECRET`] wherever
+//! the run keeps it.
 
 use serde_json::{Value, json};
 
 use super::Agent;
+use super::form_fill::FormRequest;
 use crate::engine::{JevStatus, JevStop, JevTextValue, StaleObservation};
 use crate::secret::{self, SECRET};
 use crate::text_helper;
@@ -51,6 +54,28 @@ impl Agent {
             .into());
         };
         let secret = secret::is_secret(action);
+        // A value kept from the form call that filled an earlier field, or
+        // this form's one call (see `form_fill`); never a secret field's.
+        if !secret {
+            let text = text.clone();
+            let kept = match self.form_fill.take(action) {
+                Some(kept) => Some(kept),
+                None => {
+                    let request = FormRequest {
+                        goal: &self.config.goal,
+                        observation: &self.observation,
+                        history: &self.history,
+                    };
+                    self.form_fill
+                        .write(text.as_ref(), action, request, &mut self.text_calls)
+                        .await?
+                }
+            };
+            if let Some(written) = kept {
+                self.pending_text = Some((context, written.clone()));
+                return Ok(Some(written));
+            }
+        }
         let written = match text.resolve(&context).await {
             Ok(written) => written,
             Err(error) => {

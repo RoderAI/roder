@@ -1261,6 +1261,13 @@ plan deletes Bob's budget mail, then asks for his lunch mail's delete at 0.6
 (a plan step may set `confidence`), and the task checks that the lunch mail
 (`mail3`) is still there. At 0.9 the same plan deletes it and the task fails.
 
+With a text model, a same-control repeat whose label names no commitment,
+adds nothing ("add", "cart", "basket", "vote", "like" and the like) and that
+posts no form is first put to the consultant (see "Second opinions" below). If it names that
+control, the click goes ahead, which is how a feed's second "Load more"
+gets through. If it names another control, that one is acted on instead,
+still gated. A twin, or a commitment, still stops.
+
 ### Runs that go round in circles
 
 Upstream's stall rule ends a run after three executed actions in a row that
@@ -1350,6 +1357,100 @@ The keyless corpus test fails if any of its tasks ends on `looped` or
 `unsettled`; `stall_detection` and `step_budget` pass as before. The
 real-Chrome tests of these caps are in `fixture_harness/loop_tests.rs`, the
 scripted ones in `tests/agent_loop_caps.rs`.
+
+The caps were re-checked against fastbrowse's single stall rule (an action
+from the same page a third time counts as unchanged, and three unchanged
+steps call recovery). On the full live corpus (77 tasks, N=3, before and
+after this batch), the six-item cart included, neither cap ended a run: no
+`looped` or `unsettled` stop. So they stay as they are.
+
+### Second opinions: the consult and light recovery
+
+`agent/consult.rs` and the light tier in `agent/recovery.rs` port
+fastbrowse's `consult` and `recover` (`fastbrowse-agent/src/agent/recovery.rs`,
+`config.rs Thresholds.recover_below`, `StallRules.max_recoveries`). Each is
+one call to the text model (`JevConsultant`; Roder's `TextHelper` is one,
+with its own prompt in `text_helper/consult.rs`, the same transport, and
+OpenRouter routing). The request lists the goal (typed secrets scrubbed), the
+page's url, title and first 3000 characters of text, up to 80 controls by id
+(on-screen first), the last six steps, Jev's proposal and the problem. The
+reply is `{"diagnosis", "control": id | null}`.
+
+- **Unsure repeat (on by default).** The repeat guard stops an unsure click
+  that repeats the click just made (see "Repeats of a click that worked").
+  When the label names no commitment and adds nothing (`consult::repeatable`:
+  no "add", "cart", "basket", "vote", "like" and the like, since "Add to cart"
+  holds no commitment word) and the control posts no form, the consultant is
+  asked first. If it
+  names the same control, the click goes ahead. If it names another control,
+  that control is acted on instead, gated as a swapped control (see the next
+  item). If it names nothing, the guard stops the run as before. Live, the
+  guard ended `mock_infinite_scroll` at its second
+  "Load more" (confidence 0.66 to 0.69) with 40 of 60 items loaded. A
+  commitment (for example "Delete", or "Add to cart" again) and a twin still
+  stop, even when the consultant endorses them.
+- **Unsure step (off by default, `JEV_CONSULT_BELOW=0.55`).** Before any step
+  that acts (click, fill, select, Enter) whose call confidence is under the
+  threshold, the consultant names the control to act on. Jev's choice stands
+  when the consultant names it, names nothing, or the call fails. When it
+  names another control, that control is acted on instead. A swapped control
+  goes through every gate with no answers and confidence 0. The irreversible
+  gate therefore holds it to `needs_confirmation`, even with
+  `authorize_irreversible`.
+- **Light recovery (off by default, `JEV_LIGHT_RECOVERIES=2`).** A run that
+  stalls (`stalled`, `covered` or `looped`) asks the consultant for one
+  control that moves the task on another way. That step is taken next in
+  place of a decision, through every gate. The stall's evidence is then
+  spent: the stall and idle-wait rules count only later steps, and the pair
+  counts restart. If the consultant names nothing, names the control that
+  just failed, or fails, the stop stands and the fallback takes over as
+  before.
+
+A consult is not a step. It spends no action, model-call or stall budget.
+Its call counts as a text call, with its usage (and cost, which OpenRouter is
+asked to report). It is capped at 8 a run, and once per page and choice. The
+controls offered never include a wait, a document read, or, on a page whose
+text speaks of cookies or consent, a banner choice ("Accept all", "Reject
+all", "No thanks"). Before that filter, a light recovery pressed "Accept all"
+on `cookie_banner_refusal_off`. What each consult did is recorded in the
+result's `recoveries`: `consult_endorsed`, `consult_swapped`, `consult_kept`,
+`light_recovery`, `light_recovery_declined` and `*_failed`. Live rows carry
+these too, with `stop_cause`, `fallback_trigger` and `text_usage` in
+`telemetry`.
+
+`JEV_CONSULT=0` turns all of this off. Without a text model there is no
+consultant.
+
+Why the defaults are what they are (live corpus, 77 tasks × 3, `jev-1.14` on
+OpenRouter, consultant `inception/mercury-2.5`; MiniWoB++ subset, 32 tasks ×
+3 seeds):
+
+| | before | both tiers on (0.55, 2) |
+| --- | --- | --- |
+| Live pass | 222/231, 0 false greens | 219/231, 2 false greens |
+| Consult swaps / light recoveries | — | 29 / 9 (13 declined) |
+| Live text calls | 112 | 225 |
+| MiniWoB++ (Jev alone) | 86/96 | 87/96 |
+
+Call confidence is a poor signal here. Before this batch, a sixth of the
+corpus's acting steps were under 0.55, nearly all of them in runs that
+passed. The swaps fixed some steps (`read-table`, `search-engine`,
+`use-autocomplete`) and broke others: `enter_to_search` (Enter swapped for a
+"Go" button that submits nothing, two false greens), `mock_wizard_correction`
+and `click-shape`. The light tier turned no failure into a pass, and the
+fallback still took over every stall it fired on. Both stay available as
+opt-ins.
+
+With the defaults (repeat only), the before/after numbers on the same corpus
+are as follows. The consultant was asked twice in 231 runs, both times on
+`mock_infinite_scroll`, which went from 2/3 to 3/3. Live
+passes went from 222 to 223 with task values and from 222 to 225 with
+`JEV_EVAL_TEXT=model`, with no false greens. Text calls went from 112 to 116.
+The fallback-trigger proxy (blocked or budget) stayed at 41 with task values
+and went from 42 to 40 with the text model. MiniWoB++ stayed at 86 of 96, and
+there were no `looped` or `unsettled` stops. Tests:
+`fixture_harness/consult_tests.rs` (real Chrome, `stall.html`, `feed.html`,
+`toggle-menu.html`).
 
 ### Fixtures and upstream
 
@@ -1536,7 +1637,7 @@ add a page and a test in `src/fixture_harness/`.
 ### End-to-end eval corpus
 
 On top of that harness, `src/fixture_harness/evals/` runs whole tasks from
-data: `tests/fixtures/evals/tasks.json` lists 77 tasks (a contact form,
+data: `tests/fixtures/evals/tasks.json` lists 79 tasks (a contact form,
 autocomplete search, a native select, pagination, a below-the-fold target, a
 covered target, twin buttons and table rows chosen by context, a delayed-render
 SPA, mid-decision navigation, stall detection, the 60-action budget, a value
@@ -2040,6 +2141,58 @@ Gemini's own APIs, and Cursor, whose provider path is a protobuf
 AgentService. With none available, `text_model` is `null` and a task that
 needs to type ends `needs_input` rather than guessing a value; goals that only
 click and read are unaffected.
+
+### Several fields of one form from one call
+
+After fastbrowse's form writer: when the decision model first chooses to type
+into an empty field of a `<form>` that has at least one other empty text
+field, the text helper is asked once for all of them (at most 12; a combobox,
+whose value is picked from suggestions, is left to its own steps). The form
+context is the single field's context with `fields` (each with its action
+`id`, the chosen field first) in place of `field`, and `other_fields` leaving
+those out. FORM_VALUES asks for `{"fields": [{"id": ..., "text": string |
+null}]}`, with TEXT_VALUE's rules, null for any field the goal does not give
+and never a placeholder; over the Codex sign-in that is the strict schema
+`form_values`. A reply naming an id twice or one not listed, or a value over
+2,000 characters, is unusable as a whole. The first cap is 2,048 tokens, with
+the same one retry at four times the cap.
+
+The chosen field's value is typed now. The others are kept, by the field's
+`ref` (its document and node), and a later step whose decision chooses one of
+those fields types the kept value with no text call, but only while the field
+reads the same (label, role, type, context and form) and is still empty; a
+kept value is typed at most once and dropped on a hand-back. Every kept value
+is also dropped once a step does anything but type, pick an option, scroll,
+wait, click into a text field (the decision model often focuses a field
+before typing), or tick a checkbox, radio or tab: a button or link click, Enter or a key
+may submit the form or show what it rejected, which a value written before it
+never saw, so the fields left are asked for alone. Every field is
+still chosen by its own decision, so the gate, loop caps, budgets and history
+are as before; only the text call is shared, and the run's `text_calls`
+counts it once.
+
+A field the reply leaves out, a field changed since, and every field of a
+form whose call failed are asked for alone as before; a form is asked once
+per document. A form with any password or one-time-code field is never sent
+this way, so secrets stay with the single-field path and the supervisor's
+resolver. An email, phone or web address the reply gives that the goal does
+not hold (ignoring case) is dropped and asked for alone: asked for the whole
+`missing_value` contact form, whose goal gives no email, the default writer
+(`inception/mercury-2.5`) wrote "email@example.com" in 1 of 3 live runs and the
+run posted it, where the single-field call answered null every time.
+`JevTextValueResolver::resolve_form` is how a resolver takes part; its
+default answers `None`, which keeps one call per field.
+
+Live corpus, `JEV_EVAL_TEXT=model`, N=3 (231 runs each, before and after on
+the same commit with private builds): text calls 122 to 93, summed text time
+71.5 s to 57.4 s (median per run 891 to 710 ms), 221 to 220 passed. The form
+tasks at N=10 (`contact_form`, `frame_form`, `unlabelled_fields`,
+`trip_mode_first`, `missing_value`; 50 runs each): text calls 150 to 60,
+median text time per run 1,919 to 803 ms, median wall time 5,588 to 4,330 ms,
+50 to 49 passed (one `trip_mode_first` run stopped on a repeated click on the
+Depart field, a decision pattern as common before; 15 more runs each side
+passed 15 of 15). MiniWoB++ has no `<form>` elements, so its tasks never take
+this path.
 
 ## Policy and arguments
 
@@ -2583,9 +2736,22 @@ Checks the booking diagnosis and later evals called for, none of them a decision
   `DOM.resolveNode` and one function call). A frame in the page's process
   (another origin of the same site) is a child in `Page.getFrameTree` and is
   read through `Page.createIsolatedWorld`; a frame in another process
-  (another site, or a sandboxed frame, which Chrome now isolates) is an
-  `iframe` target whose `parentFrameId` is the page's main frame, attached
-  for one `Runtime.evaluate` and detached. Each frame's text, lines joined
+  (another site, or a sandboxed frame, which Chrome now isolates) is read
+  on the session Chrome attached to it when it appeared: each tab's setup
+  turns on `Target.setAutoAttach` (flat sessions, iframes only, nothing
+  paused), and the connection keeps the sessions from the
+  `Target.attachedToTarget` and `Target.detachedFromTarget` events it reads
+  anyway (`cdp/frames.rs`), so a read is one `Runtime.evaluate` returning
+  the frame's address and text, not a `Target.getTargets`, an attach and a
+  detach. Each frame's read has its own deadline, 5 s (`FRAME_READ`), not
+  the connection's 30 s: a frame whose renderer stopped answering (an
+  advertisement stuck in a loop) held every observation for 30 s before.
+  A frame of another process that misses it is left out and gets 0.5 s
+  (`FRAME_RETRY`) on later reads, until one answers or 30 s have passed,
+  when it gets the full deadline again (a frame that recovered but answers
+  slowly is not left unread for the rest of the run). The rule follows
+  fastbrowse's frame reads (MIT); fastbrowse reads the frames at once,
+  Jev's single-call connection one after another. Each frame's text, lines joined
   with ` · ` and cut to 700 characters, is added as a `[frame <origin>] …`
   line after the page text, within its 6,000 characters (the page's own text
   is cut first), so the decision model sees the panel; the request's shape
@@ -2593,8 +2759,16 @@ Checks the booking diagnosis and later evals called for, none of them a decision
   `page.frames`. Controls inside such frames are deliberately not offered,
   so a widget's "Reserve Now" stays out of Jev's reach, which is the stop
   point a booking benchmark wants. `JEV_FRAME_TEXT=0` turns the read off.
-  Pages without such frames pay one `Page.getFrameTree` and one
-  `Target.getTargets` per observation. The step fingerprint is taken before
+  Pages without such frames pay one `Page.getFrameTree` per observation.
+  Measured on the fixture site (median of 80 interleaved reads with the
+  frame read on and off, on a loaded machine): the frame read
+  cost 1.6 to 2.7 ms and 2,273 bytes received on pages without such frames
+  before (with `Target.getTargets`), 1.0 to 2.3 ms and 575 bytes now; with
+  one frame of another process, 90 ms (attach, evaluate, detach) before and
+  4 to 8 ms now. With a stuck advertisement frame each observation took
+  30.1 s before; now the first takes 5.0 s and later ones 0.5 s
+  (`frame_stuck_ad` and `frame_stuck_beside_widget` in the corpus, and
+  `frame_text_tests`). The step fingerprint is taken before
   the frame lines join the text and counts frames by origin only
   (`page/fingerprint.rs`): large visible frames of another origin are often
   ads, video or chat widgets whose text rotates, and hashing that text made
@@ -2896,6 +3070,11 @@ put the old value back makes the result an error, "the choice did not stick".
 | `needs_input`, `needs_login`, `needs_confirmation`, `access_denied` | no: a different driver does not fix them, and must never get around a block or a confirmation |
 | `error` after the decision service kept sending replies Jev could not use (`decision_unusable`: three in a row, each failing validation, a refusal, or with a body that cannot be decoded) | yes, trigger `decision_unusable`; the owner's decision. Not after a declined confirm or prompt |
 | `done`, `timed_out`, `unavailable`, and any other `error` (an unreachable provider, a refused key, billing or access, a rate limit, a text-helper failure) | no |
+
+With `JEV_LIGHT_RECOVERIES` set, a `stalled`, `covered` or `looped` stop
+first gets that many one-step recoveries from the consultant (see "Second
+opinions"). The full fallback takes over only after they are spent or
+declined.
 
 After an `error` that falls back, the result is as for any other trigger:
 `status` is the fallback's end state, `jev_status` is `error`, `stop_cause`

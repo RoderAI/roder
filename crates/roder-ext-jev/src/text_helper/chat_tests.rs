@@ -27,7 +27,7 @@ fn helper(base_url: &str) -> TextHelper {
 fn provider_routing_is_sent_only_to_openrouter() {
     let context = json!({"goal": "g"});
     let routing = |base: &str| {
-        request_body(&context, "m", base, None)
+        request_body(Ask::Field, &context, "m", base, None)
             .get("provider")
             .cloned()
     };
@@ -189,6 +189,7 @@ async fn a_model_no_endpoint_fully_supports_is_asked_again_without_require_param
     let writer = helper(&server.url);
     let url = endpoint(&server.url);
     let body = request_body(
+        Ask::Field,
         &json!({"goal": "g"}),
         "m",
         "https://openrouter.ai/api/v1",

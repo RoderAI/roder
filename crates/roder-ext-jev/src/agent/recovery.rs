@@ -1,4 +1,16 @@
-//! One local re-plan for a harmless navigation; consequential repeats still stop.
+//! One local re-plan for a harmless navigation; consequential repeats still
+//! stop. And the light recovery tier (after fastbrowse's `recover`): a run
+//! that stalls (three steps that changed nothing, three covered attempts,
+//! or going round in circles) first gets up to
+//! [`crate::engine::LIGHT_RECOVERIES`] one-step recoveries before it ends
+//! `blocked` and the full fallback takes it over. Each asks the consultant
+//! (see `consult`) for one control that moves the task on another way. The
+//! step it names is taken next, through every gate, in place of a decision;
+//! the stall's evidence is spent (the stall and wait rules count only steps
+//! after it, and the same-pair counts start again), and Jev decides again
+//! from there. A consultant that names nothing, names the control that just
+//! failed, or cannot be reached leaves the stop as it was.
+use super::consult::{Ask, directed};
 use super::*;
 #[derive(Default)]
 pub(super) struct Recovery {
@@ -103,6 +115,63 @@ impl Agent {
     }
 }
 
+impl Agent {
+    /// After a stall ended the run `blocked`: whether a light recovery
+    /// takes it up instead, with the step it names queued for the next
+    /// tick and the run `ready` again.
+    pub(super) async fn light_recovery(&mut self, reason: &str) -> bool {
+        let stall = matches!(
+            self.cause,
+            Some(JevStopCause::Stalled | JevStopCause::Covered | JevStopCause::Looped)
+        );
+        if !stall
+            || self.config.consult.consultant.is_none()
+            || self.consults.recoveries >= self.config.consult.light_recoveries
+            || self.budget_spent()
+        {
+            return false;
+        }
+        self.consults.recoveries += 1;
+        let reason = self.secrets.scrub(reason);
+        let Some(answer) = self.ask(Ask::Stalled { reason: &reason }).await else {
+            return false;
+        };
+        let why = self
+            .tidy(&json!(answer.diagnosis), repeat::CONTEXT_CHARS)
+            .unwrap_or_default();
+        let failed = self.last_step().map(|step| step["choice"].clone());
+        let named = answer
+            .control
+            .as_deref()
+            .and_then(|id| self.observed(id))
+            .filter(|action| self.nameable(action))
+            // The control the stall was on again is no recovery.
+            .filter(|action| failed.as_ref() != Some(&action["id"]));
+        let Some(action) = named else {
+            self.recovery
+                .record("light_recovery_declined", &why, self.elapsed_ms);
+            return false;
+        };
+        let label = self
+            .tidy(&action["label"], repeat::LABEL_CHARS)
+            .unwrap_or_default();
+        self.recovery.record(
+            "light_recovery",
+            &format!("{label:?}: {why}"),
+            self.elapsed_ms,
+        );
+        // Spend the stall's evidence: the rules count only what follows.
+        if let Some(entry) = self.history.last_mut() {
+            entry["stall_reset"] = json!(true);
+        }
+        self.watch = loops::LoopWatch::default();
+        self.directed = Some(directed(&action, json!({})));
+        self.status = JevStatus::Ready;
+        self.cause = None;
+        true
+    }
+}
+
 #[cfg(test)]
 impl Agent {
     pub(crate) async fn resume_after_rescue(
@@ -128,7 +197,12 @@ impl Agent {
         self.model_snapshot = None;
         self.research = research::Research::default();
         self.pending_text = None;
+        self.form_fill = super::form_fill::FormFill::default();
         self.watch = loops::LoopWatch::default();
+        // A page the rescue moved to is a new state: its stalls get the
+        // light recoveries afresh, and nothing queued before still applies.
+        self.consults.recoveries = 0;
+        self.directed = None;
         self.recovery.record("rescue_handback","A bounded external driver moved the tab; continue unmet requirements using fresh controls and retained evidence",self.elapsed_ms);
         self.observe().await?;
         self.check_scope()

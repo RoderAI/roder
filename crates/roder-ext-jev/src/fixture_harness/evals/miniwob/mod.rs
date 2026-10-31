@@ -201,6 +201,7 @@ async fn worker(setup: &Setup, queue: &Mutex<VecDeque<(TaskEntry, u64)>>) -> Vec
             timeout: setup.timeout,
             decision: &setup.decision,
             text: &text,
+            consultant: Some(setup.text.clone()),
             fallback: setup.fallback.as_ref(),
         };
         let mut attempt = 0;

@@ -6,22 +6,43 @@
 //! invisible and Jev judged the goal against the list behind it. Here each
 //! large, visible frame of another origin is read over DevTools: one in the
 //! page's own process through an isolated world, one in another process
-//! (another site) by attaching to its target for one evaluate. At most two
-//! frames, 700 characters each, are added to the observation as
-//! `[frame <origin>]` lines of page text, so the model can judge what it
-//! shows, and as `frames` for the result. Their controls are deliberately
-//! not offered: Jev reads such a widget but cannot press its buttons.
-//! `JEV_FRAME_TEXT=0` turns this off.
+//! (another site) through the session Chrome attached to it when it
+//! appeared (`Target.setAutoAttach`, kept by the connection's frame ledger,
+//! `cdp/frames.rs`), so a read is one evaluate, not a target listing, an
+//! attach and a detach. At most two frames, 700 characters each, are added
+//! to the observation as `[frame <origin>]` lines of page text, so the model
+//! can judge what it shows, and as `frames` for the result. Their controls
+//! are deliberately not offered: Jev reads such a widget but cannot press
+//! its buttons. `JEV_FRAME_TEXT=0` turns this off.
+//!
+//! Each frame's read has its own deadline, 5 s, not the connection's 30 s:
+//! an advertisement whose renderer stopped answering would otherwise hold
+//! every observation for the whole call timeout. A frame of another process
+//! that misses it is left out and gets 0.5 s on later reads, until one
+//! answers or 30 s have passed (a frame that recovered but answers slowly
+//! is given the full deadline again). The rule follows fastbrowse's page
+//! reads (MIT).
+
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
 use super::{Page, TEXT_CHARS};
+use crate::cdp::FrameSession;
 use crate::engine::JevFrameText;
 
 /// Frames read per observation.
 const FRAMES: usize = 2;
 /// Characters kept of each frame's text.
 pub(crate) const FRAME_CHARS: usize = 700;
+/// How long one frame's read may take before the observation goes on
+/// without it.
+pub(crate) const FRAME_READ: Duration = Duration::from_secs(5);
+/// What a frame of another process that missed [`FRAME_READ`] gets on later
+/// reads, until one answers or [`FRAME_RECHECK`] has passed.
+pub(crate) const FRAME_RETRY: Duration = Duration::from_millis(500);
+/// How long a frame that missed its deadline keeps the short one.
+const FRAME_RECHECK: Duration = Duration::from_secs(30);
 
 /// Whether a frame's element is shown, at least 200 by 100 pixels, and on
 /// screen; run on the element.
@@ -34,6 +55,14 @@ const FRAME_TEXT_JS: &str = "(()=>(document.body?.innerText||'').split('\\n')\
      .toWellFormed())()";
 const OBJECT_GROUP: &str = "jev-frames";
 
+/// Where a frame of another origin is read.
+enum Reach {
+    /// In the page's process: its frame id and origin.
+    Here(String, String),
+    /// In another process, through its own session.
+    Elsewhere(FrameSession),
+}
+
 /// Whether frame text is read: `JEV_FRAME_TEXT`, on unless it is `0`,
 /// `false`, `no` or `off`.
 pub(crate) fn frame_text_on() -> bool {
@@ -45,6 +74,15 @@ pub(crate) fn frame_text_on() -> bool {
     })
 }
 
+/// The deadline for a frame's read: the short one while a recent read of it
+/// missed the full one.
+fn read_budget(missed: Option<Instant>, now: Instant) -> Duration {
+    match missed {
+        Some(at) if now.saturating_duration_since(at) < FRAME_RECHECK => FRAME_RETRY,
+        _ => FRAME_READ,
+    }
+}
+
 impl Page {
     /// Read frame text or not, whatever `JEV_FRAME_TEXT` says.
     #[cfg(test)]
@@ -52,18 +90,45 @@ impl Page {
         self.frame_text = on;
     }
 
+    /// The sessions of the current tab's frames of another process.
+    #[cfg(test)]
+    pub(crate) fn frame_sessions(&self) -> Vec<String> {
+        self.connection
+            .frame_sessions(&self.tab().session)
+            .into_iter()
+            .map(|frame| frame.session)
+            .collect()
+    }
+
+    /// Have Chrome attach a session to each frame of another process the
+    /// tab has or opens, kept until the frame goes (see `cdp/frames.rs`).
+    /// Workers and other targets are left alone. Best effort: a browser
+    /// that refuses only leaves such frames unread.
+    pub(super) async fn follow_frames(&mut self) {
+        if !self.frame_text {
+            return;
+        }
+        self.call(
+            "Target.setAutoAttach",
+            json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true,
+                   "filter": [{"type": "iframe", "exclude": false}, {"exclude": true}]}),
+        )
+        .await
+        .ok();
+    }
+
     /// The text of up to two large, visible frames of another origin, best
-    /// effort: a frame that cannot be read is left out. Frames in the page's
-    /// process are its frame tree's children; frames in another process are
-    /// `iframe` targets whose parent is the page's main frame.
+    /// effort: a frame that cannot be read in time is left out. Frames in
+    /// the page's process are its frame tree's children; frames in another
+    /// process are the sessions Chrome attached under the tab.
     pub(super) async fn read_frames(&mut self) -> Vec<JevFrameText> {
         let Ok(tree) = self.call("Page.getFrameTree", json!({})).await else {
             return Vec::new();
         };
         let tree = &tree["frameTree"];
-        let main = tree["frame"]["id"].clone();
         let origin = tree["frame"]["securityOrigin"].clone();
-        // (frame id, origin, in this process)
+        let session = self.tab().session.clone();
+        let elsewhere = self.connection.frame_sessions(&session);
         let mut candidates = tree["childFrames"]
             .as_array()
             .into_iter()
@@ -71,44 +136,31 @@ impl Page {
             .map(|child| &child["frame"])
             // A same-origin frame's text is already page text.
             .filter(|frame| frame["securityOrigin"] != origin)
-            .filter_map(|frame| {
-                Some((frame["id"].as_str()?.to_string(), frame_origin(frame), true))
-            })
+            .filter_map(|frame| Some((frame["id"].as_str()?, frame_origin(frame))))
+            // A frame of another process is read through its session.
+            .filter(|(id, _)| !elsewhere.iter().any(|frame| frame.target == *id))
+            .map(|(id, origin)| Reach::Here(id.to_string(), origin))
             .collect::<Vec<_>>();
-        if let Ok(targets) = self
-            .connection
-            .call("Target.getTargets", json!({}), None)
-            .await
-        {
-            candidates.extend(
-                targets["targetInfos"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|target| target["type"] == "iframe" && target["parentFrameId"] == main)
-                    .filter_map(|target| {
-                        let url = target["url"].as_str()?;
-                        Some((
-                            target["targetId"].as_str()?.to_string(),
-                            url_origin(url),
-                            false,
-                        ))
-                    }),
-            );
-        }
+        candidates.extend(elsewhere.into_iter().map(Reach::Elsewhere));
         let mut read = Vec::new();
-        for (id, origin, here) in candidates {
+        for candidate in candidates {
             if read.len() >= FRAMES {
                 break;
             }
+            let id = match &candidate {
+                Reach::Here(id, _) => id.clone(),
+                Reach::Elsewhere(frame) => frame.target.clone(),
+            };
             if !self.frame_shown(&id).await {
                 continue;
             }
-            let text = match here {
-                true => self.frame_text_here(&id).await,
-                false => self.frame_text_elsewhere(&id).await,
+            let text = match candidate {
+                Reach::Here(id, origin) => {
+                    self.frame_text_here(&id).await.map(|text| (origin, text))
+                }
+                Reach::Elsewhere(frame) => self.frame_text_elsewhere(&frame).await,
             };
-            if let Some(text) = text.filter(|text| !text.is_empty()) {
+            if let Some((origin, text)) = text.filter(|(_, text)| !text.is_empty()) {
                 read.push(JevFrameText {
                     origin,
                     text: text.chars().take(FRAME_CHARS).collect(),
@@ -149,57 +201,66 @@ impl Page {
     }
 
     /// A frame in the page's own process, read in an isolated world so the
-    /// frame's scripts cannot see or change the read.
+    /// frame's scripts cannot see or change the read, within
+    /// [`FRAME_READ`].
     async fn frame_text_here(&mut self, frame: &str) -> Option<String> {
+        let session = self.tab().session.clone();
         let world = self
-            .call(
+            .connection
+            .call_within(
                 "Page.createIsolatedWorld",
                 json!({"frameId": frame, "worldName": "jev-frame-text"}),
+                Some(&session),
+                FRAME_READ,
             )
             .await
             .ok()?;
         let context = world["executionContextId"].as_i64()?;
         let read = self
-            .call(
+            .connection
+            .call_within(
                 "Runtime.evaluate",
                 json!({"expression": FRAME_TEXT_JS, "contextId": context,
                        "returnByValue": true}),
+                Some(&session),
+                FRAME_READ,
             )
             .await
             .ok()?;
         read["result"]["value"].as_str().map(str::to_string)
     }
 
-    /// A frame in another process: its own DevTools target, whose id is the
-    /// frame's, attached for one read and detached again.
-    async fn frame_text_elsewhere(&mut self, frame: &str) -> Option<String> {
-        let attached = self
-            .connection
-            .call(
-                "Target.attachToTarget",
-                json!({"targetId": frame, "flatten": true}),
-                None,
-            )
-            .await
-            .ok()?;
-        let session = attached["sessionId"].as_str()?.to_string();
+    /// A frame in another process, on the session Chrome attached to it,
+    /// within its deadline (see [`read_budget`]): its origin, from the
+    /// address the same evaluate read, and its text.
+    async fn frame_text_elsewhere(&mut self, frame: &FrameSession) -> Option<(String, String)> {
+        let started = Instant::now();
+        let budget = read_budget(frame.missed, started);
+        let expression = format!("[location.href,{FRAME_TEXT_JS}]");
         let read = self
             .connection
-            .call(
+            .call_within(
                 "Runtime.evaluate",
-                json!({"expression": FRAME_TEXT_JS, "returnByValue": true}),
-                Some(&session),
+                json!({"expression": expression, "returnByValue": true}),
+                Some(&frame.session),
+                budget,
             )
             .await;
-        self.connection
-            .call(
-                "Target.detachFromTarget",
-                json!({"sessionId": session}),
-                None,
-            )
-            .await
-            .ok();
-        read.ok()?["result"]["value"].as_str().map(str::to_string)
+        let Ok(read) = read else {
+            // Only a full miss starts the short deadline's 30 s, so a frame
+            // still stuck after them is given the full one again.
+            if budget == FRAME_READ && started.elapsed() >= budget {
+                self.connection
+                    .set_frame_missed(&frame.session, Some(started));
+            }
+            return None;
+        };
+        self.connection.set_frame_missed(&frame.session, None);
+        let value = &read["result"]["value"];
+        Some((
+            url_origin(value[0].as_str()?),
+            value[1].as_str()?.to_string(),
+        ))
     }
 }
 
@@ -285,6 +346,17 @@ mod tests {
             text.ends_with("\n[frame https://w.test] Reserve Now"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_frame_that_missed_its_deadline_gets_the_short_one_for_30_s() {
+        let now = Instant::now();
+        assert_eq!(read_budget(None, now), FRAME_READ);
+        assert_eq!(read_budget(Some(now), now), FRAME_RETRY);
+        let earlier = now - Duration::from_secs(29);
+        assert_eq!(read_budget(Some(earlier), now), FRAME_RETRY);
+        let long_ago = now - FRAME_RECHECK;
+        assert_eq!(read_budget(Some(long_ago), now), FRAME_READ);
     }
 
     #[test]

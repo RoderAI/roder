@@ -20,10 +20,14 @@ impl Agent {
     }
 
     pub(super) async fn tick(&mut self) -> anyhow::Result<()> {
-        let decision = self.predict().await?;
+        // A step a light recovery named is taken in place of a decision.
+        let (decision, directed) = match self.directed.take() {
+            Some(decision) => (decision, true),
+            None => (self.predict().await?, false),
+        };
         let previous = self.observation.clone();
         let steps = self.history.len();
-        match self.act(decision.clone()).await {
+        match self.act(decision.clone(), directed).await {
             Err(error) if error.is::<StaleObservation>() && self.history.len() == steps => {
                 self.recovery.record(
                     "stale_decision",
@@ -31,7 +35,7 @@ impl Agent {
                     self.elapsed_ms,
                 );
                 if self.revalidate_navigation(&previous, &decision).await? {
-                    self.act(decision).await
+                    self.act(decision, directed).await
                 } else {
                     Err(error)
                 }
@@ -40,7 +44,7 @@ impl Agent {
         }
     }
 
-    async fn act(&mut self, decision: JevDecision) -> anyhow::Result<()> {
+    async fn act(&mut self, decision: JevDecision, directed: bool) -> anyhow::Result<()> {
         let selected = decision.choice.clone();
         // A page that showed nothing yet is read again once before a
         // BLOCKED about it is believed; the next decision sees what came.
@@ -95,7 +99,30 @@ impl Agent {
         let Some(action) = action else {
             return Err(StaleObservation::new("Chosen action is no longer observed").into());
         };
-        if let Some(held) = self.unsure_repeat(&action, &decision) {
+        // A step a recovery named was the consultant's already.
+        let consult::Verdict {
+            action,
+            decision,
+            endorsed,
+            swapped,
+        } = match directed {
+            true => consult::Verdict {
+                action,
+                decision,
+                endorsed: true,
+                swapped: false,
+            },
+            false => self.consult_before_acting(action, decision).await,
+        };
+        let selected = decision.choice.clone();
+        // A repeat the consultant endorsed goes ahead, unless its control
+        // commits or adds something, or it is a twin.
+        let held = self.unsure_repeat(&action, &decision).filter(|held| {
+            !(endorsed
+                && held.kind == JevSuppressedKind::SameControl
+                && consult::repeatable(&action))
+        });
+        if let Some(held) = held {
             self.suppressed_click = Some(held);
             if self.retry_navigation(&action, &decision).await? {
                 return Ok(());
@@ -164,6 +191,7 @@ impl Agent {
             Err(error) => return Err(error),
         };
         self.pending_text = None;
+        self.form_fill.acted(&action, &self.observation);
         self.elapsed();
 
         // Record execution before observing: a stale observation afterwards
@@ -197,6 +225,13 @@ impl Agent {
             "text_latency_ms": written.as_ref().map_or(0, |written| written.latency_ms),
             "operation": decision.operation,
             "target": decision.target,
+            // Who chose it: Jev, the consultant in Jev's place, or a light
+            // recovery (see `consult` and `recovery`).
+            "decided_by": match (directed, swapped) {
+                (true, _) => "recovery",
+                (false, true) => "consult",
+                (false, false) => "jev",
+            },
             "page_changed": Value::Null,
             "effect": Value::Null,
             "url": self.observation["url"],

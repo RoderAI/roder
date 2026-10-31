@@ -7,6 +7,11 @@
 //! ran out short of the goal; or its decision service kept sending replies
 //! Jev could not use.
 //!
+//! With a consultant (Roder's text helper, unless `JEV_CONSULT=0`), a stall,
+//! covered targets or going round in circles reach this only after the
+//! run's light recoveries (see `agent::recovery`) were spent or declined:
+//! the cheap one-step tier comes first, and this full fallback after it.
+//!
 //! That last one is the only `error` that falls back. The service answered
 //! and was billed, but its replies failed validation, were refusals, or
 //! could not be decoded, even after Jev asked again twice

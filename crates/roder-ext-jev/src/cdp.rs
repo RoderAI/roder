@@ -21,8 +21,10 @@
 //! so the settle can wait for a fetch or XHR request the action started
 //! ([`Connection::await_requests`]). The [`navigation`] ledger keeps, from
 //! the same reads, each tab's committed document status, the document
-//! requests and the downloads an action started.
+//! requests and the downloads an action started. The [`frames`] ledger keeps
+//! the sessions Chrome attached to each tab's frames of another process.
 
+mod frames;
 mod navigation;
 mod requests;
 
@@ -36,6 +38,8 @@ use tokio_tungstenite::tungstenite::Message;
 use roder_ext_chrome::direct::devtools::{accepts_dialog, browser_websocket, decode_message};
 
 use crate::engine::JevDialog;
+pub(crate) use frames::FrameSession;
+use frames::Frames;
 use navigation::Navigation;
 pub(crate) use navigation::{DownloadEvent, DownloadState, NavigationMark};
 use requests::Requests;
@@ -55,6 +59,8 @@ pub(crate) struct Connection {
     requests: Requests,
     /// Documents, their statuses and the downloads the pages started.
     navigation: Navigation,
+    /// The frames of another process each tab has.
+    frames: Frames,
 }
 
 impl Connection {
@@ -75,6 +81,7 @@ impl Connection {
             dialogs: Vec::new(),
             requests: Requests::default(),
             navigation: Navigation::default(),
+            frames: Frames::default(),
         })
     }
 
@@ -150,6 +157,18 @@ impl Connection {
         Ok(true)
     }
 
+    /// The frames of another process Chrome attached under the tab
+    /// `session`, oldest first.
+    pub(crate) fn frame_sessions(&self, session: &str) -> Vec<FrameSession> {
+        self.frames.of(session)
+    }
+
+    /// Note that a read of the frame on `session` ran past its deadline at
+    /// `at`, or (`None`) that one answered.
+    pub(crate) fn set_frame_missed(&mut self, session: &str, at: Option<std::time::Instant>) {
+        self.frames.set_missed(session, at);
+    }
+
     fn send_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
@@ -205,13 +224,27 @@ impl Connection {
         params: Value,
         session: Option<&str>,
     ) -> anyhow::Result<Value> {
+        self.call_within(method, params, session, CALL_TIMEOUT)
+            .await
+    }
+
+    /// [`Connection::call`] with its own deadline, for a read that must not
+    /// wait out the usual one (a frame whose renderer stopped answering).
+    /// A reply that comes later is skipped like any other id's.
+    pub(crate) async fn call_within(
+        &mut self,
+        method: &str,
+        params: Value,
+        session: Option<&str>,
+        within: Duration,
+    ) -> anyhow::Result<Value> {
         let id = self.send_id();
         if method.starts_with("Input.") {
             self.requests.input_sent();
             self.navigation.input_sent();
         }
         self.send(id, method, params, session).await?;
-        let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
+        let deadline = tokio::time::Instant::now() + within;
         loop {
             let value = self
                 .next_message(method, deadline)
@@ -253,6 +286,7 @@ impl Connection {
             } else if value.get("method").is_some() {
                 self.requests.on_event(&value);
                 self.navigation.on_event(&value);
+                self.frames.on_event(&value);
             }
             return Ok(Some(value));
         }

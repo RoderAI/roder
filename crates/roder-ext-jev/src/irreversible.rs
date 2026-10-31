@@ -63,6 +63,7 @@ pub(crate) const DOWNLOADS_KEY: &str = "downloads_forbidden";
 
 /// Whether the gate asks about this observed action: an Enter, or a click
 /// whose evidence says it may commit (see [`shortlist`]).
+#[cfg(test)]
 pub(crate) fn gated(action: &Value) -> bool {
     tier(action).is_some()
 }

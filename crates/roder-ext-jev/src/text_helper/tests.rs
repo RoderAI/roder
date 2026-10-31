@@ -1,3 +1,6 @@
+use chrono::{Datelike, NaiveDate};
+
+use super::context::iso_format;
 use super::*;
 use crate::http::tests::{MockServer, Reply, fast_policy};
 
@@ -168,7 +171,7 @@ fn request_bodies_match_upstream_for_every_provider_shape() {
             "other_none" => ("https://api.example.test/v1", none),
             other => panic!("unexpected fixture {other}"),
         };
-        let ours = request_body(context, "fixture-writer", base, effort);
+        let ours = request_body(Ask::Field, context, "fixture-writer", base, effort);
         assert_eq!(
             serde_json::to_string(&ours).unwrap(),
             serde_json::to_string(&expected["body"]).unwrap(),
@@ -182,7 +185,7 @@ fn request_bodies_match_upstream_for_every_provider_shape() {
 #[test]
 fn a_named_level_is_sent_as_the_endpoint_takes_it() {
     let context = json!({"goal": "g"});
-    let body = |base: &str, effort| request_body(&context, "m", base, Some(effort));
+    let body = |base: &str, effort| request_body(Ask::Field, &context, "m", base, Some(effort));
     let other = body("https://api.example.test/v1", Effort::Medium);
     assert_eq!(other["reasoning"], json!({"effort": "medium"}));
     // DeepSeek has no levels: any but none turns its thinking on.

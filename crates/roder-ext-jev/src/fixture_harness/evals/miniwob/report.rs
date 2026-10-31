@@ -49,6 +49,12 @@ pub(super) struct Row {
     pub(super) text: Value,
     /// Executed actions, then the final DONE or BLOCKED if Jev gave one.
     pub(super) trace: Vec<String>,
+    /// What the consults and light recoveries did, and every text-model
+    /// call's usage, theirs included.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) recoveries: Vec<Value>,
+    #[serde(skip_serializing_if = "Value::is_null")]
+    pub(super) text_usage: Value,
     pub(super) start_actions: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) error: Option<String>,
@@ -80,6 +86,8 @@ impl Row {
             text_model: text_model.into(),
             text: Value::Null,
             trace: Vec::new(),
+            recoveries: Vec::new(),
+            text_usage: Value::Null,
             start_actions: Vec::new(),
             error: None,
         }
@@ -156,6 +164,8 @@ impl Row {
             goal: episode.goal.clone(),
             decision_model: result.decisions.iter().rev().find_map(|d| d.model.clone()),
             trace,
+            recoveries: result.recoveries.clone(),
+            text_usage: serde_json::to_value(&result.usage.text).unwrap_or_default(),
             start_actions: episode.start_actions.clone(),
             ..Self::base(task, seed, text_model)
         };

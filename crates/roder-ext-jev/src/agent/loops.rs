@@ -43,6 +43,14 @@
 //!
 //! The page's own fingerprint (`page_changed`, and the one upstream hashes)
 //! is not touched by any of this.
+//!
+//! With a consultant, the same pair a fourth time and six idle waits are
+//! stalls like the stall rule's: they first get a light recovery (see
+//! `recovery`), which starts both counts again. The caps were re-checked
+//! against fastbrowse's single stall rule (an action from the same page a
+//! third time counts as unchanged, and three unchanged steps recover) on the
+//! live corpus, the six-item cart included: neither cap ended a run there,
+//! so they stay as they are.
 
 use std::collections::HashMap;
 
@@ -105,9 +113,7 @@ pub(super) fn idle_wait(entry: &Value) -> bool {
 /// How many of the latest chosen actions are idle waits, back to the first
 /// that is not one.
 fn idle_waits(history: &[Value]) -> usize {
-    history
-        .iter()
-        .rev()
+    super::since_recovery(history)
         .filter(chosen)
         .take_while(|entry| idle_wait(entry))
         .count()
@@ -392,5 +398,9 @@ mod tests {
         assert_eq!(idle_waits(&[click, wait(false), banner, wait(false)]), 2);
         // A wait that changed the page is progress, not idle.
         assert_eq!(idle_waits(&[wait(false), wait(true), wait(false)]), 1);
+        // A light recovery spends the waits before it.
+        let mut marked = wait(false);
+        marked["stall_reset"] = json!(true);
+        assert_eq!(idle_waits(&[wait(false), marked, wait(false)]), 1);
     }
 }

@@ -29,7 +29,9 @@ use async_trait::async_trait;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::engine::{JevDecision, JevDecisionClient, JevTextValue, JevTextValueResolver};
+use crate::engine::{
+    JevDecision, JevDecisionClient, JevFormValues, JevTextValue, JevTextValueResolver,
+};
 
 /// One phase's calls and wall time.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
@@ -218,6 +220,16 @@ impl JevTextValueResolver for TimedText {
         self.watch
             .time("text", self.inner.resolve(field_context))
             .await
+    }
+
+    /// A resolver that answers one field at a time made no call.
+    async fn resolve_form(&self, form_context: &Value) -> anyhow::Result<Option<JevFormValues>> {
+        let started = Instant::now();
+        let result = self.inner.resolve_form(form_context).await;
+        if !matches!(result, Ok(None)) {
+            self.watch.add("text", started.elapsed());
+        }
+        result
     }
 }
 

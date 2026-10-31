@@ -61,12 +61,12 @@ use super::tally::{self, Baseline, Run, Settings};
 use super::text_sources::{Recorded, Supervised};
 use super::variants::{StepTelemetry, Variant, VariantTransport, Variants};
 use super::{
-    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_json,
-    write_rows,
+    FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task_consulting, table, validate,
+    write_json, write_rows,
 };
 use crate::decide::JevTypeSafeDecisionClient;
 use crate::decide::route::{HostedRoute, JevHost};
-use crate::engine::{JevDecisionTransport, JevTextValueResolver};
+use crate::engine::{JevConsultant, JevDecisionTransport, JevTextValueResolver};
 use crate::fallback::model::FallbackModel;
 use crate::fixture_harness::Harness;
 use crate::text_helper::TextHelper;
@@ -88,6 +88,10 @@ struct LiveSetup {
     variants: Variants,
     /// `JEV_EVAL_TEXT=model`: the text helper that types ordinary fields.
     text_model: Option<TextModel>,
+    /// The consultant on unsure steps and stalls: the configured text
+    /// model, as `jev_browse` has it, whatever types the fields; none with
+    /// `JEV_CONSULT=0` or no text model.
+    consultant: Option<TextModel>,
     /// Every task with the irreversible-action gate on.
     confirm_irreversible: bool,
     /// Every task that does not set it with cookie-banner refusal off.
@@ -106,12 +110,22 @@ impl LiveSetup {
     /// header.
     fn label(&self) -> String {
         format!(
-            "decisions {}, text {}, fallback {}, variants {:?}, gate {}, cookie refusal {}, \
-             concurrency {}",
+            "decisions {}, text {}, consult {}, fallback {}, variants {:?}, gate {}, \
+             cookie refusal {}, concurrency {}",
             self.route.host.name(),
             self.text_model
                 .as_ref()
                 .map_or("task values".to_string(), TextModel::label),
+            self.consultant
+                .as_ref()
+                .map_or("off".to_string(), |model| format!(
+                    "{} below {} recoveries {}",
+                    model.label(),
+                    env("JEV_CONSULT_BELOW")
+                        .unwrap_or_else(|| crate::engine::CONSULT_BELOW.to_string()),
+                    env("JEV_LIGHT_RECOVERIES")
+                        .unwrap_or_else(|| crate::engine::LIGHT_RECOVERIES.to_string()),
+                )),
             self.fallback
                 .as_ref()
                 .map_or("off".to_string(), |model| model.label()),
@@ -190,13 +204,18 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
     };
     let resolver: Arc<dyn JevTextValueResolver> = text.clone();
     let probes = task.expect.probes().cloned().collect();
-    let mut row = match run_task(
+    let consultant = setup
+        .consultant
+        .as_ref()
+        .map(|model| Arc::new(TextHelper::new(model.clone())) as Arc<dyn JevConsultant>);
+    let mut row = match run_task_consulting(
         &harness,
         task,
         decision,
         resolver,
         probes,
         setup.fallback.clone(),
+        consultant,
     )
     .await
     {
@@ -215,6 +234,13 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
                     .map_or("task-values".to_string(), |helper| helper.current().label())
             );
             row.telemetry["text"] = text.report();
+            // Every text-model call, consults and recoveries included, and
+            // what the consults and light recoveries did.
+            row.telemetry["text_usage"] = json!(outcome.result.usage.text);
+            row.telemetry["recoveries"] = json!(outcome.result.recoveries);
+            row.telemetry["stop_cause"] = json!(outcome.result.stop_cause);
+            row.telemetry["fallback_trigger"] =
+                json!(crate::fallback::trigger::trigger(&outcome.result));
             row
         }
         Err(error) => Row::errored(task, "live", &error),
@@ -294,6 +320,12 @@ async fn live_corpus() {
                     .expect("JEV_EVAL_TEXT=model but no text model is configured"),
             ),
             false => None,
+        },
+        consultant: match crate::runner::switch("JEV_CONSULT", env("JEV_CONSULT").as_deref(), true)
+            .unwrap()
+        {
+            false => None,
+            true => crate::runner::resolve_text_model(None).await.unwrap(),
         },
         confirm_irreversible: crate::runner::switch(
             "JEV_EVAL_CONFIRM_IRREVERSIBLE",
@@ -382,6 +414,7 @@ mod tests {
             model: "jev-latest".into(),
             variants: Variants::parse("").unwrap(),
             text_model: None,
+            consultant: None,
             confirm_irreversible: false,
             no_cookie_banner_refusal: false,
             fallback: None,

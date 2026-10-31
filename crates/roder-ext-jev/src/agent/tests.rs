@@ -123,6 +123,25 @@ fn a_refused_cookie_banner_neither_counts_nor_breaks_a_stall() {
 }
 
 #[test]
+fn a_light_recovery_spends_the_stall_evidence() {
+    // The step a recovery marked and everything before it no longer count.
+    let mut marked = entry("click", Some(false));
+    marked["stall_reset"] = json!(true);
+    let mut history = vec![
+        entry("click", Some(false)),
+        entry("click", Some(false)),
+        marked.clone(),
+        entry("click", Some(false)),
+        entry("click", Some(false)),
+    ];
+    assert!(stalled(&history).is_none());
+    history.push(entry("click", Some(false)));
+    assert_eq!(stalled(&history), Some(JevStopCause::Stalled));
+    assert_eq!(since_recovery(&history).count(), 3);
+    assert_eq!(since_recovery(&[marked]).count(), 0);
+}
+
+#[test]
 fn only_the_last_three_actions_matter() {
     let history = vec![
         entry("click", Some(true)),

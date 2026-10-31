@@ -224,6 +224,20 @@ pub(crate) async fn run_task(
     probes: Vec<String>,
     fallback: Option<Arc<dyn FallbackModel>>,
 ) -> anyhow::Result<Outcome> {
+    run_task_consulting(harness, task, decision, text, probes, fallback, None).await
+}
+
+/// [`run_task`] with a consultant, configured as `jev_browse` configures
+/// it (`JEV_CONSULT`, `JEV_CONSULT_BELOW`, `JEV_LIGHT_RECOVERIES`).
+pub(crate) async fn run_task_consulting(
+    harness: &Harness,
+    task: &Task,
+    decision: Arc<dyn JevDecisionClient>,
+    text: Arc<dyn crate::engine::JevTextValueResolver>,
+    probes: Vec<String>,
+    fallback: Option<Arc<dyn FallbackModel>>,
+    consultant: Option<Arc<dyn crate::engine::JevConsultant>>,
+) -> anyhow::Result<Outcome> {
     let started = Instant::now();
     let refuse = task.refuse_cookie_banners.unwrap_or(true);
     let page = match refuse {
@@ -261,6 +275,7 @@ pub(crate) async fn run_task(
         config = config.with_irreversible_authorized();
     }
     config = config.with_cookie_banner_refusal(refuse);
+    config = crate::agent::configure_consult(config, consultant)?;
     let mut engine = match JevEngine::start(Box::new(browser), config).await {
         Ok(engine) => engine,
         Err(error) => {

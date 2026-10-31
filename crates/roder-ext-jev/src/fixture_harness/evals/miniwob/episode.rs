@@ -206,6 +206,8 @@ pub(super) struct EpisodeSpec<'a> {
     pub(super) timeout: Duration,
     pub(super) decision: &'a Arc<dyn JevDecisionClient>,
     pub(super) text: &'a Arc<dyn JevTextValueResolver>,
+    /// The consultant on unsure steps and stalls (`JEV_CONSULT=0` drops it).
+    pub(super) consultant: Option<Arc<dyn crate::engine::JevConsultant>>,
     /// With `JEV_EVAL_FALLBACK=model`: the fallback after an episode Jev
     /// could not finish, on the same tab, until the task ends the episode.
     pub(super) fallback: Option<&'a Arc<dyn FallbackModel>>,
@@ -268,6 +270,7 @@ pub(super) async fn run(harness: &Harness, spec: &EpisodeSpec<'_>) -> anyhow::Re
     });
     // The production wait (800 ms for a `wait` action), not the fixture tiers'.
     let config = JevEngineConfig::new(goal.clone(), decider).with_text_resolver(spec.text.clone());
+    let config = crate::agent::configure_consult(config, spec.consultant.clone())?;
     let mut engine = match JevEngine::start(Box::new(browser), config).await {
         Ok(engine) => engine,
         Err(error) => {

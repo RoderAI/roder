@@ -8,7 +8,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -17,6 +16,7 @@ use crate::prompts::MAX_STEPS;
 use crate::scope::JevOriginScope;
 use crate::secret::Secrets;
 pub use crate::wall::{JevWall, JevWallKind};
+pub use consultant::{CONSULT_BELOW, JevConsultAnswer, JevConsultant, LIGHT_RECOVERIES};
 pub use covered::{COVER_CONTROLS, Covered};
 pub use records::{
     JevActionRecord, JevControl, JevDecisionRecord, JevDownload, JevFrameText, JevOmitted,
@@ -134,30 +134,8 @@ impl JevDecision {
 mod decision_client;
 pub use decision_client::{JevDecisionClient, JevDecisionTransport};
 
-/// A value generated for a fill action.
-#[derive(Debug, Clone)]
-pub struct JevTextValue {
-    pub value: String,
-    pub model: String,
-    pub latency_ms: u64,
-    pub usage: Value,
-}
-
-/// Resolves a fill value from JEV's field context.
-///
-/// The preferred source for a password or one-time code (the field
-/// context's `field.input_type` is `password` or `one-time-code`):
-/// supervisors may return an opaque value reference and resolve it only
-/// while executing the browser action, so the secret never enters the goal,
-/// the decision request, the text model or the JEV trace. Whatever is
-/// returned for a secret field is recorded as `[secret]`. A resolver with
-/// no value should fail with [`JevStop`] and [`JevStatus::NeedsInput`],
-/// naming the field; Roder's own text helper does, and never types a
-/// password or code that is not written in the goal.
-#[async_trait]
-pub trait JevTextValueResolver: Send + Sync {
-    async fn resolve(&self, field_context: &Value) -> anyhow::Result<JevTextValue>;
-}
+mod text_values;
+pub use text_values::{JevFormValues, JevTextValue, JevTextValueResolver};
 
 /// Where a run stands. Every status but `Ready` ends it; `Ready` is only seen
 /// mid-run. New statuses may be added as something comes to produce them.
@@ -323,6 +301,8 @@ pub struct JevEngineConfig {
     /// Secrets typed by earlier runs on the same tab, scrubbed from this
     /// run's page reads too.
     pub(crate) secrets: Secrets,
+    /// The second opinion on unsure steps and stalls (see `consultant`).
+    pub(crate) consult: consultant::Consult,
 }
 
 impl JevEngineConfig {
@@ -341,6 +321,7 @@ impl JevEngineConfig {
             irreversible_authorized: false,
             refuse_cookie_banners: true,
             secrets: Secrets::default(),
+            consult: consultant::Consult::default(),
         }
     }
 
@@ -491,5 +472,6 @@ impl JevEngine {
     }
 }
 
+mod consultant;
 mod covered;
 mod records;

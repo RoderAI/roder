@@ -113,6 +113,13 @@ impl JevSessions {
         if let Some(text) = &models.text {
             config = config.with_text_resolver(text.clone());
         }
+        // Roder's text helper is also the consultant on unsure steps and
+        // stalls, unless `JEV_CONSULT=0` (see `agent::consult`).
+        let consultant = models
+            .helper
+            .clone()
+            .map(|helper| helper as Arc<dyn crate::engine::JevConsultant>);
+        config = crate::agent::configure_consult(config, consultant)?;
         let helper = models.helper.clone();
         // A tab whose page refused access holds nothing worth keeping, so a
         // new tab asked for after it would only leave a dead one open: the

@@ -19,9 +19,9 @@ use roder_api::transcript::{TranscriptItem, UserMessage};
 use roder_ext_openai_responses::OpenAiResponsesEngine;
 use serde_json::{Value, json};
 
+use super::Ask;
 use crate::engine::{JevStatus, JevStop};
 use crate::http::{JsonPoster, PostFailure};
-use crate::prompts::TEXT_VALUE;
 use crate::python_json;
 use crate::text_model::Effort;
 
@@ -49,18 +49,62 @@ pub(crate) fn value_format() -> Value {
     })
 }
 
-/// The Responses body for one field. `roder-ext-openai-responses` maps the
+/// The reply's schema for several fields of one form:
+/// `{"fields": [{"id": string, "text": string | null}]}`. The backend
+/// holds the model to it; `form::parse_values` checks it again.
+pub(crate) fn form_format() -> Value {
+    json!({
+        "type": "json_schema",
+        "name": "form_values",
+        "strict": true,
+        "schema": {
+            "type": "object",
+            "properties": {"fields": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string"},
+                        "text": {"type": ["string", "null"]},
+                    },
+                    "required": ["id", "text"],
+                    "additionalProperties": false,
+                },
+            }},
+            "required": ["fields"],
+            "additionalProperties": false,
+        },
+    })
+}
+
+/// The Responses body for `ask`. `roder-ext-openai-responses` maps the
 /// request as it would for a turn; two things a one-shot, unstored call
 /// never uses are then dropped: the encrypted reasoning a later turn would
 /// replay (`include`) and the reasoning summary, which nobody reads.
-pub(crate) fn request_body(context: &Value, model: &str, effort: Effort) -> Value {
+pub(crate) fn request_body(ask: Ask, context: &Value, model: &str, effort: Effort) -> Value {
+    let format = match ask {
+        Ask::Field => value_format(),
+        Ask::Form => form_format(),
+    };
+    request_body_with(ask.system(), format, context, model, effort)
+}
+
+/// The Responses body for `context` under another system prompt and reply
+/// schema (the consult's; see `consult`).
+pub(crate) fn request_body_with(
+    system: &str,
+    format: Value,
+    context: &Value,
+    model: &str,
+    effort: Effort,
+) -> Value {
     let request = AgentInferenceRequest {
         model: ModelSelection {
             provider: PROVIDER_CODEX.into(),
             model: model.into(),
         },
         instructions: InstructionBundle {
-            system: Some(TEXT_VALUE.into()),
+            system: Some(system.into()),
             ..InstructionBundle::default()
         },
         transcript: vec![TranscriptItem::UserMessage(UserMessage::text(
@@ -73,7 +117,7 @@ pub(crate) fn request_body(context: &Value, model: &str, effort: Effort) -> Valu
             level: Some(effort.as_str().into()),
         },
         output: OutputConfig {
-            response_format: Some(value_format()),
+            response_format: Some(format),
             ..OutputConfig::default()
         },
         runtime: RuntimeHints::default(),

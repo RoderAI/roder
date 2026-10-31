@@ -18,12 +18,11 @@ use std::time::Instant;
 
 use anyhow::{Context, bail};
 use async_trait::async_trait;
-use chrono::{Datelike, NaiveDate};
 use serde_json::{Map, Value, json};
 
-use crate::engine::{JevStatus, JevStop, JevTextValue, JevTextValueResolver};
+use crate::engine::{JevFormValues, JevStatus, JevStop, JevTextValue, JevTextValueResolver};
 use crate::http::{JsonPoster, PostFailure, RetryPolicy};
-use crate::prompts::TEXT_VALUE;
+use crate::prompts::{FORM_VALUES, TEXT_VALUE};
 use crate::python_json;
 use crate::text_model::{Effort, TextModel, Transport, is_deepseek};
 use crate::usage::{JevBilled, JevCallUsage};
@@ -56,149 +55,6 @@ fn grounded(context: &Value, value: &str) -> bool {
         || context["goal"]
             .as_str()
             .is_some_and(|goal| goal.contains(value.trim()))
-}
-
-/// Today with its weekday, the next two months, each named by its distance,
-/// and the seven days after it, each with its weekday (after fastbrowse,
-/// MIT, page.py `today` and `next_days`): told the date alone, its field
-/// writer booked "the next Monday" a week late; told the coming months as a
-/// bare list, it took the last for "next month"; and told the weekday but
-/// left to count, it still booked a relative day a week late. A relative
-/// day is looked up in the list instead.
-pub(crate) fn today(date: NaiveDate) -> String {
-    let next_month = |date: NaiveDate| {
-        let (year, month) = match date.month() {
-            12 => (date.year() + 1, 1),
-            month => (date.year(), month + 1),
-        };
-        NaiveDate::from_ymd_opt(year, month, 1).expect("the first of a month")
-    };
-    let first = next_month(date);
-    let second = next_month(first);
-    let next_days = date
-        .iter_days()
-        .skip(1)
-        .take(7)
-        .map(|day| day.format("%A %Y-%m-%d").to_string())
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "{}. In one month: {}; in two months: {}. Next seven days: {next_days}",
-        date.format("%Y-%m-%d (%A)"),
-        first.format("%B %Y"),
-        second.format("%B %Y")
-    )
-}
-
-/// The ISO shape a native date or time input takes, by its type.
-fn iso_format(input_type: &str) -> Option<&'static str> {
-    Some(match input_type {
-        "date" => "YYYY-MM-DD (ISO 8601, such as 2026-09-25)",
-        "datetime-local" => "YYYY-MM-DDThh:mm (ISO 8601, such as 2026-09-25T14:30)",
-        "month" => "YYYY-MM (ISO 8601, such as 2026-09)",
-        "week" => "YYYY-Www (ISO 8601, such as 2026-W39)",
-        "time" => "hh:mm (24-hour, such as 14:30)",
-        _ => return None,
-    })
-}
-
-/// Everything the helper is told about the field it is filling. `today` is
-/// passed in so the context is deterministic under test.
-pub(crate) fn field_context(
-    goal: &str,
-    action: &Value,
-    page: &Value,
-    history: &[Value],
-    today_is: NaiveDate,
-) -> Value {
-    let mut field = Map::new();
-    for key in ["label", "role", "value"] {
-        field.insert(key.into(), action.get(key).cloned().unwrap_or(Value::Null));
-    }
-    if let Some(input_type) = action["input_type"].as_str() {
-        field.insert("input_type".into(), json!(input_type));
-        if let Some(format) = iso_format(input_type) {
-            field.insert("format".into(), json!(format));
-        }
-    }
-    // The card, row, section or column the field sits in, as the decision
-    // model sees it: what tells a second "Name" field from the first.
-    if let Some(context) = action.get("context") {
-        field.insert("context".into(), context.clone());
-    }
-    let text = page["text"].as_str().unwrap_or_default();
-    let text = text.chars().take(6000).collect::<String>();
-    let recent = history
-        .iter()
-        .skip(history.len().saturating_sub(6))
-        .map(|entry| {
-            let mut recorded = Map::new();
-            for key in ["action", "text"] {
-                recorded.insert(key.into(), entry.get(key).cloned().unwrap_or(Value::Null));
-            }
-            Value::Object(recorded)
-        })
-        .collect::<Vec<_>>();
-    let mut context = Map::new();
-    context.insert("goal".into(), json!(goal));
-    context.insert("date".into(), json!(today(today_is)));
-    context.insert("field".into(), Value::Object(field));
-    let others = other_fields(action, page);
-    if !others.is_empty() {
-        context.insert("other_fields".into(), Value::Array(others));
-    }
-    context.insert("page".into(), json!({"title": page["title"], "text": text}));
-    context.insert("recent_actions".into(), Value::Array(recent));
-    Value::Object(context)
-}
-
-/// How many other fields the helper is told about, and how much of each value.
-const OTHER_FIELDS: usize = 20;
-const OTHER_VALUE_CHARS: usize = 1000;
-
-/// The page's other text fields and dropdowns, each once, with what they hold
-/// now: the text to copy from a textarea, or which field of a form this one
-/// is. Password and one-time-code fields, whose content is never read, are
-/// not listed.
-fn other_fields(action: &Value, page: &Value) -> Vec<Value> {
-    let mut seen = vec![action["node"].clone()];
-    let mut fields = Vec::new();
-    for other in page["actions"].as_array().map_or(&[][..], Vec::as_slice) {
-        let kind = other["kind"].as_str().unwrap_or_default();
-        if !matches!(kind, "fill" | "select")
-            || seen.contains(&other["node"])
-            || crate::secret::is_secret(other)
-        {
-            continue;
-        }
-        seen.push(other["node"].clone());
-        let label = other["label"].as_str().unwrap_or_default();
-        let value = other
-            .get("current_value")
-            .or_else(|| other.get("value"))
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let mut entry = Map::new();
-        entry.insert(
-            "label".into(),
-            json!(label.split(" → ").next().unwrap_or(label)),
-        );
-        if let Some(input_type) = other.get("input_type") {
-            entry.insert("input_type".into(), input_type.clone());
-        }
-        if let Some(context) = other.get("context") {
-            entry.insert("context".into(), context.clone());
-        }
-        entry.insert(
-            "value".into(),
-            json!(value.chars().take(OTHER_VALUE_CHARS).collect::<String>()),
-        );
-        fields.push(Value::Object(entry));
-        if fields.len() == OTHER_FIELDS {
-            break;
-        }
-    }
-    fields
 }
 
 /// Upstream selects the reasoning field by base URL: DeepSeek's `thinking`,
@@ -244,9 +100,37 @@ fn openrouter_routing() -> Value {
     json!({"sort": "latency", "require_parameters": true})
 }
 
-/// The body posted to the text helper: upstream's exact body, plus
-/// OpenRouter's provider routing when the endpoint is OpenRouter's.
+/// What a text-helper call asks for: one field's value, or the values of
+/// several fields of one form (see [`form`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ask {
+    Field,
+    Form,
+}
+
+impl Ask {
+    pub(crate) fn system(self) -> &'static str {
+        match self {
+            Ask::Field => TEXT_VALUE,
+            Ask::Form => FORM_VALUES,
+        }
+    }
+
+    /// A form's reply holds several values, so its first cap is twice a
+    /// field's.
+    fn max_tokens(self) -> u64 {
+        match self {
+            Ask::Field => MAX_TOKENS,
+            Ask::Form => 2 * MAX_TOKENS,
+        }
+    }
+}
+
+/// The chat-completions body for `ask`: upstream's exact body for one
+/// field, plus OpenRouter's provider routing when the endpoint is
+/// OpenRouter's.
 pub(crate) fn request_body(
+    ask: Ask,
     context: &Value,
     model: &str,
     base_url: &str,
@@ -254,7 +138,7 @@ pub(crate) fn request_body(
 ) -> Value {
     let mut body = Map::new();
     body.insert("model".into(), json!(model));
-    body.insert("max_tokens".into(), json!(MAX_TOKENS));
+    body.insert("max_tokens".into(), json!(ask.max_tokens()));
     body.insert("response_format".into(), json!({"type": "json_object"}));
     let (key, value) = reasoning(base_url, effort);
     body.insert(key, value);
@@ -264,7 +148,7 @@ pub(crate) fn request_body(
     body.insert(
         "messages".into(),
         json!([
-            {"role": "system", "content": TEXT_VALUE},
+            {"role": "system", "content": ask.system()},
             {"role": "user", "content": python_json::dumps(context)},
         ]),
     );
@@ -368,15 +252,20 @@ impl TextHelper {
         self.model.lock().unwrap().clone()
     }
 
-    /// Ask the text model for the value of one field.
-    async fn field_text(&self, context: &Value) -> anyhow::Result<JevTextValue> {
+    /// Ask the model in use, and once more its stand-in when the Codex
+    /// sign-in it used stopped producing a usable token.
+    async fn on_current<T, F, Asked>(&self, ask: F) -> anyhow::Result<T>
+    where
+        F: Fn(TextModel) -> Asked,
+        Asked: std::future::Future<Output = anyhow::Result<T>>,
+    {
         let model = self.current();
-        match self.ask(&model, context).await {
+        match ask(model.clone()).await {
             Err(error) if SignInUnusable::is(&error) && model.fallback.is_some() => {
                 let stand_in = model.fallback.map(|next| next.standing_in());
                 let stand_in = stand_in.expect("a fallback");
                 *self.model.lock().unwrap() = stand_in.clone();
-                self.ask(&stand_in, context).await
+                ask(stand_in).await
             }
             written => written,
         }
@@ -440,28 +329,38 @@ impl TextHelper {
         }
     }
 
-    async fn ask(&self, model: &TextModel, context: &Value) -> anyhow::Result<JevTextValue> {
-        let started = Instant::now();
-        // The provider has answered, so the call is billed even when it gave
-        // no usable value (a null, a blank, or a malformed reply): that
-        // usage is kept.
-        let (content, usage) = match &model.transport {
+    /// The reply's content and the usage it was billed, over the model's
+    /// transport. The provider has answered, so the call is billed even when
+    /// it gave no usable value (a null, a blank, or a malformed reply): the
+    /// caller keeps that usage on its error.
+    async fn post(
+        &self,
+        model: &TextModel,
+        ask: Ask,
+        context: &Value,
+    ) -> anyhow::Result<(anyhow::Result<String>, Value)> {
+        Ok(match &model.transport {
             Transport::Chat {
                 base_url,
                 api_key,
                 reasoning,
             } => {
-                let body = request_body(context, &model.model, base_url, *reasoning);
+                let body = request_body(ask, context, &model.model, base_url, *reasoning);
                 self.chat(&endpoint(base_url), api_key, body).await?
             }
             Transport::Codex { effort } => {
-                let body = responses::request_body(context, &model.model, *effort);
+                let body = responses::request_body(ask, context, &model.model, *effort);
                 let response =
                     responses::post(&self.http, self.codex.as_ref(), &self.codex_base_url, &body)
                         .await?;
                 (responses::no_text(&response), responses::usage(&response))
             }
-        };
+        })
+    }
+
+    async fn ask(&self, model: &TextModel, context: &Value) -> anyhow::Result<JevTextValue> {
+        let started = Instant::now();
+        let (content, usage) = self.post(model, Ask::Field, context).await?;
         let value = content
             .and_then(|content| parse_value(&content))
             .and_then(|value| match value {
@@ -481,11 +380,23 @@ impl TextHelper {
 #[async_trait]
 impl JevTextValueResolver for TextHelper {
     async fn resolve(&self, field_context: &Value) -> anyhow::Result<JevTextValue> {
-        self.field_text(field_context).await
+        self.on_current(|model| async move { self.ask(&model, field_context).await })
+            .await
+    }
+
+    async fn resolve_form(&self, form_context: &Value) -> anyhow::Result<Option<JevFormValues>> {
+        self.on_current(|model| async move { self.ask_form(&model, form_context).await })
+            .await
+            .map(Some)
     }
 }
 
+mod consult;
+mod context;
+pub(crate) mod form;
 mod responses;
+
+pub(crate) use context::{field_context, field_entry, other_fields, today};
 
 #[cfg(test)]
 mod chat_tests;

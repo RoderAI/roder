@@ -2872,5 +2872,58 @@
         "model_calls": 2
       }
     }
+  },
+  {
+    "id": "frame_stuck_ad",
+    "covers": "an advertisement frame of another site whose renderer stops answering: each read gives it 5 s, then 0.5 s, and the page's own Subscribe still works within the run's minute",
+    "page": "frame-stuck.html",
+    "goal": "Subscribe to the weekly digest.",
+    "expect": {
+      "status": "done",
+      "posts": [],
+      "text_contains": [
+        "Subscribed to the weekly digest"
+      ],
+      "dom": {
+        "window.subscribed ?? false": true
+      }
+    },
+    "script": {
+      "plan": [
+        {
+          "click": "Subscribe"
+        }
+      ],
+      "expect": {
+        "actions": [
+          "click Subscribe"
+        ],
+        "model_calls": 2
+      }
+    }
+  },
+  {
+    "id": "frame_stuck_beside_widget",
+    "covers": "an order status frame of another site is read beside a sandboxed advertisement frame that stops answering; the answer is in the live frame's text",
+    "page": "frame-stuck.html?ad=sandboxed&order=4417",
+    "goal": "What is the status of order 4417?",
+    "expect": {
+      "status": "done",
+      "posts": [],
+      "text_contains": [
+        "Order 4417 · Shipped"
+      ]
+    },
+    "script": {
+      "plan": [
+        {
+          "done": true
+        }
+      ],
+      "expect": {
+        "actions": [],
+        "model_calls": 1
+      }
+    }
   }
 ]

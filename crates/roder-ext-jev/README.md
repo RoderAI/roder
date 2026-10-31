@@ -73,6 +73,17 @@ notice is `third-party/duckduckgo-autoconsent/`.
   call sets `authorize_irreversible`, and before a download the goal rules
   out whatever it sets. Neither adds a model call, and the gate off, the
   decision request is byte-for-byte unchanged.
+- The text model is also Jev's consultant (`JEV_CONSULT=0` turns it off).
+  When Jev is about to repeat, unsure, the click it just made, which the
+  repeat guard would stop, one text call asks whether to go ahead, or what
+  to act on instead. That call lets a feed's second "Load more" through,
+  but never a repeated commitment or a twin. Two more tiers are off by default because they did not help
+  when measured. `JEV_CONSULT_BELOW=0.55` consults before any step under that
+  call confidence and may act on another control, which is still gated.
+  `JEV_LIGHT_RECOVERIES=2` gives a stalled run that many one-step recoveries
+  before the fallback. The consultant is never offered a cookie-banner
+  choice. Its calls count as text calls (see
+  [Second opinions](../../docs/jev-browser.md#second-opinions-the-consult-and-light-recovery)).
 - Password and one-time-code fields can be typed into. What such a field
   holds is never read (the observation says only whether it is filled), and
   what Jev types there is recorded as `[secret]` and scrubbed from what the
@@ -469,8 +480,12 @@ in in the tab (or give the code), then call again with url "".
 - **Frames Jev cannot reach (`page/frames.rs`).** Up to two frames of
   another origin, at least 200 by 100 pixels, shown and on screen, are read
   on every observation: one in the page's process through an isolated
-  world, one in another process (another site, or a sandboxed frame) by
-  attaching to its target for one evaluate. Their text, 700 characters each,
+  world, one in another process (another site, or a sandboxed frame) on the
+  session Chrome attached to it when it appeared (`Target.setAutoAttach`,
+  kept by `cdp/frames.rs`). Each frame's read has a 5 s deadline, and a
+  frame of another process that missed it gets 0.5 s on later reads for
+  30 s, so an advertisement whose renderer stopped answering costs one
+  observation 5 s, not every observation 30 s. Their text, 700 characters each,
   is added to the page text as `[frame <origin>] …` lines within its 6,000
   characters (the page's own text is cut first), so the decision model can
   see a booking panel, and to the result. Their controls are not offered,
@@ -1036,6 +1051,20 @@ taken off before the reply is checked: the default writer ended about one
 reply in eight with a stray "```" after an intact object, which used to end
 the run as an error.
 
+**Form fill from one call** (Jev's own, after fastbrowse's form writer).
+Upstream asks for each field alone. When the first empty field of a `<form>`
+with other empty text fields is chosen, Jev asks once for all of them
+(FORM_VALUES, `{"fields": [{"id", "text"}]}`), types the chosen one, and keeps
+the rest for the steps whose decisions choose those fields, typed only while
+the field is the same node, reads the same and is still empty, and dropped
+once a button or link click, Enter or a key runs (it may submit the form or
+show what it rejected). A form with a
+password or one-time-code field is never batched; an email, phone or web
+address the goal does not hold is dropped from the reply; anything left out,
+changed or failed goes back to one call per field. On the live corpus with the
+text model, text calls fell from 122 to 93 and on the form tasks the median
+wall time from 5.6 s to 4.3 s (see `docs/jev-browser.md`).
+
 **Tab.** A foreground task's tab is shown when it is created, before the page
 loads, and again whenever a later call goes back to it; upstream's port showed
 it only after the first observation. A background task's tab is never brought
@@ -1165,7 +1194,11 @@ default methods help on opening pages: `reload` (load a blank start page
 once more) and `wait_for_change` (wait for a page that may clear itself to
 move on). A text resolver may return an opaque value reference for the
 browser supervisor to resolve at execution time, keeping secret material out
-of JEV observations and results. `JevTypeSafeDecisionClient::with_transport`
+of JEV observations and results. A resolver may also implement
+`resolve_form` to write several empty fields of one form from one call
+(`JevFormValues`, by action id); the default answers `None` and keeps one
+`resolve` per field, and a form with a secret field is never offered.
+`JevTypeSafeDecisionClient::with_transport`
 also lets a hosted runner send the upstream request through its own
 authenticated relay while the extension retains question construction and
 response validation.
@@ -1262,6 +1295,7 @@ today's date as a booking page shows it ("Mon, Sep 28, 2026").
 | `challenge_clears` | a bot check served 403 with nothing to act on moves on after 3 s: Jev waits it out and acts on the page it leads to |
 | `unavailable_then_ok` | a start page served 503 that reloads itself after 2 s is waited out |
 | `empty_first_look` | a page that commits blank and renders 700 ms later is read again, not judged blocked |
+| `frame_stuck_ad`, `frame_stuck_beside_widget` | an advertisement frame whose renderer stops answering costs the first read 5 s and later ones 0.5 s, so the page's own button, and a live order-status frame beside it, are still read within the minute (each read took 30 s before) |
 | `popover_escape`, `popover_button`, `popover_outside` | a date picker Jev opened stays open over the results; Jev closes it (Escape, its Close button, a press outside) and takes the slot in the same step |
 | `popover_icon_fallback` | a picker only an unlabelled icon closes: Jev stops blocked; the fallback closes it and takes the slot |
 | `canvas_fallback` | a button drawn on a canvas, pressed by the fallback at its coordinates |

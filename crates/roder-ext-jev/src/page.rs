@@ -34,6 +34,8 @@ use serde_json::{Value, json};
 use crate::cdp::Connection;
 use crate::engine::{JevActOutcome, JevBrowser, JevDialog, JevPageFacts, StaleObservation};
 use fingerprint::fingerprint_with_frames;
+#[cfg(test)]
+pub(crate) use frames::{FRAME_READ, FRAME_RETRY};
 pub(crate) use open::{LoadFailed, close_target, create_target};
 pub(crate) use resume::TabsGone;
 use settle::{NAVIGATED, is_navigation};
