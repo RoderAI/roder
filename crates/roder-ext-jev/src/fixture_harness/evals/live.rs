@@ -31,7 +31,11 @@
 //!   all tasks once before any twice, and prints a tally per task.
 //! - `JEV_EVAL_STRICT=1` fails the test on a mid-run edit of the tree (see
 //!   [`super::pin`]), on any false green, and then on any failed run, or,
-//!   when a baseline exists, on any task whose rates got worse than its.
+//!   when a baseline exists, on any task whose rates got worse than its or
+//!   whose median calls, tokens or cost rose past the work bound (see
+//!   [`super::tally`]). Each row records `transient_ms`, the time its
+//!   decision requests lost to transient provider failures, apart from the
+//!   wall time it is part of.
 //! - The baseline is `tests/fixtures/evals/live-baseline.json`, or the file
 //!   `JEV_EVAL_BASELINE` names. `JEV_EVAL_SAVE_BASELINE=1` writes this run's
 //!   tally and pin there, if the run was `JEV_EVAL_N=3` or more over the whole
@@ -55,7 +59,7 @@ use serde_json::{Value, json};
 use super::pin::Pin;
 use super::tally::{self, Baseline, Run, Settings};
 use super::text_sources::{Recorded, Supervised};
-use super::variants::{StepTelemetry, VariantTransport, Variants};
+use super::variants::{StepTelemetry, Variant, VariantTransport, Variants};
 use super::{
     FallbackRow, Outcome, Row, Task, TaskValues, load_tasks, run_task, table, validate, write_json,
     write_rows,
@@ -150,17 +154,29 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
     };
     let (task, names) = setup.task(task);
     let task = &task;
-    let http: Arc<dyn JevDecisionTransport> = Arc::new(setup.route.transport());
-    let transport = Arc::new(VariantTransport::new(http, setup.variants.clone()));
-    let decision: Arc<dyn crate::engine::JevDecisionClient> =
-        if setup.variants.has(super::variants::Variant::Effect) {
-            super::effect_variant::client(setup.model.clone(), transport.clone())
+    let hosted = Arc::new(setup.route.transport());
+    let http: Arc<dyn JevDecisionTransport> = hosted.clone();
+    // A task that turns the gate on itself reads the gate's answers, so
+    // they are not shadows to strip.
+    let variants = if task.confirm_irreversible {
+        setup.variants.without(Variant::IrreversibleNouls)
+    } else {
+        setup.variants.clone()
+    };
+    let shadow = variants.has(Variant::IrreversibleNouls);
+    let transport = Arc::new(VariantTransport::new(http, variants));
+    let decision: Arc<dyn crate::engine::JevDecisionClient> = if setup.variants.has(Variant::Effect)
+    {
+        super::effect_variant::client(setup.model.clone(), transport.clone(), shadow)
+    } else {
+        let client =
+            JevTypeSafeDecisionClient::with_transport(setup.model.clone(), transport.clone());
+        Arc::new(if shadow {
+            client.with_shadow_gate()
         } else {
-            Arc::new(JevTypeSafeDecisionClient::with_transport(
-                setup.model.clone(),
-                transport.clone(),
-            ))
-        };
+            client
+        })
+    };
     let helper = setup
         .text_model
         .as_ref()
@@ -204,6 +220,7 @@ async fn run_one(setup: &LiveSetup, task: &Task, repeat: usize) -> Row {
         Err(error) => Row::errored(task, "live", &error),
     };
     row.repeat = repeat;
+    row.transient_ms = Some(hosted.transient().as_millis() as u64);
     row
 }
 

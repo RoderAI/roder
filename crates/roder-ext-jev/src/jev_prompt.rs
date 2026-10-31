@@ -150,8 +150,9 @@ pub(crate) fn rewrite(
             for key in ["action","kind","text","context","page_changed","effect","text_added"] {
                 if let Some(v)=entry.get(key) {out.insert(key.into(),v.clone());}
             }
-            if out.get("effect").is_some_and(|v|v=="nothing visible changed") {
-                out.insert("effect".into(),json!("No control-state difference recorded. Check current page text for the outcome."));
+            // What the form still needs, if anything, stays.
+            if let Some(rest)=out.get("effect").and_then(Value::as_str).and_then(|v|v.strip_prefix(crate::effects::NOTHING)).map(str::to_string) {
+                out.insert("effect".into(),json!(format!("No control-state difference recorded{rest}. Check current page text for the outcome.")));
             }
             Value::Object(out)
         }).collect::<Vec<_>>());
@@ -336,6 +337,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_no_op_keeps_what_its_form_still_needs() {
+        let mut body = json!({"state":{},"questions":{"operation":{"criteria":{},"instructions":{"goal":"Search"}}}});
+        let effect = "nothing visible changed; fields the form still needs: 1 control: Return";
+        rewrite(
+            &mut body,
+            Profile::Effects,
+            &[json!({"action":"Search","effect":effect})],
+            &Value::Null,
+        );
+        assert_eq!(
+            body["state"]["recent_actions"][0]["effect"],
+            "No control-state difference recorded; fields the form still needs: 1 control: \
+             Return. Check current page text for the outcome."
+        );
     }
 }
 

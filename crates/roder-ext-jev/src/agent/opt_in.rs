@@ -31,20 +31,28 @@ impl Agent {
         }));
     }
 
-    /// With the gate on, stop before an action it applies to that may not be
-    /// undone, unless the run is authorized and the decision confident. A
-    /// page that changed since the decision is decided again instead.
+    /// With the gate on, stop before an action that may not be undone or
+    /// that sets a new password, unless the run is authorized and the
+    /// decision confident, and before a download the goal rules out. A page
+    /// that changed since the decision is decided again instead.
     pub(super) async fn gate(
         &mut self,
         action: &Value,
         decision: &JevDecision,
     ) -> anyhow::Result<()> {
-        if !self.config.irreversible_gate || !irreversible::gated(action) {
+        if !self.config.irreversible_gate {
             return Ok(());
         }
+        let offered = self.observation["actions"]
+            .as_array()
+            .map_or(&[][..], Vec::as_slice);
         let verdict = irreversible::verdict(
             action,
-            decision.irreversible,
+            offered,
+            irreversible::Answers {
+                irreversible: decision.irreversible,
+                downloads_forbidden: decision.downloads_forbidden,
+            },
             self.config.irreversible_authorized,
             decision.call_confidence(),
         );

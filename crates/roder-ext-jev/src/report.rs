@@ -9,6 +9,8 @@ mod digest;
 #[cfg(test)]
 mod dom_tests;
 #[cfg(test)]
+mod download_tests;
+#[cfg(test)]
 mod hint_tests;
 #[cfg(test)]
 mod not_clicked_tests;

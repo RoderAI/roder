@@ -1,0 +1,20 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Your cart</title></head>
+<body>
+  <header><a href="cart-six.html">Continue shopping</a></header>
+  <h1>Your cart</h1>
+  <p id="count"></p>
+  <ul id="items"></ul>
+  <script>
+    const cart = JSON.parse(sessionStorage.getItem('cart.six') || '[]');
+    document.getElementById('count').textContent =
+      `${cart.length} ${cart.length === 1 ? 'item' : 'items'} in your cart.`;
+    for (const name of cart) {
+      const item = document.createElement('li');
+      item.textContent = name;
+      document.getElementById('items').append(item);
+    }
+  </script>
+</body>
+</html>

@@ -16,14 +16,19 @@ fn page() -> Value {
 }
 
 fn rewritten(names: &str) -> (Value, Added) {
-    let (mut body, _, _) = request_body(
+    let variants = Variants::parse(names).unwrap();
+    let (mut body, space, _) = request_body(
         &page(),
         "Buy the lamp",
         &[],
         "jev-latest",
         chrono::NaiveDate::default(),
     );
-    let added = rewrite_request(&mut body, &Variants::parse(names).unwrap());
+    // The decision client's shadow gate, as live runs build it.
+    if variants.has(Variant::IrreversibleNouls) {
+        crate::irreversible::add_questions(&mut body, &space, "Buy the lamp");
+    }
+    let added = rewrite_request(&mut body, &variants);
     (body, added)
 }
 
@@ -141,20 +146,8 @@ fn shadow_nouls_are_asked_recorded_and_stripped() {
     let telemetry = read_response(&mut response, &variants, &added, 10);
     assert_eq!(telemetry.nouls["goal_satisfied"], 0.2);
     assert_eq!(telemetry.nouls["irreversible_click_3"], 0.95);
-    // The same question the production gate asks.
-    let (mut gated, _, _) = request_body(
-        &page(),
-        "Buy the lamp",
-        &[],
-        "jev-latest",
-        chrono::NaiveDate::default(),
-    );
-    crate::irreversible::add_questions(&mut gated);
-    assert_eq!(
-        questions["irreversible_click_3"],
-        gated["questions"]["irreversible_click_3"]
-    );
     assert!(response["answers"].get("goal_satisfied").is_none());
+    assert!(response["answers"].get("irreversible_click_3").is_none());
     assert_eq!(telemetry.operation.as_deref(), Some("CLICK"));
 }
 
@@ -197,25 +190,36 @@ fn a_winning_none_is_recorded_and_falls_back_to_the_best_target() {
 }
 
 #[test]
-fn a_request_the_gate_already_asked_is_not_asked_twice() {
-    let (mut body, _, _) = request_body(
+fn a_task_that_gates_itself_runs_without_the_shadow_variant() {
+    let (mut body, space, _) = request_body(
         &page(),
         "Buy the lamp",
         &[],
         "jev-latest",
         chrono::NaiveDate::default(),
     );
-    crate::irreversible::add_questions(&mut body);
+    crate::irreversible::add_questions(&mut body, &space, "Buy the lamp");
     let before = body.clone();
-    let added = rewrite_request(&mut body, &Variants::parse("irreversible_nouls").unwrap());
-    assert!(added.nouls.is_empty());
-    assert_eq!(body, before);
+    let variants = Variants::parse("handoff_nouls,irreversible_nouls")
+        .unwrap()
+        .without(Variant::IrreversibleNouls);
+    assert_eq!(variants, Variants::parse("handoff_nouls").unwrap());
+    let added = rewrite_request(&mut body, &variants);
+    assert!(
+        !added
+            .nouls
+            .iter()
+            .any(|key| key.starts_with("irreversible_"))
+    );
+    assert_eq!(
+        body["questions"]["irreversible_click_3"],
+        before["questions"]["irreversible_click_3"]
+    );
     // So its answers are left for the gate to read.
     let mut response = json!({"answers": {
         "operation": {"choice": "CLICK", "probabilities": {}, "confidence": 0.9},
         "irreversible_click_3": {"type": "noul", "noul": 0.95},
     }});
-    let variants = Variants::parse("irreversible_nouls").unwrap();
     read_response(&mut response, &variants, &added, 10);
     assert!(response["answers"].get("irreversible_click_3").is_some());
 }

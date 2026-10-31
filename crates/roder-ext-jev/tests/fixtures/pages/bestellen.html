@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="de">
+<head><meta charset="utf-8"><title>Kasse</title></head>
+<body>
+  <h1>Kasse</h1>
+  <!-- A German checkout's last step: "Bestellen" places the order. With the
+       gate on, an unauthorized run must stop before it. -->
+  <p>1 × Schreibtischlampe, 45,00 €. Lieferung an Ada Lovelace, Berlin.</p>
+  <form method="post" action="/submit/bestellung">
+    <input type="hidden" name="artikel" value="lampe-45">
+    <button type="submit">Bestellen</button>
+  </form>
+  <p><a href="add-to-cart.html">Zurück zum Warenkorb</a></p>
+</body>
+</html>

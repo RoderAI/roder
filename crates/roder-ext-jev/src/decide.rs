@@ -35,6 +35,9 @@ pub(crate) use asking::TypeSafeHttpTransport;
 
 pub(crate) struct DecisionOptions<'a> {
     pub gate: bool,
+    /// Ask the gate's questions without reading their answers (the
+    /// `irreversible_nouls` eval variant); `gate` wins when both are set.
+    pub shadow_gate: bool,
     pub activation_audit: Option<&'a dyn JevDecisionTransport>,
 }
 
@@ -46,9 +49,19 @@ pub struct JevTypeSafeDecisionClient {
     transport: Arc<dyn JevDecisionTransport>,
     images: bool,
     composed_transport: bool,
+    shadow_gate: bool,
 }
 
 impl JevTypeSafeDecisionClient {
+    /// Ask the irreversible-action gate's questions in every request, gate
+    /// on or off, without reading their answers: the `irreversible_nouls`
+    /// eval variant records them on the way back.
+    #[cfg(test)]
+    pub(crate) fn with_shadow_gate(mut self) -> Self {
+        self.shadow_gate = true;
+        self
+    }
+
     /// Native adapters reserve their own leaf provider requests.
     pub(crate) fn with_composed_transport(mut self) -> Self {
         self.composed_transport = true;
@@ -82,6 +95,7 @@ impl JevTypeSafeDecisionClient {
             transport: Arc::new(TypeSafeHttpTransport::new(url, key, RetryPolicy::default())),
             images: false,
             composed_transport: false,
+            shadow_gate: false,
         }
     }
 
@@ -95,6 +109,7 @@ impl JevTypeSafeDecisionClient {
             transport,
             images: false,
             composed_transport: false,
+            shadow_gate: false,
         }
     }
 }
@@ -346,11 +361,14 @@ pub(crate) async fn choose(
     options: DecisionOptions<'_>,
 ) -> anyhow::Result<(JevDecision, ActionSpace)> {
     let (mut body, space, operation_ids) = request_body(page, goal, history, model, today);
-    let asked = if options.gate {
-        irreversible::add_questions(&mut body)
+    let asked = if options.gate || options.shadow_gate {
+        irreversible::add_questions(&mut body, &space, goal)
     } else {
         Vec::new()
     };
+    // A shadow gate asks the same questions and reads nothing back: the
+    // caller records and strips their answers.
+    let asked = if options.gate { asked } else { Vec::new() };
     let started = Instant::now();
     let result = transport.decide(&body).await?;
     let usage = result.get("usage").cloned().unwrap_or_else(|| json!({}));
@@ -387,6 +405,7 @@ pub(crate) async fn choose(
         &answer.operation,
         answer.target.as_deref(),
     );
+    let downloads_forbidden = irreversible::downloads_probability(&result["answers"], &asked);
     Ok((
         JevDecision {
             choice: answer.choice,
@@ -399,6 +418,7 @@ pub(crate) async fn choose(
             usage,
             model: result["model"].as_str().map(str::to_string),
             irreversible,
+            downloads_forbidden,
         },
         space,
     ))

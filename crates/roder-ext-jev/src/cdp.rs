@@ -19,8 +19,11 @@
 //! The same reads keep the [`requests`] ledger from the Network events of
 //! the sessions that enabled that domain, and every `Input.*` call marks it,
 //! so the settle can wait for a fetch or XHR request the action started
-//! ([`Connection::await_requests`]).
+//! ([`Connection::await_requests`]). The [`navigation`] ledger keeps, from
+//! the same reads, each tab's committed document status, the document
+//! requests and the downloads an action started.
 
+mod navigation;
 mod requests;
 
 use std::time::Duration;
@@ -33,6 +36,8 @@ use tokio_tungstenite::tungstenite::Message;
 use roder_ext_chrome::direct::devtools::{accepts_dialog, browser_websocket, decode_message};
 
 use crate::engine::JevDialog;
+use navigation::Navigation;
+pub(crate) use navigation::{DownloadEvent, DownloadState, NavigationMark};
 use requests::Requests;
 
 const CALL_TIMEOUT: Duration = Duration::from_secs(30);
@@ -48,6 +53,8 @@ pub(crate) struct Connection {
     dialogs: Vec<JevDialog>,
     /// The fetch and XHR requests the pages have open.
     requests: Requests,
+    /// Documents, their statuses and the downloads the pages started.
+    navigation: Navigation,
 }
 
 impl Connection {
@@ -67,6 +74,7 @@ impl Connection {
             next_id: 1,
             dialogs: Vec::new(),
             requests: Requests::default(),
+            navigation: Navigation::default(),
         })
     }
 
@@ -97,6 +105,45 @@ impl Connection {
     ) -> anyhow::Result<bool> {
         while self.requests.open_since(session, mark) {
             if self.next_message("a response", deadline).await?.is_none() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    /// The navigation mark the inputs sent since the last call to this
+    /// took, if any were sent.
+    pub(crate) fn take_navigation_mark(&mut self) -> Option<NavigationMark> {
+        self.navigation.take_mark()
+    }
+
+    /// The downloads the browser announced since `mark`, oldest first.
+    pub(crate) fn downloads_since(&self, mark: NavigationMark) -> &[DownloadEvent] {
+        self.navigation.downloads_since(mark)
+    }
+
+    /// Whether a document request `session`'s page started after `mark` is
+    /// still unresolved: a navigation on its way, or one turning into a
+    /// download.
+    pub(crate) fn documents_open_since(&self, session: &str, mark: NavigationMark) -> bool {
+        self.navigation.documents_open_since(session, mark)
+    }
+
+    /// The HTTP status `session`'s committed document was served with.
+    pub(crate) fn document_status(&self, session: &str) -> Option<u16> {
+        self.navigation.document_status(session)
+    }
+
+    /// Read events, answering dialogs, until `done` holds for what the
+    /// ledger knows of documents and downloads. False when `deadline` came
+    /// first.
+    pub(crate) async fn await_navigation(
+        &mut self,
+        deadline: tokio::time::Instant,
+        mut done: impl FnMut(&Self) -> bool,
+    ) -> anyhow::Result<bool> {
+        while !done(self) {
+            if self.next_message("a download", deadline).await?.is_none() {
                 return Ok(false);
             }
         }
@@ -161,6 +208,7 @@ impl Connection {
         let id = self.send_id();
         if method.starts_with("Input.") {
             self.requests.input_sent();
+            self.navigation.input_sent();
         }
         self.send(id, method, params, session).await?;
         let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
@@ -204,6 +252,7 @@ impl Connection {
                 self.answer_dialog(&value).await?;
             } else if value.get("method").is_some() {
                 self.requests.on_event(&value);
+                self.navigation.on_event(&value);
             }
             return Ok(Some(value));
         }

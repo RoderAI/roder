@@ -8,9 +8,12 @@
 //! - `settle`: the wait for the last input's effects, the page's own
 //!   `{reason, waited_ms}` kept per look;
 //! - `snapshot`: reading the page after it;
-//! - `fresh`, `act`, `banner`, `describe`, `screenshot`: the other browser
-//!   calls the loop makes, each as a whole (an action that settles inside
-//!   itself, or refuses a banner, counts that time to its own phase);
+//! - `fresh`, `act`, `banner`, `describe`, `screenshot`, `reload`: the
+//!   other browser calls the loop makes, each as a whole (an action that
+//!   settles inside itself, or refuses a banner, counts that time to its
+//!   own phase);
+//! - `interstitial`: the waits for an opening page that may clear itself
+//!   (a challenge, a 503) to move on;
 //! - `decide` and `text`: the waits for the decision service and the text
 //!   helper.
 //!

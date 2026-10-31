@@ -225,11 +225,20 @@ impl Secrets {
             }
         }
         for action in observation["actions"].as_array_mut().into_iter().flatten() {
-            if let Some(form) = action.get_mut("form") {
-                self.scrub_evidence(form);
+            for evidence in ["form", "submits"] {
+                if let Some(evidence) = action.get_mut(evidence) {
+                    self.scrub_evidence(evidence);
+                }
             }
             let select = action["kind"] == "select";
-            for key in ["label", "value", "current_value", "context", "section"] {
+            for key in [
+                "label",
+                "value",
+                "current_value",
+                "context",
+                "section",
+                "href",
+            ] {
                 if key == "value" && select {
                     continue;
                 }

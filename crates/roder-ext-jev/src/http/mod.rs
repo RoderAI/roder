@@ -23,12 +23,19 @@
 //! ask the batch's parts one at a time within the retries it had left
 //! (fastbrowse's `asking_split`, reimplemented).
 //!
+//! Each poster keeps the time its requests lost to transient failures (see
+//! [`JsonPoster::transient`]): the failed attempts it retried or gave up
+//! on, and the waits before each retry. The eval tiers report it apart from
+//! the run's own time, as fastbrowse's harness records `transient_seconds`,
+//! so a busy provider is not read as a slower build.
+//!
 //! A reply sent as server-sent events (the Codex backend's Responses API
 //! only streams) is read to its end and reduced to its final `response`
 //! object (see [`sse`]), so callers see one JSON value either way.
 
 mod sse;
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::time::Instant;
@@ -206,6 +213,8 @@ pub(crate) enum Posted {
 pub(crate) struct JsonPoster {
     client: reqwest::Client,
     policy: RetryPolicy,
+    /// Milliseconds lost to transient failures, over every request.
+    transient_ms: AtomicU64,
 }
 
 impl JsonPoster {
@@ -213,7 +222,23 @@ impl JsonPoster {
         Self {
             client: reqwest::Client::new(),
             policy,
+            transient_ms: AtomicU64::new(0),
         }
+    }
+
+    /// The time this poster's requests lost to transient failures so far:
+    /// each failed attempt that could have been retried (whether or not a
+    /// retry was left) and each wait before a retry. A failure no retry
+    /// clears, such as a 400, is the request's answer and is not counted.
+    /// Only the eval tiers read it.
+    #[cfg(test)]
+    pub(crate) fn transient(&self) -> Duration {
+        Duration::from_millis(self.transient_ms.load(Ordering::Relaxed))
+    }
+
+    fn lose(&self, lost: Duration) {
+        self.transient_ms
+            .fetch_add(lost.as_millis() as u64, Ordering::Relaxed);
     }
 
     /// POST `body` and parse the reply, retrying transient failures (see the
@@ -274,10 +299,14 @@ impl JsonPoster {
                     .max(Duration::from_millis(1))
             });
             sent += 1;
+            let began = Instant::now();
             let attempt = match self.attempt(url, key, headers, body, timeout).await {
                 Ok(value) => return Ok((value, sent)),
                 Err(attempt) => attempt,
             };
+            if !matches!(attempt.retry, Retry::Never) {
+                self.lose(began.elapsed());
+            }
             server_errors = match attempt.failure {
                 PostFailure::Status(status, _) if status >= 500 => server_errors + 1,
                 _ => 0,
@@ -304,6 +333,7 @@ impl JsonPoster {
             if deadline.is_some_and(|deadline| Instant::now() + delay >= deadline) {
                 return Err(Posted::Failed(attempt.failure));
             }
+            self.lose(delay);
             tokio::time::sleep(delay).await;
         }
     }

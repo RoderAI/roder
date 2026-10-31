@@ -5,7 +5,7 @@
 //!
 //! The gate has no model question here, so it stops at every control its
 //! shortlist names instead of asking about each: a click whose label holds
-//! one of [`crate::irreversible::COMMIT_WORDS`], a form's submit button once
+//! one of [`crate::irreversible::shortlist::COMMIT_WORDS`], a form's submit button once
 //! a password or code is filled in it, and Enter in a form whose submit
 //! control names a commitment or that holds a filled password or code. That
 //! is stricter than Jev, whose model can clear a shortlisted control; it

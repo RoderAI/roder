@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Sign in - Mock Shop</title></head>
+<body>
+  <!-- The mock shop (after fastbrowse's evals/mock.py, MIT): a sign-in, a
+       paginated shop, product pages, a basket and a checkout, with its state
+       in sessionStorage under `mock.*`, so graders read what the shop holds,
+       not what the run says. The sign-in is posted to /submit/login, so the
+       recorded POST shows which account signed in. -->
+  <nav><a href="mock-shop.html">Shop</a> | <a href="mock-basket.html">Basket</a></nav>
+  <h1>Sign in</h1>
+  <p id="error" role="alert"></p>
+  <form id="login">
+    <p><label for="email">Email</label> <input id="email" name="email" type="email" autocomplete="username"></p>
+    <p><label for="password">Password</label> <input id="password" name="password" type="password" autocomplete="current-password"></p>
+    <button type="submit">Sign in</button>
+  </form>
+  <script>
+    const ACCOUNTS = { 'grace@example.com': 'battery-staple', 'ada@example.com': 'correct-horse' };
+    const next = new URLSearchParams(location.search).get('next') || 'mock-shop.html';
+    document.getElementById('login').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const fields = new URLSearchParams(new FormData(event.target));
+      await fetch('/submit/login', { method: 'POST', body: fields });
+      const email = (fields.get('email') || '').trim().toLowerCase();
+      if (ACCOUNTS[email] && ACCOUNTS[email] === fields.get('password')) {
+        sessionStorage.setItem('mock.user', JSON.stringify(email));
+        location.href = next;
+      } else {
+        document.getElementById('error').textContent = 'Wrong email or password.';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -58,6 +58,7 @@ impl Page {
             autoconsent,
             ledger: Default::default(),
             frame_text: super::frames::frame_text_on(),
+            downloads: Default::default(),
         };
         let mut gone = Vec::new();
         for owned in tabs {

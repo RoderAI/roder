@@ -32,6 +32,13 @@ impl TypeSafeHttpTransport {
         }
     }
 
+    /// The time this transport's requests lost to transient failures (see
+    /// [`JsonPoster::transient`]).
+    #[cfg(test)]
+    pub(crate) fn transient(&self) -> std::time::Duration {
+        self.http.transient()
+    }
+
     async fn post(&self, request: &Value, schedule: Schedule) -> Result<(Value, usize), Posted> {
         let headers = match images::has_assets(request) {
             true => vec![(images::IMAGES_HEADER, "true".to_string())],

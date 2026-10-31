@@ -81,6 +81,9 @@ impl Page {
             ))
             .into());
         }
+        // Inputs before this action (a refused banner, an uncovered layer
+        // between reads) are not its own.
+        self.connection.take_navigation_mark();
         let kind = action["kind"].as_str().unwrap_or_default();
         let mut settle = action.clone();
         let outcome = match kind {

@@ -120,6 +120,7 @@ impl JevDecisionClient for PlanDecider {
             usage: json!({}),
             model: None,
             irreversible: None,
+            downloads_forbidden: None,
         })
     }
 }

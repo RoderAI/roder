@@ -69,6 +69,25 @@ impl Page {
         self.install_snapshot().await
     }
 
+    /// Wait, for at most `within`, for the document to change (the quiet
+    /// clock's last DOM change moves) or to be replaced. One evaluate that
+    /// resolves inside the page; a replaced document ends it with the
+    /// navigation, which is the change it waits for.
+    pub(crate) async fn wait_for_change(&mut self, within: Duration) -> anyhow::Result<()> {
+        let script = format!(
+            "{TRACK_JS}\n(ms => new Promise(done => {{ const s=window.__jevFast, \
+             from=s.lastDom, end=performance.now()+ms; const tick=() => \
+             (s.lastDom!==from || performance.now()>=end) ? done(s.lastDom!==from) \
+             : setTimeout(tick, 50); tick(); }}))({})",
+            within.as_millis()
+        );
+        let wait = self.evaluate_async(&script);
+        match tokio::time::timeout(within + CAP_SLACK, wait).await {
+            Ok(Err(error)) if !error.is::<StaleObservation>() => Err(error),
+            _ => Ok(()),
+        }
+    }
+
     /// Wait for the document to be past `loading`. Upstream proceeds after
     /// the timeout regardless, and so does this: a slow page is observed as
     /// it stands.

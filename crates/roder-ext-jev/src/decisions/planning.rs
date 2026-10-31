@@ -143,10 +143,15 @@ pub(super) async fn evaluate(
                 .into_iter()
                 .flatten()
             {
-                if entry["effect"] == "nothing visible changed" {
-                    entry["effect"] = json!(
-                        "No control-state difference recorded; compare current page text for confirmation."
-                    );
+                // What the form still needs, if anything, stays.
+                if let Some(rest) = entry["effect"]
+                    .as_str()
+                    .and_then(|effect| effect.strip_prefix(crate::effects::NOTHING))
+                    .map(str::to_string)
+                {
+                    entry["effect"] = json!(format!(
+                        "No control-state difference recorded{rest}; compare current page text for confirmation."
+                    ));
                 }
             }
         }

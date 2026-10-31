@@ -1,0 +1,16 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Order placed - Mock Shop</title></head>
+<body>
+  <nav><a href="mock-shop.html">Shop</a> | <a href="mock-basket.html">Basket</a></nav>
+  <h1>Order placed</h1>
+  <p id="summary"></p>
+  <script>
+    const orders = JSON.parse(sessionStorage.getItem('mock.orders') || '[]');
+    const last = orders[orders.length - 1];
+    document.getElementById('summary').textContent = last
+      ? `Reference O-300${orders.length}. Total GBP ${last.total}, delivered to ${last.name}, ${last.postcode}.`
+      : 'No order has been placed.';
+  </script>
+</body>
+</html>

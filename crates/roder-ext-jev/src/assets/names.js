@@ -3,8 +3,9 @@
 // `visible` and `controls`; returns the naming helpers. A control is named
 // by aria-labelledby, aria-label, its labels, a button's value, alt, its own
 // text (never a field's: its content is its value), title or placeholder,
-// then by the text around a field or an icon's picture.
-(({visible, controls}) => {
+// then by the text around a field or an icon's picture. A name read once is
+// reused for the rest of the snapshot's run (see snapshot.js's `memo`).
+(({visible, controls, memo}) => {
   // Script and style text is never a name: a result card that nests a <style>
   // in its link would otherwise be labelled with CSS.
   const unnamed=['SCRIPT','STYLE','NOSCRIPT','TEMPLATE'];
@@ -74,21 +75,22 @@
   // What an element shows: a shadow host its shadow root, a slot its nodes.
   const kids = e => e.shadowRoot ? e.shadowRoot.childNodes :
     e.tagName==='SLOT' && e.assignedNodes().length ? e.assignedNodes({flatten:true}) : e.childNodes;
-  const name = (e,seen=new Set()) => {
+  const named = (e,seen) => {
     if (!e || seen.has(e)) return '';
     seen.add(e);
     const top=seen.size===1;
     const referenced=(e.getAttribute('aria-labelledby')||'').split(/\s+/)
-      .map(id=>name(byId(e,id),seen)).filter(Boolean).join(' ');
+      .map(id=>named(byId(e,id),seen)).filter(Boolean).join(' ');
     return referenced || e.getAttribute('aria-label') ||
-      [...(e.labels||[])].map(l=>name(l,seen)).filter(Boolean).join(' ') ||
+      [...(e.labels||[])].map(l=>named(l,seen)).filter(Boolean).join(' ') ||
       (['button','submit','reset'].includes(e.type) ? e.value : '') || e.getAttribute('alt') ||
       (field(e) ? '' : [...kids(e)].map(n=>n.nodeType===3 ? n.textContent :
         n.nodeType===1 && !unnamed.includes(n.tagName) && n.getAttribute('aria-hidden')!=='true' ?
-          name(n,seen) : '').join(' ').trim()) ||
+          named(n,seen) : '').join(' ').trim()) ||
       e.getAttribute('title') || e.getAttribute('placeholder') || e.getAttribute('aria-placeholder') ||
       (top ? field(e) ? nearby(e) : pictured(e) : '');
   };
+  const name = memo(e => named(e,new Set()));
   const squash=s=>s.split(/\s+/).filter(Boolean).join(' ');
   // The first `n` UTF-16 units of `s`, never ending in half of a surrogate
   // pair (an emoji): Chrome would send that half as an unpaired escape.

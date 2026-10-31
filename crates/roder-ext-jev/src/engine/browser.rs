@@ -73,4 +73,25 @@ pub trait JevBrowser: Send {
     async fn describe(&mut self) -> anyhow::Result<Option<JevPageFacts>> {
         Ok(None)
     }
+
+    /// Load `url`, the address the page shows, again with a fresh GET (never
+    /// a reload, which would post a posted form again) and wait for it to
+    /// settle; whether it was. The loop asks at most once, before any
+    /// action, of a start page that still shows nothing after the first
+    /// reads: a cold app can leave its first document blank, and its scripts
+    /// get another chance. Never after an action, which a reload could
+    /// repeat. `false`, the default, for a browser that cannot.
+    async fn reload(&mut self, _url: &str) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    /// Wait, for at most `within`, until the page moves on: its document
+    /// changes or another document replaces it. The loop asks this while it
+    /// watches an opening page that may clear itself (a challenge, a 503),
+    /// and reads the page again after each return. Waiting the whole time,
+    /// the default, is right for a browser that cannot tell.
+    async fn wait_for_change(&mut self, within: Duration) -> anyhow::Result<()> {
+        tokio::time::sleep(within).await;
+        Ok(())
+    }
 }

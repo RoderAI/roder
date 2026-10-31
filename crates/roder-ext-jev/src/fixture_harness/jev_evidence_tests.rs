@@ -79,14 +79,14 @@ async fn jev_evidence_names_form_ownership_and_disabled_controls() {
 fn production_jev_profile_keeps_candidates_and_safety_questions() {
     let observation = json!({"actions":[{"kind":"click","label":"Submit","node":1,"form":null}], "disabled_controls":[{"label":"Publish","role":"button"}]});
     let history = (0..12).map(|i|json!({"action":format!("Step {i}"),"context":"Draft A","page_changed":true,"effect":"verbose effect","text_added":["previous text"]})).collect::<Vec<_>>();
-    let (mut request, _, _) = crate::decide::request_body(
+    let (mut request, space, _) = crate::decide::request_body(
         &observation,
         "Save the draft",
         &history,
         "jev-latest",
         chrono::Local::now().date_naive(),
     );
-    let asked = crate::irreversible::add_questions(&mut request);
+    let asked = crate::irreversible::add_questions(&mut request, &space, "Save the draft");
     assert_eq!(asked.len(), 1);
     let gate = &asked[0].key;
     assert_eq!(request["questions"][gate]["type"], "noul");
@@ -127,14 +127,14 @@ fn production_jev_profile_keeps_candidates_and_safety_questions() {
 #[test]
 fn dom_profile_uses_observed_structure_preserves_gate_and_candidate_ids() {
     let observation = json!({"actions":[{"kind":"click","node":12,"label":"Submit","form":null}],"dom_snapshot":"- main\n  - button \"Submit\" [node=12]"});
-    let (mut request, _, _) = crate::decide::request_body(
+    let (mut request, space, _) = crate::decide::request_body(
         &observation,
         "Save draft",
         &[],
         "jev-preview",
         chrono::Local::now().date_naive(),
     );
-    let asked = crate::irreversible::add_questions(&mut request);
+    let asked = crate::irreversible::add_questions(&mut request, &space, "Save draft");
     assert_eq!(asked.len(), 1);
     let gate = &asked[0].key;
     assert_eq!(request["questions"][gate]["type"], "noul");

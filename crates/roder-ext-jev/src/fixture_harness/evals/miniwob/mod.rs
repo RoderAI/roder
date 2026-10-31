@@ -256,7 +256,7 @@ fn decision_client(route: &HostedRoute, model: String) -> Arc<dyn JevDecisionCli
     if !variants.has(super::variants::Variant::Effect) {
         return Arc::new(route.client(model));
     }
-    super::effect_variant::client(model, Arc::new(route.transport()))
+    super::effect_variant::client(model, Arc::new(route.transport()), false)
 }
 
 #[tokio::test]

@@ -461,3 +461,31 @@ async fn no_retry_starts_that_would_outlast_the_run() {
     assert!(started.elapsed() < Duration::from_millis(2500));
     assert!((2..6).contains(&server.hits()), "{} hits", server.hits());
 }
+
+#[tokio::test]
+async fn time_lost_to_transient_failures_is_kept_apart() {
+    let server = MockServer::start(vec![
+        Reply::status(503),
+        Reply::status(429),
+        Reply::ok(r#"{"ok":true}"#),
+    ])
+    .await;
+    let poster = JsonPoster::new(RetryPolicy {
+        delays: vec![Duration::from_millis(60); 5],
+        ..fast_policy()
+    });
+    assert_eq!(poster.transient(), Duration::ZERO);
+
+    poster.post(&server.url, "k", &json!({})).await.unwrap();
+
+    // Two waits of 60 ms, plus the two failed attempts themselves.
+    let lost = poster.transient();
+    assert!(lost >= Duration::from_millis(120), "{lost:?}");
+    assert!(lost < Duration::from_secs(2), "{lost:?}");
+
+    // A clean reply and a refusal no retry clears add nothing.
+    let clean = MockServer::start(vec![Reply::ok("{}"), Reply::status(400)]).await;
+    poster.post(&clean.url, "k", &json!({})).await.unwrap();
+    poster.post(&clean.url, "k", &json!({})).await.unwrap_err();
+    assert_eq!(poster.transient(), lost);
+}

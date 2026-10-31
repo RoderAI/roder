@@ -1,6 +1,24 @@
 //! One bounded native decision and its observed execution.
 use super::*;
+
+/// How long the browser may take to say the status a navigation landed on.
+const STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
 impl Agent {
+    /// The HTTP status of the document an action led to, best effort: only
+    /// when it is another document than `previous`, since a page that
+    /// changed in place keeps the status it loaded with.
+    async fn landed_status(&mut self, previous: &Value) -> Option<u16> {
+        if effects::same_document(previous, &self.observation) {
+            return None;
+        }
+        tokio::time::timeout(STATUS_TIMEOUT, self.browser.describe())
+            .await
+            .ok()?
+            .ok()??
+            .http_status
+    }
+
     pub(super) async fn tick(&mut self) -> anyhow::Result<()> {
         let decision = self.predict().await?;
         let previous = self.observation.clone();
@@ -196,13 +214,25 @@ impl Agent {
         // A refused cookie banner may be recorded after this step.
         let step = self.history.len() - 1;
         self.observe().await?;
+        let landing = effects::Landing {
+            status: self.landed_status(&previous).await,
+            // A covered choice was never clicked.
+            chosen: (!covered && effects::chooses(&action)).then_some(&action),
+            form: Some(&action["form"]["id"]).filter(|id| !id.is_null()),
+        };
+        let effect = effects::effect(&previous, &self.observation, landing);
         let elapsed = self.elapsed();
         if let Some(entry) = self.history.get_mut(step) {
             // A covered target may have been scrolled into view first; that
             // is not the action taking effect.
             entry["page_changed"] =
                 json!(!covered && self.observation["fingerprint"] != previous["fingerprint"]);
-            entry["effect"] = json!(effects::effect(&previous, &self.observation));
+            entry["effect"] = json!(effect.summary);
+            // A choice that set nothing did not take: the stall rule counts
+            // it as a step that changed nothing (see `effects`).
+            if landing.chosen.is_some() {
+                entry["set_something"] = json!(effect.set_something);
+            }
             entry["text_added"] = json!(effects::text_added(&previous, &self.observation));
             entry["url"] = self.observation["url"].clone();
             entry["elapsed_ms"] = json!(elapsed);

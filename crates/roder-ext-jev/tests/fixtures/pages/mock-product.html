@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Product - Mock Shop</title></head>
+<body>
+  <!-- One product. Adding needs a session: without one the page sends the
+       run to sign in and back. -->
+  <nav><a href="mock-shop.html">Shop</a> | <a href="mock-basket.html">Basket</a></nav>
+  <h1 id="name">Product</h1>
+  <p id="price"></p>
+  <button id="add" type="button">Add to basket</button>
+  <script>
+    const PRODUCTS = {
+      kettle: ['Blue Kettle', 34.50], toaster: ['Chrome Toaster', 41.00], mug: ['Stoneware Mug', 8.75],
+      grinder: ['Burr Grinder', 89.99], scale: ['Kitchen Scale', 19.20], thermometer: ['Milk Thermometer', 12.40],
+      press: ['French Press', 27.00], filter: ['Paper Filters', 4.60], beans: ['House Beans', 11.50],
+      roaster: ['Drum Roaster', 210.00], jug: ['Serving Jug', 15.30], tray: ['Drip Tray', 9.95],
+      cloth: ['Bar Cloth', 6.20], tap: ['Water Tap', 52.75],
+    };
+    const id = new URLSearchParams(location.search).get('id');
+    const [name, price] = PRODUCTS[id] || ['Not found', 0];
+    document.title = `${name} - Mock Shop`;
+    document.getElementById('name').textContent = name;
+    document.getElementById('price').textContent = `Price: GBP ${price.toFixed(2)}`;
+    document.getElementById('add').addEventListener('click', () => {
+      if (!JSON.parse(sessionStorage.getItem('mock.user') || 'null')) {
+        location.href = 'mock-login.html?next=' + encodeURIComponent(`mock-product.html?id=${id}`);
+        return;
+      }
+      const cart = JSON.parse(sessionStorage.getItem('mock.cart') || '[]');
+      cart.push(id);
+      sessionStorage.setItem('mock.cart', JSON.stringify(cart));
+      location.href = 'mock-basket.html';
+    });
+  </script>
+</body>
+</html>

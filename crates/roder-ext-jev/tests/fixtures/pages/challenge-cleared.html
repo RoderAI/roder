@@ -1,0 +1,17 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Docs</title></head>
+<body>
+  <!-- Where challenge.html leads; the fixture site also serves it first as
+       a 503 that retries itself (?unavailable_once=1), or blank
+       (?blank_once=1). -->
+  <h1>Welcome to the docs</h1>
+  <p>Guides and references for the toolkit.</p>
+  <button type="button" onclick="window.opened = true;
+    document.getElementById('guide').hidden = false">Getting started</button>
+  <section id="guide" hidden>
+    <h2>Getting started</h2>
+    <p>Install the toolkit with cargo install toolkit.</p>
+  </section>
+</body>
+</html>

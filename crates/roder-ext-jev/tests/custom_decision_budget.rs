@@ -47,6 +47,7 @@ impl JevDecisionClient for CustomClient {
             usage: json!({"input_tokens":self.components * 7,"output_tokens":0}),
             model: None,
             irreversible: None,
+            downloads_forbidden: None,
         })
     }
 }

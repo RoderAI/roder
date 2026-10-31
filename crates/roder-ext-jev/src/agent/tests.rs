@@ -40,6 +40,19 @@ fn a_wait_or_a_change_keeps_the_run_going() {
 }
 
 #[test]
+fn a_choice_that_set_no_value_counts_as_unchanged() {
+    // An option click that only closed its menu changed the page, but did
+    // not take.
+    let untaken = || json!({"kind": "click", "page_changed": true, "set_something": false});
+    let taken = || json!({"kind": "click", "page_changed": true, "set_something": true});
+    assert_eq!(
+        stalled(&[untaken(), entry("click", Some(false)), untaken()]),
+        Some(JevStopCause::Stalled)
+    );
+    assert!(stalled(&[untaken(), taken(), untaken()]).is_none());
+}
+
+#[test]
 fn a_wait_that_changed_nothing_is_skipped_not_counted() {
     // Three no-ops with waits that changed nothing between them are still a
     // run of three; the waits are neither a no-op of the three nor a break.

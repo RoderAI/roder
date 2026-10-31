@@ -5,10 +5,13 @@
 //! the production request stays as it is until a variant earns its place.
 //! Every variant keeps one request per step. Those that add questions (the
 //! Nouls, the `none` option) are shadow-only: their answers are recorded and
-//! stripped, and nothing gates on them. `irreversible_nouls` asks exactly the
-//! production gate's questions ([`crate::irreversible::add_questions`]), so
-//! a run measures what turning the gate on would ask and answer without
-//! stopping anything; a task that turns the gate on itself is left alone.
+//! stripped, and nothing gates on them. `irreversible_nouls` records exactly
+//! the production gate's questions: the decision client asks them as a
+//! shadow ([`crate::decide::JevTypeSafeDecisionClient::with_shadow_gate`]),
+//! since only it holds the observed actions they quote, and this records
+//! and strips their answers, so a run measures what turning the gate on
+//! would ask and answer without stopping anything. A task that turns the
+//! gate on itself runs without the variant (see [`Variants::without`]).
 //!
 //! The Noul question and answer shapes (`"type": "noul"`, answer `noul`) are
 //! taken from fastbrowse's client (MIT), not verified against the service
@@ -94,6 +97,11 @@ impl Variants {
 
     pub(crate) fn has(&self, variant: Variant) -> bool {
         self.0.contains(&variant)
+    }
+
+    /// These variants but `variant`.
+    pub(crate) fn without(&self, variant: Variant) -> Self {
+        Self(self.0.iter().copied().filter(|v| *v != variant).collect())
     }
 
     pub(crate) fn names(&self) -> Vec<String> {
@@ -278,23 +286,23 @@ pub(crate) fn rewrite_request(body: &mut Value, variants: &Variants) -> Added {
             added.nouls.push(key.into());
         }
     }
-    let gated = questions.keys().any(|key| irreversible::is_gate_key(key));
-    if variants.has(Variant::IrreversibleNouls) && !gated {
-        let asked = irreversible::add_questions(body);
-        if !asked.is_empty() {
-            body["questions"]["goal_authorizes_commitment"] = noul(
+    // The shadow gate's questions, asked by the decision client.
+    let asked = questions
+        .keys()
+        .filter(|key| irreversible::is_gate_key(key))
+        .cloned()
+        .collect::<Vec<_>>();
+    if variants.has(Variant::IrreversibleNouls) && !asked.is_empty() {
+        questions.insert(
+            "goal_authorizes_commitment".into(),
+            noul(
                 &goal_ref,
                 "Does the goal explicitly ask to complete a purchase, payment, message, booking \
                  or deletion?",
-            );
-        }
-        added.nouls.extend(asked.into_iter().map(|asked| asked.key));
-        if body["questions"]
-            .get("goal_authorizes_commitment")
-            .is_some()
-        {
-            added.nouls.push("goal_authorizes_commitment".into());
-        }
+            ),
+        );
+        added.nouls.extend(asked);
+        added.nouls.push("goal_authorizes_commitment".into());
     }
 
     if variants.has(Variant::NoContext)

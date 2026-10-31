@@ -178,6 +178,28 @@ fn a_missing_credential_or_a_field_in_its_form_is_behind_a_wall() {
     let fields = sign_up["actions"].as_array().unwrap();
     assert_eq!(behind(&sign_up, &fields[0]), None);
     assert_eq!(behind(&sign_up, &fields[1]), None);
+    // The snapshot numbers its forms: the same holds for numeric ids.
+    let mut numbered = sign_up.clone();
+    for field in numbered["actions"].as_array_mut().unwrap() {
+        field["form"]["id"] = json!(7);
+    }
+    let fields = numbered["actions"].as_array().unwrap();
+    assert_eq!(behind(&numbered, &fields[1]), None);
+    let mut login = login.clone();
+    for (field, form) in login["actions"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .zip([3, 3, 4])
+    {
+        field["form"]["id"] = json!(form);
+    }
+    let actions = login["actions"].as_array().unwrap();
+    assert_eq!(
+        behind(&login, &actions[0]).unwrap().kind,
+        JevWallKind::Password
+    );
+    assert_eq!(behind(&login, &actions[2]), None);
 }
 
 #[test]

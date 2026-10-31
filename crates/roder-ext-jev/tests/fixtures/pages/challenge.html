@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Just a moment...</title></head>
+<body>
+  <!-- A bot check that clears itself: nothing to act on, served with
+       ?status=403 or 503, and after `after` ms (3000 by default) it moves
+       on to `to` (challenge-cleared.html by default), as a challenge does
+       once its script has run. -->
+  <h1>Checking your browser before accessing the docs</h1>
+  <p>This process is automatic. Your browser will redirect to your
+     requested content shortly.</p>
+  <p id="wait">Please wait…</p>
+  <script>
+    const query = new URLSearchParams(location.search);
+    const after = Number(query.get('after') || 3000);
+    const to = query.get('to') || 'challenge-cleared.html';
+    let left = Math.ceil(after / 1000);
+    // A countdown that changes the page while it is still the challenge.
+    setInterval(() => {
+      document.getElementById('wait').textContent = `Please wait… ${Math.max(--left, 0)}`;
+    }, 1000);
+    setTimeout(() => location.replace(to), after);
+  </script>
+</body>
+</html>

@@ -6,8 +6,16 @@
 //! `verdict_ok`, `truth_ok` and false greens per task, and a baseline saved
 //! from an earlier run (with the [`Pin`] it was taken at) turns "49 of 52" into
 //! "these tasks got worse". The comparison is on rates, so a baseline of
-//! three runs still stands against a run of five. It is all offline logic;
-//! the live tier only feeds it rows.
+//! three runs still stands against a run of five.
+//!
+//! It also gates on the work a run did, as fastbrowse's release gate does
+//! (CHANGELOG 0.6.0): a task whose median decision calls, text calls or
+//! input tokens, or mean decision cost, rose past [`WORK_BOUND`](baseline::WORK_BOUND) over the
+//! baseline's has done more work, even when it still passes. Wall time
+//! moves with the machine's and the provider's load rather than with the
+//! build, so it is recorded and never gates, and the part of it lost to
+//! transient provider failures is reported on its own (see [`Work`]). It is
+//! all offline logic; the live tier only feeds it rows.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -20,7 +28,12 @@ use super::pin::{BASELINE_FILE, Pin};
 use super::rows::Row;
 
 mod baseline;
+mod work;
+#[cfg(test)]
+mod work_tests;
 pub(crate) use baseline::{Baseline, Comparison};
+pub(crate) use work::Work;
+use work::number;
 
 /// The most runs per task `JEV_EVAL_N` accepts: it multiplies a billed run.
 pub(crate) const MAX_REPEATS: usize = 20;
@@ -69,11 +82,19 @@ pub(crate) struct Run<'a> {
     pub(crate) task: &'a str,
     pub(crate) marks: Marks,
     pub(crate) steps: usize,
+    /// Decision calls the run made.
+    pub(crate) model_calls: usize,
+    /// Text-helper calls the run made.
+    pub(crate) text_calls: usize,
     pub(crate) input_tokens: Option<u64>,
     /// Dollars the run's decisions cost, when the host reported it.
     pub(crate) cost: Option<f64>,
     /// The model that answered, as the host reported it.
     pub(crate) model: Option<&'a str>,
+    pub(crate) wall_ms: u64,
+    /// Of `wall_ms`, what transient provider failures cost, where a hosted
+    /// transport ran.
+    pub(crate) transient_ms: Option<u64>,
 }
 
 impl<'a> From<&'a Row> for Run<'a> {
@@ -82,9 +103,13 @@ impl<'a> From<&'a Row> for Run<'a> {
             task: &row.task,
             marks: row.marks,
             steps: row.steps,
+            model_calls: row.model_calls,
+            text_calls: row.text_calls,
             input_tokens: row.input_tokens,
             cost: row.decision_cost,
             model: row.decision_model.as_deref(),
+            wall_ms: row.wall_ms,
+            transient_ms: row.transient_ms,
         }
     }
 }
@@ -100,6 +125,13 @@ pub(crate) struct TaskTally {
     pub(crate) truth_ok: usize,
     pub(crate) false_green: usize,
     pub(crate) median_steps: f64,
+    /// Decision calls per run; absent in a baseline saved before calls were
+    /// tallied, which the work gate then leaves alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_model_calls: Option<f64>,
+    /// Text-helper calls per run, as `median_model_calls`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_text_calls: Option<f64>,
     /// Over the runs that reported tokens; absent when none did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) median_input_tokens: Option<f64>,
@@ -107,6 +139,12 @@ pub(crate) struct TaskTally {
     /// when none did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) mean_cost: Option<f64>,
+    /// Recorded, never gated: it moves with load.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_wall_ms: Option<f64>,
+    /// Over the runs whose transport reported it; absent when none did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) median_transient_ms: Option<f64>,
 }
 
 /// Every task of a run, by id.
@@ -130,12 +168,20 @@ pub(crate) fn tally<'a>(runs: impl IntoIterator<Item = Run<'a>>) -> Tally {
                 false_green: count(|marks| marks.false_green),
                 median_steps: median(runs.iter().map(|run| run.steps as f64).collect())
                     .unwrap_or_default(),
+                median_model_calls: median(runs.iter().map(|run| run.model_calls as f64).collect()),
+                median_text_calls: median(runs.iter().map(|run| run.text_calls as f64).collect()),
                 median_input_tokens: median(
                     runs.iter()
                         .filter_map(|run| run.input_tokens.map(|tokens| tokens as f64))
                         .collect(),
                 ),
                 mean_cost: mean(runs.iter().filter_map(|run| run.cost).collect()),
+                median_wall_ms: median(runs.iter().map(|run| run.wall_ms as f64).collect()),
+                median_transient_ms: median(
+                    runs.iter()
+                        .filter_map(|run| run.transient_ms.map(|ms| ms as f64))
+                        .collect(),
+                ),
             };
             (task.to_string(), tally)
         })
@@ -159,7 +205,7 @@ fn median(mut values: Vec<f64>) -> Option<f64> {
 /// A run's tally as the rows of a table, one task a line.
 pub(crate) fn table(tally: &Tally) -> String {
     let mut out = format!(
-        "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13} {:>10}\n",
+        "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>6} {:>5} {:>13} {:>10} {:>8} {:>9}\n",
         "task",
         "runs",
         "pass",
@@ -167,12 +213,16 @@ pub(crate) fn table(tally: &Tally) -> String {
         "truth",
         "false_green",
         "steps",
+        "calls",
+        "text",
         "input_tokens",
-        "mean_cost"
+        "mean_cost",
+        "wall_ms",
+        "transient"
     );
     for (task, tally) in tally {
         out.push_str(&format!(
-            "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>13} {:>10}\n",
+            "{:<26} {:>4} {:>5} {:>7} {:>5} {:>11} {:>6} {:>6} {:>5} {:>13} {:>10} {:>8} {:>9}\n",
             task,
             tally.runs,
             tally.passed,
@@ -180,12 +230,14 @@ pub(crate) fn table(tally: &Tally) -> String {
             tally.truth_ok,
             tally.false_green,
             tally.median_steps,
-            tally
-                .median_input_tokens
-                .map_or("-".to_string(), |tokens| format!("{tokens}")),
+            number(tally.median_model_calls),
+            number(tally.median_text_calls),
+            number(tally.median_input_tokens),
             tally
                 .mean_cost
                 .map_or("-".to_string(), |dollars| format!("${dollars:.6}")),
+            number(tally.median_wall_ms),
+            number(tally.median_transient_ms),
         ));
     }
     out
@@ -213,6 +265,8 @@ pub(crate) struct Conclusion {
     /// What moved between the two reads of the pin: a mid-run edit.
     pub(crate) drift: Vec<String>,
     pub(crate) tasks: Tally,
+    /// The run's work across every task.
+    pub(crate) work: Work,
     /// Decision dollars summed over the runs that reported a cost, and how
     /// many did.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,6 +331,7 @@ pub(crate) fn conclude(
         end,
         drift,
         tasks,
+        work: Work::of(runs),
         decision_cost: costs.iter().copied().reduce(|a, b| a + b),
         costed_runs: costs.len(),
         served_models: runs
@@ -314,8 +369,9 @@ impl Conclusion {
     /// Why `JEV_EVAL_STRICT=1` fails this run; empty means it holds. A
     /// mid-run edit, a false green and a run that produced no rows always
     /// fail it. Against a baseline it
-    /// fails on a task getting worse, since some tasks are known to fail;
-    /// with none, on any run that failed.
+    /// fails on a task getting worse, since some tasks are known to fail,
+    /// and on a task doing more work than [`WORK_BOUND`](baseline::WORK_BOUND) allows over the
+    /// baseline's; with none, on any run that failed.
     pub(crate) fn strict_failures(&self) -> Vec<String> {
         let mut failures = Vec::new();
         if self.tasks.is_empty() {
@@ -331,12 +387,20 @@ impl Conclusion {
             failures.push(format!("{} false green runs", self.false_green_runs));
         }
         match &self.comparison {
-            Some(comparison) => failures.extend(
-                comparison
-                    .regressions
-                    .iter()
-                    .map(|regression| format!("worse than the baseline: {regression}")),
-            ),
+            Some(comparison) => {
+                failures.extend(
+                    comparison
+                        .regressions
+                        .iter()
+                        .map(|regression| format!("worse than the baseline: {regression}")),
+                );
+                failures.extend(
+                    comparison
+                        .work
+                        .iter()
+                        .map(|work| format!("more work than the baseline: {work}")),
+                );
+            }
             None if self.failed_runs > 0 => {
                 failures.push(format!("{} failed runs", self.failed_runs));
             }
@@ -357,6 +421,7 @@ impl Conclusion {
             pin.setup,
             table(&self.tasks)
         );
+        out.push_str(&self.work.line());
         if !self.served_models.is_empty() {
             out.push_str(&format!(
                 "served by: {}\n",
@@ -382,6 +447,7 @@ impl Conclusion {
         if let Some(comparison) = &self.comparison {
             for (heading, lines) in [
                 ("REGRESSION", &comparison.regressions),
+                ("MORE WORK", &comparison.work),
                 ("improved", &comparison.improved),
                 ("note", &comparison.notes),
             ] {
@@ -392,7 +458,7 @@ impl Conclusion {
             if !comparison.new.is_empty() {
                 out.push_str(&format!("no baseline for: {}\n", comparison.new.join(", ")));
             }
-            if comparison.regressions.is_empty() {
+            if comparison.regressions.is_empty() && comparison.work.is_empty() {
                 out.push_str("no regressions vs baseline\n");
             }
         }

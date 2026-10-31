@@ -19,9 +19,13 @@ fn run(task: &str, verdict_ok: bool, truth_ok: bool, steps: usize) -> Run<'_> {
         task,
         marks: Marks::new(verdict_ok, truth_ok),
         steps,
+        model_calls: steps + 1,
+        text_calls: 0,
         input_tokens: Some(1000 * steps as u64),
         cost: None,
         model: None,
+        wall_ms: 1000,
+        transient_ms: None,
     }
 }
 

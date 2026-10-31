@@ -38,6 +38,13 @@ pub(crate) struct Row {
     pub(crate) model_calls: usize,
     pub(crate) text_calls: usize,
     pub(crate) wall_ms: u64,
+    /// Of the run's time, what its decision requests lost to transient
+    /// provider failures: failed attempts that could be retried and the
+    /// waits before each retry (see [`crate::http::JsonPoster::transient`]).
+    /// Part of `wall_ms`, reported apart so a busy provider is not read as
+    /// a slower build. Absent where no hosted transport ran (keyless).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) transient_ms: Option<u64>,
     /// Input tokens of every model call the run made, when each reported
     /// them (see [`JevUsage`]).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -204,6 +211,7 @@ impl Row {
             model_calls: result.model_calls,
             text_calls: result.text_calls,
             wall_ms: outcome.wall_ms,
+            transient_ms: None,
             input_tokens: input_tokens(&result.usage),
             decision_cost: result.usage.decision.cost,
             decision_model: result
@@ -240,6 +248,7 @@ impl Row {
             model_calls: 0,
             text_calls: 0,
             wall_ms: 0,
+            transient_ms: None,
             input_tokens: None,
             decision_cost: None,
             decision_model: None,

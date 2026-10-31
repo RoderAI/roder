@@ -32,14 +32,39 @@
     'one-time-code' : 'password';
   const offerable = e => !['file','hidden'].includes(e.type);
   const safe = e => offerable(e) && !secret(e);
+  // The DOM cannot change while this script runs, so whether an element
+  // shows, its name and its cursor, read once, are reused for the rest of
+  // the run and for context.js's run on its result. The helpers stay on
+  // `cache` for later scripts (act.js, the freshness guard), which read a
+  // page that may have changed since: a microtask queued now ends the reuse
+  // as soon as this task does, whether it returns or throws. The page's own
+  // queueMicrotask may be replaced later, so the first one seen is kept. A
+  // page that removed or broke it before then gets no reuse at all, never a
+  // failed read. Follows fastbrowse's snapshot.js memo (MIT).
+  const memos=[];
+  let reuse=false;
+  try {
+    cache.defer ||= queueMicrotask.bind(window);
+    cache.defer(()=>{ for (const m of memos) m.clear(); memos.length=0; });
+    reuse=true;
+  } catch {}
+  const memo=read=>{
+    const m=new Map();
+    if (reuse) memos.push(m);
+    return e=>{
+      if (!memos.includes(m)) return read(e);
+      if (!m.has(e)) m.set(e,read(e));
+      return m.get(e);
+    };
+  };
   // A native select made transparent over a styled box is still what takes
   // the click, so its opacity does not hide it. An element with display:
   // contents has no box of its own (checkVisibility is false): it shows what
   // its parent shows.
   const shows = e => e.checkVisibility(e.tagName==='SELECT' ? {checkVisibilityCSS:true} :
     {checkOpacity:true,checkVisibilityCSS:true});
-  const visible = e => !e.closest('[aria-hidden="true"],[inert]') && (shows(e) ||
-    (tree.contents(e) && getComputedStyle(e).visibility!=='hidden' && !!tree.up(e) && visible(tree.up(e))));
+  const visible = memo(e => !e.closest('[aria-hidden="true"],[inert]') && (shows(e) ||
+    (tree.contents(e) && getComputedStyle(e).visibility!=='hidden' && !!tree.up(e) && visible(tree.up(e)))));
   const roles=['button','link','checkbox','radio','switch','tab','menuitem','menuitemradio',
     'menuitemcheckbox','option','treeitem','gridcell','combobox','textbox','searchbox','spinbutton'];
   // An anchor with no href acts through its click handler alone (a jQuery UI
@@ -48,7 +73,7 @@
   const controls='a[href],a[onclick],button,input,textarea,select,summary,'+
     '[contenteditable="true"],'+roles.map(role=>'[role="'+role+'"]').join(',');
   const selector=controls+',label';
-  const {name,field,squash,cut,regionName}=parts.names({visible,controls});
+  const {name,field,squash,cut,regionName}=parts.names({visible,controls,memo});
   // Only a primitive goes into a guard: a custom element's value getter may
   // return an object, even a cyclic one, that cannot be returned by value.
   const plain=v=>{
@@ -79,10 +104,12 @@
     e.tagName!=='PRE';
   // The outermost element of a pointer region; a shadow root's element is
   // compared with its host.
+  // Each element's cursor is asked again as its children's parent.
+  const cursor=memo(e=>getComputedStyle(e).cursor);
   const pointer=e=>{
-    if (getComputedStyle(e).cursor!=='pointer') return false;
+    if (cursor(e)!=='pointer') return false;
     const parent=e.parentElement || e.parentNode?.host;
-    return !parent || getComputedStyle(parent).cursor!=='pointer';
+    return !parent || cursor(parent)!=='pointer';
   };
   // Inside a control, through shadow roots: an icon element in a button's
   // light DOM draws its picture in a shadow root of its own.
@@ -198,6 +225,25 @@
   // labelled "Show 20 more") follow fastbrowse's page.py (MIT).
   const nextPage=/^(?:(?:next(?: page)?|more results|older(?: posts)?)\s*[›»→>]*|[›»→>]{1,2})$/i;
   const loadMore=/^(?:show|view|load|see)(?: \d+)? more(?: [\p{L}\p{N}_-]+){0,3}$/iu;
+  // A field its form will not submit without: required and still empty
+  // (a required radio group by its validity, so a group with one checked
+  // radio needs none of them), or marked invalid by the page. A custom
+  // widget marks what the user sees, not the input under it, so both are
+  // asked. A secret is asked only whether it holds anything. The rule
+  // follows fastbrowse's snapshot.js (MIT).
+  const blocks=e=>{
+    const s=source(e);
+    if (e.getAttribute('aria-invalid')==='true' || s.getAttribute('aria-invalid')==='true') return true;
+    if (!['INPUT','SELECT','TEXTAREA'].includes(s.tagName) || s.disabled) return false;
+    if (!s.required && s.getAttribute('aria-required')!=='true') return false;
+    if (s.type==='radio' && s.required) return s.validity.valueMissing;
+    // aria-required on each radio: the group still needs one only while
+    // none of it is checked.
+    if (s.type==='radio' && s.name) return ![...s.getRootNode().querySelectorAll('input[type="radio"]')]
+      .some(r=>r.name===s.name && r.form===s.form && r.checked);
+    if (choice(s)) return !s.checked;
+    return secret(s) ? s.value==='' : !String(s.value??'').trim();
+  };
   const {fixed,reachable,clipped}=parts.reach({tree,rectOf});
   const pagers=new Set(), distance=new Map(), deferred=new Map();
   const pages=(e,rname,label)=>loadMore.test(label) || (e.tagName==='A' && rname==='link' &&
@@ -300,6 +346,7 @@
       if (value!==null) base[key]=value;
     }
     if (choice(source(e))) base.checked=String(source(e).checked);
+    if (blocks(e)) base.blocking=true;
     // Visible input text may show only a substring of the complete DOM value.
     // Route visual evidence by this observed condition, not by whether a field
     // merely has a value. Never inspect a secret field's contents here.
@@ -401,6 +448,52 @@
     skipped+unreached;
   actions.splice(0,actions.length,...kept);
   for (const a of actions) if (deferred.has(a)) a.label=asText(genericName(deferred.get(a))||a.role);
+  // What the irreversible-action gate quotes (Jev's own, after fastbrowse's
+  // snapshot.js, MIT): where a link goes, whether the page says it saves a
+  // file, and the form a submit button or a field's Enter sends. Set after
+  // the marker, so none of it makes a decision stale.
+  const where=url=>{
+    try { const u=new URL(url,location.href), here=u.origin===location.origin;
+      // A jump within this document goes nowhere new.
+      if (here && u.hash && u.pathname+u.search===location.pathname+location.search) return u.hash;
+      return cut(here ? u.pathname+u.search : u.host+u.pathname,200); }
+    catch { return ''; }
+  };
+  const implicit=['text','search','url','tel','email','password','number',...dates];
+  const formText=new Map();
+  // A form's own properties can be shadowed by its fields (a select with
+  // id "method" is `form.method`), so only attributes and the prototypes'
+  // getters are read, and a form that still throws says nothing.
+  const own=(proto,key)=>Object.getOwnPropertyDescriptor(proto,key).get;
+  const elementsOf=own(HTMLFormElement.prototype,'elements'), textOf=own(HTMLElement.prototype,'innerText');
+  const submitOf=e=>{
+    try {
+      const form=e.form;
+      const explicit=['BUTTON','INPUT'].includes(e.tagName) && ['submit','image'].includes(e.type);
+      if (!form || (!explicit && (e.tagName!=='INPUT' || !implicit.includes(e.type)))) return null;
+      const fields=[...elementsOf.call(form)];
+      const submit=explicit ? e : fields.find(c=>['submit','image'].includes(c.type));
+      if (submit?.matches(':disabled')) return null;
+      // Enter submits a form with no submit button only from its one field.
+      if (!submit && fields.filter(c=>c.tagName==='INPUT' && implicit.includes(c.type)).length>1) return null;
+      if (!formText.has(form)) formText.set(form,asText(cut(squash(textOf.call(form)||''),300)));
+      return {method:(submit?.getAttribute('formmethod')||form.getAttribute('method')||'get').toLowerCase(),
+        action:where(submit?.getAttribute('formaction')||form.getAttribute('action')||e.ownerDocument.URL),
+        text:formText.get(form)};
+    } catch { return null; }
+  };
+  for (const a of actions) {
+    const e=cache.nodes.get(a.node);
+    if (!e) continue;
+    if (a.role==='link' && e.tagName==='A' && e.href) {
+      a.href=where(e.href);
+      if (e.hasAttribute('download')) a.download=true;
+    }
+    if ((a.kind==='click' && a.role==='button') || a.kind==='fill') {
+      const submits=submitOf(e);
+      if (submits) a.submits=submits;
+    }
+  }
   // Where each box is scrolled to: top, bottom, or how far down in tenths,
   // so every scroll is progress the step fingerprint sees.
   for (const e of regions) {

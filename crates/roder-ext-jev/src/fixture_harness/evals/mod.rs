@@ -19,6 +19,8 @@
 //! To add a task, add a page under `tests/fixtures/pages/` if none fits and
 //! an entry to `tasks.json`; both tiers pick it up.
 
+#[cfg(test)]
+mod early_stops;
 mod effect_variant;
 pub(crate) mod fallback_live;
 mod grade;

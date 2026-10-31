@@ -1,4 +1,5 @@
-//! The saved baseline a live run is compared with, and the comparison.
+//! The saved baseline a live run is compared with, and the comparison: the
+//! rates that make a task worse, and the work bounds that make it heavier.
 
 use std::path::Path;
 
@@ -7,6 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use super::{Tally, TaskTally};
 use crate::fixture_harness::evals::pin::Pin;
+
+/// How far a task's median work may rise over the baseline's before the
+/// task counts as doing more work: a quarter, and for call counts at least
+/// one whole call, since a median over three runs moves in whole calls.
+pub(crate) const WORK_BOUND: f64 = 0.25;
 
 /// The numbers of an earlier run, and the pin they were taken at.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -60,6 +66,12 @@ impl Baseline {
                 comparison.new.push(task.clone());
                 continue;
             };
+            let heavier = heavier(was, is);
+            if !heavier.is_empty() {
+                comparison
+                    .work
+                    .push(format!("{task}: {}", heavier.join(", ")));
+            }
             let worse = worse(was, is);
             if !worse.is_empty() {
                 comparison
@@ -98,11 +110,65 @@ fn worse(was: &TaskTally, is: &TaskTally) -> Vec<String> {
     worse
 }
 
+/// How a task's work rose past [`WORK_BOUND`] since the baseline; empty
+/// when it did not. A task that passes more often than it did may need more
+/// work to do so, so its work is not held against it; a figure either side
+/// lacks is not compared.
+fn heavier(was: &TaskTally, is: &TaskTally) -> Vec<String> {
+    if is.passed * was.runs > was.passed * is.runs {
+        return Vec::new();
+    }
+    let rose = |before: Option<f64>, now: Option<f64>, slack: f64| match (before, now) {
+        (Some(before), Some(now)) => now > before * (1.0 + WORK_BOUND) && now - before >= slack,
+        _ => false,
+    };
+    let mut heavier = Vec::new();
+    for (name, before, now, slack) in [
+        (
+            "model_calls",
+            was.median_model_calls,
+            is.median_model_calls,
+            1.0,
+        ),
+        (
+            "text_calls",
+            was.median_text_calls,
+            is.median_text_calls,
+            1.0,
+        ),
+        (
+            "input_tokens",
+            was.median_input_tokens,
+            is.median_input_tokens,
+            0.0,
+        ),
+    ] {
+        if rose(before, now, slack) {
+            heavier.push(format!(
+                "median {name} {} -> {}",
+                before.unwrap_or_default(),
+                now.unwrap_or_default()
+            ));
+        }
+    }
+    if rose(was.mean_cost, is.mean_cost, 0.0) {
+        heavier.push(format!(
+            "mean cost ${:.6} -> ${:.6}",
+            was.mean_cost.unwrap_or_default(),
+            is.mean_cost.unwrap_or_default()
+        ));
+    }
+    heavier
+}
+
 /// A run set against a baseline.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub(crate) struct Comparison {
     /// Tasks whose pass, verdict, truth or false-green rate got worse.
     pub(crate) regressions: Vec<String>,
+    /// Tasks whose median calls, tokens or mean cost rose past
+    /// [`WORK_BOUND`]; these fail `JEV_EVAL_STRICT=1` as regressions do.
+    pub(crate) work: Vec<String>,
     pub(crate) improved: Vec<String>,
     /// Tasks the baseline has no numbers for.
     pub(crate) new: Vec<String>,

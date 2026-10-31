@@ -1,0 +1,70 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Membership application</title></head>
+<body>
+  <!-- A three-step wizard whose server rejects the finished application for
+       something set two steps back: the referral code the sign-up link
+       applied has expired. The fix is to go back, untick it and walk forward
+       again. Every submission is posted to /submit/wizard, so the grader
+       sees the rejected attempt and the corrected one. -->
+  <h1>Membership application</h1>
+  <section id="step-1">
+    <h2>Step 1 of 3: Your details</h2>
+    <p><label for="name">Full name</label> <input id="name" name="name"></p>
+    <p><label for="email">Email</label> <input id="email" name="email" type="email"></p>
+    <button type="button" data-go="2">Next</button>
+  </section>
+  <section id="step-2" hidden>
+    <h2>Step 2 of 3: Offers</h2>
+    <p><label><input id="referral" type="checkbox" checked> Apply referral code SPRING24</label></p>
+    <button type="button" data-go="1">Back</button>
+    <button type="button" data-go="3">Next</button>
+  </section>
+  <section id="step-3" hidden>
+    <h2>Step 3 of 3: Review</h2>
+    <div id="problem" role="alert"></div>
+    <dl id="summary"></dl>
+    <button type="button" data-go="2">Back</button>
+    <button type="button" id="submit">Submit application</button>
+  </section>
+  <section id="received" hidden>
+    <h2>Application received</h2>
+    <p>Reference W-4101. Welcome aboard.</p>
+  </section>
+  <script>
+    const field = (id) => document.getElementById(id);
+    function show(step) {
+      for (const n of [1, 2, 3]) field(`step-${n}`).hidden = n !== step;
+      if (step !== 3) return;
+      const rows = [
+        ['Full name', field('name').value], ['Email', field('email').value],
+        ['Referral code', field('referral').checked ? 'SPRING24' : 'none'],
+      ];
+      field('summary').innerHTML = rows.map(([term]) => `<dt>${term}</dt><dd></dd>`).join('');
+      field('summary').querySelectorAll('dd').forEach((dd, index) => { dd.textContent = rows[index][1]; });
+    }
+    document.querySelectorAll('[data-go]').forEach((button) => {
+      button.addEventListener('click', () => {
+        field('problem').textContent = '';
+        show(Number(button.dataset.go));
+      });
+    });
+    field('submit').addEventListener('click', async () => {
+      const referral = field('referral').checked ? 'SPRING24' : '';
+      const name = field('name').value.trim();
+      const email = field('email').value.trim();
+      await fetch('/submit/wizard', { method: 'POST', body: new URLSearchParams({ name, email, referral }) });
+      if (!name || !email) {
+        field('problem').textContent = 'Your name and email are required. Go back to step 1.';
+      } else if (referral) {
+        field('problem').textContent =
+          'Referral code SPRING24 has expired. Go back to Offers, untick it, and submit again.';
+      } else {
+        field('step-3').hidden = true;
+        field('received').hidden = false;
+        window.application = 'W-4101';
+      }
+    });
+  </script>
+</body>
+</html>

@@ -126,6 +126,13 @@ fn step(action: &Value) -> String {
     if action["opened_tab"] == Value::Bool(true) {
         outcome.push("opened a new tab".into());
     }
+    for download in action["downloads"].as_array().into_iter().flatten() {
+        let name = cut(&one_line(text(&download["name"])), 60);
+        outcome.push(match download["repeated"] == Value::Bool(true) {
+            true => format!("saved \"{name}\" again, the same file"),
+            false => format!("downloaded \"{name}\""),
+        });
+    }
     if let Some(effect) = action["effect"]
         .as_str()
         .filter(|effect| !effect.is_empty())

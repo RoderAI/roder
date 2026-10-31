@@ -145,6 +145,7 @@ impl JevTypeSafeDecisionClient {
             chrono::Local::now().date_naive(),
             DecisionOptions {
                 gate,
+                shadow_gate: self.shadow_gate,
                 activation_audit: (self.profile == crate::jev_prompt::Profile::Activation)
                     .then_some(transport),
             },

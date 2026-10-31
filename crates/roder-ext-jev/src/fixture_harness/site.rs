@@ -12,6 +12,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const THANKS: &str = "<!doctype html><title>Thanks</title><h1>Thanks, we received it.</h1>";
+/// What `/files/orders.csv` serves.
+pub(crate) const ORDERS_CSV: &str = "order,customer,total\n1001,Ada Lovelace,19.99\n\
+                                     1002,Alan Turing,5.00\n1003,Grace Hopper,42.50\n";
 
 /// One form submission as the server received it.
 #[derive(Debug, Clone, PartialEq)]
@@ -139,6 +142,24 @@ async fn serve(
         let _ = stream.shutdown().await;
         return;
     }
+    if let Some(name) = path.strip_prefix("/files/") {
+        serve_file(&mut stream, name).await;
+        return;
+    }
+    if method == "GET"
+        && let Some(reply) = first_reply(&path, &failures)
+    {
+        let head = format!(
+            "HTTP/1.1 {}\r\ncontent-type: text/html; charset=utf-8\r\n\
+             content-length: {}\r\ncache-control: no-store\r\nconnection: close\r\n\r\n",
+            reply.0,
+            reply.1.len()
+        );
+        let _ = stream.write_all(head.as_bytes()).await;
+        let _ = stream.write_all(reply.1.as_bytes()).await;
+        let _ = stream.shutdown().await;
+        return;
+    }
     if path.starts_with("/fail/") {
         failures.lock().unwrap().push(path.clone());
         if path.starts_with("/fail/no-content") {
@@ -177,8 +198,79 @@ fn served_status(path: &str) -> &'static str {
         Some("401") => "401 Unauthorized",
         Some("403") => "403 Forbidden",
         Some("429") => "429 Too Many Requests",
+        Some("503") => "503 Service Unavailable",
         _ => "200 OK",
     }
+}
+
+/// What the first GET of a page asked to stand in for itself gets, once per
+/// site and address; later requests get the page:
+///
+/// - `unavailable_once=1`: a 503 "temporarily unavailable" page with
+///   nothing to act on, which reloads itself after `after` ms (2000 by
+///   default), as a busy site does;
+/// - `blank_once=1`: an empty document, as a cold app's first one can be.
+fn first_reply(path: &str, seen: &Mutex<Vec<String>>) -> Option<(&'static str, String)> {
+    let unavailable = query_value(path, "unavailable_once") == Some("1");
+    let blank = query_value(path, "blank_once") == Some("1");
+    if !unavailable && !blank {
+        return None;
+    }
+    let key = format!("first:{path}");
+    {
+        let mut seen = seen.lock().unwrap();
+        if seen.contains(&key) {
+            return None;
+        }
+        seen.push(key);
+    }
+    if blank {
+        return Some((
+            "200 OK",
+            "<!doctype html><title></title><body></body>".into(),
+        ));
+    }
+    let after = query_value(path, "after")
+        .and_then(|ms| ms.parse::<u64>().ok())
+        .unwrap_or(2000);
+    Some((
+        "503 Service Unavailable",
+        format!(
+            "<!doctype html><title>Service Unavailable</title>\
+             <h1>Service temporarily unavailable</h1>\
+             <p>We are busy right now. This page will retry by itself in a moment.</p>\
+             <script>setTimeout(() => location.reload(), {after});</script>"
+        ),
+    ))
+}
+
+/// `/files/<name>.csv` downloads a CSV export (`orders.csv` holds
+/// [`ORDERS_CSV`]) as an attachment, after `delay` ms when asked.
+async fn serve_file(stream: &mut TcpStream, name: &str) {
+    let delay = query_value(name, "delay")
+        .and_then(|ms| ms.parse::<u64>().ok())
+        .unwrap_or(0)
+        .min(10_000);
+    tokio::time::sleep(Duration::from_millis(delay)).await;
+    let name = name.split('?').next().unwrap_or_default();
+    let safe = name.ends_with(".csv")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    let head = match safe {
+        true => format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/csv; charset=utf-8\r\n\
+             content-disposition: attachment; filename=\"{name}\"\r\n\
+             content-length: {}\r\ncache-control: no-store\r\nconnection: close\r\n\r\n",
+            ORDERS_CSV.len()
+        ),
+        false => "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".into(),
+    };
+    let _ = stream.write_all(head.as_bytes()).await;
+    if safe {
+        let _ = stream.write_all(ORDERS_CSV.as_bytes()).await;
+    }
+    let _ = stream.shutdown().await;
 }
 
 fn query_value<'a>(path: &'a str, key: &str) -> Option<&'a str> {

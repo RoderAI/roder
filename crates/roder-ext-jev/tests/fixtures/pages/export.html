@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Orders export</title></head>
+<body>
+  <!-- An export page whose controls save a file and change nothing on the
+       page: the link downloads /files/orders.csv (an attachment), the
+       Export button builds the same CSV in the page and saves it as a
+       blob, and Save notes saves a text blob through a link it never
+       attaches. -->
+  <h1>Orders</h1>
+  <p>Your order history is ready to export. The export holds every order
+     with its customer and total.</p>
+  <p><a href="/files/orders.csv">Download CSV</a></p>
+  <p><button type="button" id="export">Export CSV</button></p>
+  <p><button type="button" id="notes">Save notes</button></p>
+  <script>
+    document.getElementById('export').addEventListener('click', () => {
+      window.exports = (window.exports || 0) + 1;
+      const csv = 'order,customer,total\n1001,Ada Lovelace,19.99\n' +
+        '1002,Alan Turing,5.00\n1003,Grace Hopper,42.50\n';
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob([csv], {type: 'text/csv'}));
+      link.download = 'orders-export.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    });
+    // As FileSaver's saveAs does: a link never attached, clicked by an
+    // event a moment later.
+    document.getElementById('notes').addEventListener('click', () => {
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(new Blob(['Ship by Friday.\n'], {type: 'text/plain'}));
+      link.download = 'notes.txt';
+      setTimeout(() => link.dispatchEvent(new MouseEvent('click')), 0);
+    });
+  </script>
+</body>
+</html>

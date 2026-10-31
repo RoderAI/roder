@@ -19,8 +19,8 @@ use crate::secret::Secrets;
 pub use crate::wall::{JevWall, JevWallKind};
 pub use covered::{COVER_CONTROLS, Covered};
 pub use records::{
-    JevActionRecord, JevControl, JevDecisionRecord, JevFrameText, JevOmitted, JevPageFacts,
-    JevRunResult, JevSuppressedClick, JevSuppressedKind,
+    JevActionRecord, JevControl, JevDecisionRecord, JevDownload, JevFrameText, JevOmitted,
+    JevPageFacts, JevRunResult, JevSuppressedClick, JevSuppressedKind,
 };
 
 /// A stale observation means the browser changed after JEV made its decision.
@@ -108,6 +108,11 @@ pub struct JevDecision {
     /// when it was not asked, or its answer was missing or invalid; the gate
     /// treats an action it applies to with no answer as irreversible.
     pub irreversible: Option<f64>,
+    /// With the gate on and a click on offer that saves a file, P(the goal
+    /// rules out downloading), asked in the same request. `None` when it
+    /// was not asked, or its answer was missing or invalid; the gate then
+    /// treats a chosen click that saves a file as ruled out.
+    pub downloads_forbidden: Option<f64>,
 }
 
 impl JevDecision {

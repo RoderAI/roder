@@ -8,6 +8,11 @@
 //! never tries to get around a block. A 401 that shows no challenge asks for
 //! a sign-in rather than refusing automation: it ends the run `needs_login`
 //! (see [`crate::wall`]), not `access_denied`.
+//!
+//! Some of these pages clear themselves: a challenge that runs its check and
+//! moves on (Cloudflare's "Just a moment...") or a 503 a busy site serves
+//! while it retries. [`may_clear`] names those, and the loop watches such a
+//! page for a while before it believes it (see `agent::look`).
 
 use reqwest::Url;
 
@@ -52,7 +57,7 @@ impl AccessBlock {
 }
 
 /// Phrases a refusal page shows, lower-cased, with the kind each implies.
-const MARKERS: [(&str, BlockKind); 7] = [
+const MARKERS: [(&str, BlockKind); 8] = [
     ("access denied", BlockKind::Forbidden),
     ("unusual traffic", BlockKind::RateLimited),
     ("too many requests", BlockKind::RateLimited),
@@ -60,6 +65,7 @@ const MARKERS: [(&str, BlockKind); 7] = [
     ("are you a robot", BlockKind::Challenge),
     ("captcha", BlockKind::Challenge),
     ("checking your browser", BlockKind::Challenge),
+    ("just a moment", BlockKind::Challenge),
 ];
 
 /// Only the start of the text is read: a refusal page says it at once, and
@@ -74,7 +80,8 @@ const TEXT_CHARS: usize = 600;
 /// `/sorry/` address, the path search engines put their traffic check
 /// under, counts only with more to show for it: a refusal status, a marker
 /// in the page's opening text, or nothing to act on. Any site may have a
-/// `/sorry/out-of-stock` page.
+/// `/sorry/out-of-stock` page. A 503 is a refusal only with a marker and
+/// nothing to act on: most are a site that is down, not one that refuses.
 pub(crate) fn classify(
     status: Option<u16>,
     url: &str,
@@ -126,12 +133,25 @@ pub(crate) fn classify(
             };
             Some(AccessBlock { kind, evidence })
         }
+        Some(503) if controls == 0 => in_title.or(in_text).map(|(marker, kind)| AccessBlock {
+            kind: *kind,
+            evidence: format!("HTTP 503, {}", quoted(marker)),
+        }),
         _ if controls == 0 => in_title.map(|(marker, kind)| AccessBlock {
             kind: *kind,
             evidence: with_status(status, quoted(marker)),
         }),
         _ => None,
     }
+}
+
+/// Whether a page that offers nothing to act on may clear itself, and is
+/// worth watching before it is believed: a challenge, under any status, or
+/// a 503, the status a busy site or a bot check serves while it retries.
+/// A plain 403 "Access Denied" or a 429 stays as it is.
+pub(crate) fn may_clear(status: Option<u16>, block: Option<&AccessBlock>, controls: usize) -> bool {
+    controls == 0
+        && (status == Some(503) || block.is_some_and(|block| block.kind == BlockKind::Challenge))
 }
 
 fn with_status(status: Option<u16>, evidence: String) -> String {
@@ -244,6 +264,50 @@ mod tests {
             let block = classify(status, "https://s.test/sorry/index", "", text, controls);
             assert_eq!(block.map(|block| block.kind), Some(BlockKind::Challenge));
         }
+    }
+
+    /// A 503 refuses only with a marker and nothing to act on.
+    #[test]
+    fn classify_a_503_only_with_a_marker_and_nothing_to_act_on() {
+        let moment = classify(
+            Some(503),
+            "https://a.test/",
+            "Just a moment...",
+            "Checking your browser before accessing a.test.",
+            0,
+        )
+        .unwrap();
+        assert_eq!(moment.kind, BlockKind::Challenge);
+        assert_eq!(moment.evidence, "HTTP 503, \"Just a moment...\"");
+        let in_text = classify(Some(503), "https://a.test/", "", "Verify you are human", 0);
+        assert_eq!(in_text.map(|block| block.kind), Some(BlockKind::Challenge));
+        // A site that is down is not refusing anyone.
+        let down = "Service temporarily unavailable. Please try again shortly.";
+        assert_eq!(
+            classify(Some(503), "https://a.test/", "Service Unavailable", down, 0),
+            None
+        );
+        assert_eq!(
+            classify(Some(503), "https://a.test/", "Just a moment...", "", 4),
+            None
+        );
+    }
+
+    /// A challenge with nothing to act on, or a bare 503, is watched; a
+    /// plain refusal or a page with controls is not.
+    #[test]
+    fn only_challenges_and_503s_with_nothing_to_act_on_may_clear() {
+        let challenge = classify(Some(403), "https://a.test/", "Just a moment...", "", 0);
+        assert!(may_clear(Some(403), challenge.as_ref(), 0));
+        let title = classify(None, "https://a.test/", "Checking your browser", "", 0);
+        assert!(may_clear(None, title.as_ref(), 0));
+        assert!(may_clear(Some(503), None, 0));
+        let denied = classify(Some(403), "https://a.test/", "Access Denied", "", 0);
+        assert!(!may_clear(Some(403), denied.as_ref(), 0));
+        let limited = classify(Some(429), "https://a.test/", "", "Slow down", 0);
+        assert!(!may_clear(Some(429), limited.as_ref(), 0));
+        assert!(!may_clear(Some(503), None, 2));
+        assert!(!may_clear(Some(200), None, 0));
     }
 
     #[test]

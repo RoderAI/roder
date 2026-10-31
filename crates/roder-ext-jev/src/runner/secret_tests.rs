@@ -111,6 +111,7 @@ impl JevDecisionClient for Plan {
             usage: json!({}),
             model: None,
             irreversible: None,
+            downloads_forbidden: None,
         })
     }
 }

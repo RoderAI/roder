@@ -242,17 +242,21 @@ pub(crate) fn shown(observation: &Value, headings: &[String]) -> Option<JevWall>
 }
 
 /// Whether a fill action is a password field for a new password.
-fn sets_new_password(action: &Value) -> bool {
+pub(crate) fn sets_new_password(action: &Value) -> bool {
     action["kind"] == "fill" && action["input_type"] == "password" && credential(action).is_none()
 }
 
 /// Whether `field` sits in a form that also sets a new password: a sign-up
 /// or a password change, whose plain "Password" is one to choose.
 fn in_sign_up(observation: &Value, field: &Value) -> bool {
-    field["form"]["id"].as_str().is_some_and(|form| {
-        actions(observation)
-            .any(|action| action["form"]["id"].as_str() == Some(form) && sets_new_password(action))
-    })
+    actions(observation).any(|action| same_form(field, action) && sets_new_password(action))
+}
+
+/// Whether two observed actions sit in one form. The snapshot numbers its
+/// forms, so the ids are compared as they come, number or string.
+pub(crate) fn same_form(one: &Value, other: &Value) -> bool {
+    let form = &one["form"]["id"];
+    !form.is_null() && *form == other["form"]["id"]
 }
 
 /// The wall behind a field the run had no value for: the field is a
@@ -275,10 +279,9 @@ pub(crate) fn behind(observation: &Value, missing: &Value) -> Option<JevWall> {
         }
         return Some(wall(observation, &fields));
     }
-    let form = missing["form"]["id"].as_str()?;
     let in_form = fields
         .into_iter()
-        .filter(|field| field["form"]["id"].as_str() == Some(form))
+        .filter(|field| same_form(missing, field))
         .collect::<Vec<_>>();
     (!in_form.is_empty()).then(|| wall(observation, &in_form))
 }

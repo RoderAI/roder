@@ -50,6 +50,10 @@ pub struct JevActionRecord {
     /// page the steps after it act on.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub opened_tab: bool,
+    /// Files this action downloaded. A file saved again with the same name
+    /// and content is listed `repeated`: it changed nothing.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub downloads: Vec<JevDownload>,
     /// What the action visibly did: the address it went to, the controls
     /// whose value or state changed, and those it showed or removed. Page
     /// text, as untrusted as the rest.
@@ -102,6 +106,7 @@ impl JevActionRecord {
             uncovered: None,
             dialogs: Vec::new(),
             opened_tab: false,
+            downloads: Vec::new(),
             effect: None,
             elapsed_ms: 0,
             choice: "e1".into(),
@@ -132,6 +137,8 @@ pub struct JevDecisionRecord {
     pub model: Option<String>,
     /// The irreversible-action gate's answer for the chosen action.
     pub irreversible: Option<f64>,
+    /// The gate's answer whether the goal rules out downloading.
+    pub downloads_forbidden: Option<f64>,
 }
 
 /// Why the loop did not make a click it was about to make.
@@ -207,6 +214,9 @@ pub struct JevRunResult {
     /// them (on screen first). Page text, as untrusted as the rest.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub controls: Vec<JevControl>,
+    /// Every distinct file the run downloaded, oldest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub downloads: Vec<JevDownload>,
     /// What else the final page showed: its HTTP status, headings and the
     /// text of frames Jev reads but cannot act in.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -247,10 +257,34 @@ impl JevRunResult {
             wall: None,
             untrusted: true,
             controls: Vec::new(),
+            downloads: Vec::new(),
             page: None,
             typed_secrets: Secrets::default(),
         }
     }
+}
+
+/// A file an action downloaded, which the browser saved where `path` says.
+/// The name and address are page-supplied, as untrusted as page text, and
+/// scrubbed of typed secrets.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JevDownload {
+    /// The file's name, as the response or the link named it.
+    pub name: String,
+    /// The address it came from (`blob:` for a file the page built), cut
+    /// to 300 characters (a `data:` address holds the whole file).
+    pub url: String,
+    /// Where the browser saved it, when Jev could tell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    pub size_bytes: u64,
+    /// The browser had not finished saving it when Jev stopped waiting.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub incomplete: bool,
+    /// The same name and content as a file the run saved before: the
+    /// action that saved it again changed nothing.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repeated: bool,
 }
 
 /// What a page held that Jev was not offered, counted on the page Jev

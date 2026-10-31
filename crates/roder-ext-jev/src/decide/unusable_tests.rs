@@ -42,6 +42,7 @@ async fn choose_with(transport: &dyn JevDecisionTransport) -> anyhow::Error {
         today,
         DecisionOptions {
             gate: false,
+            shadow_gate: false,
             activation_audit: None,
         },
     )
@@ -114,6 +115,7 @@ async fn a_refused_gate_question_is_unusable_too() {
         today,
         DecisionOptions {
             gate: true,
+            shadow_gate: false,
             activation_audit: None,
         },
     )

@@ -11,6 +11,7 @@
 mod act;
 mod capture;
 mod consent;
+mod downloads;
 mod fill;
 mod fingerprint;
 mod frames;
@@ -88,6 +89,8 @@ pub(crate) struct Page {
     ledger: SharedLedger,
     /// Read the text of frames of another origin (see `frames`).
     frame_text: bool,
+    /// The files the run's actions downloaded (see `downloads`).
+    downloads: downloads::Downloads,
 }
 
 impl Page {
@@ -182,6 +185,8 @@ impl Page {
         let action = self.after_input.take()?;
         let settled = self.settle_page(Some(&action)).await;
         self.follow_popup(action["opens"] == json!(true)).await;
+        let mark = self.connection.take_navigation_mark();
+        self.await_downloads(mark).await;
         Some(settled)
     }
 
@@ -191,7 +196,10 @@ impl Page {
     /// document that loaded before it was registered. Dialogs answered since the last read
     /// are added as `dialogs` and as lines before the page text, after the
     /// fingerprint is taken: a dismissed confirm is news for the model but
-    /// not a change to the page, so it cannot hide a stall.
+    /// not a change to the page, so it cannot hide a stall. Files the input
+    /// downloaded are added the same way, as `downloads`, but each distinct
+    /// one counts in the fingerprint: saving it was the action's effect
+    /// (see `downloads`).
     pub(crate) async fn observe(&mut self) -> anyhow::Result<Value> {
         self.settle().await;
         for attempt in 0..OBSERVE_ATTEMPTS {
@@ -211,6 +219,7 @@ impl Page {
                     let fingerprint = fingerprint_with_frames(&observation, &read);
                     frames::add_frames(&mut observation, read);
                     observation["fingerprint"] = json!(fingerprint);
+                    self.downloads.report(&mut observation);
                     add_dialogs(&mut observation, self.connection.take_dialogs());
                     self.add_opened_tab(&mut observation);
                     return Ok(observation);
@@ -274,13 +283,35 @@ impl JevBrowser for Page {
         Page::refuse_cookie_banner(self).await
     }
 
+    /// The HTTP status is the one the browser's Network events gave the
+    /// committed document (see `cdp::navigation`); the document's own
+    /// navigation entry, which its scripts can shadow, only stands in for
+    /// a document loaded before Jev followed the tab.
     async fn describe(&mut self) -> anyhow::Result<Option<JevPageFacts>> {
         let facts = self.evaluate(DESCRIBE_JS).await?;
-        Ok(serde_json::from_value(facts).ok())
+        let Ok(mut facts) = serde_json::from_value::<JevPageFacts>(facts) else {
+            return Ok(None);
+        };
+        let session = self.tab().session.clone();
+        if let Some(status) = self.connection.document_status(&session) {
+            facts.http_status = Some(status);
+        }
+        Ok(Some(facts))
+    }
+
+    /// A fresh GET of the address, never `Page.reload`: a document a form
+    /// posted would be posted again.
+    async fn reload(&mut self, url: &str) -> anyhow::Result<bool> {
+        self.goto(url).await.map(|()| true)
+    }
+
+    async fn wait_for_change(&mut self, within: Duration) -> anyhow::Result<()> {
+        Page::wait_for_change(self, within).await
     }
 }
 
-/// The main document's HTTP status and visible headings.
+/// The main document's HTTP status as its navigation entry reports it, and
+/// its visible headings.
 const DESCRIBE_JS: &str = include_str!("assets/describe.js");
 
 /// Page text cap, as `snapshot.js` applies it.

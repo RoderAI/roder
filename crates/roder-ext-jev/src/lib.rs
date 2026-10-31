@@ -57,7 +57,7 @@ pub use decisions::{
 };
 pub use engine::{
     Covered, JevActOutcome, JevActionRecord, JevBrowser, JevControl, JevDecision,
-    JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevEngine,
+    JevDecisionClient, JevDecisionRecord, JevDecisionTransport, JevDialog, JevDownload, JevEngine,
     JevEngineConfig, JevFrameText, JevOmitted, JevPageFacts, JevRunResult, JevStatus, JevStop,
     JevStopCause, JevSuppressedClick, JevSuppressedKind, JevTextValue, JevTextValueResolver,
     JevWall, JevWallKind, StaleObservation,

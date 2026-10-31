@@ -126,10 +126,10 @@ impl Agent {
             wall: None,
         };
         agent.observe().await?;
-        agent.look_again_while_empty().await?;
+        agent.look_at_opening().await?;
         if let Err(error) = agent.check_scope() {
             agent.stopped_before = Some(agent.fail(&error));
-        } else if let Some(reason) = agent.refused_access().await {
+        } else if let Some(reason) = agent.stop_refused() {
             agent.elapsed();
             agent.stopped_before = Some(reason);
         }
@@ -228,11 +228,37 @@ impl Agent {
         {
             entry["opened_tab"] = json!(true);
         }
+        self.record_downloads();
         if let Some(label) = refused {
             self.record_cookie_banner(&self.secrets.scrub(&label));
         }
         self.offer_research().await?;
         Ok(())
+    }
+
+    /// Record the files the last action downloaded on its step, as the
+    /// observation lists them, with page-supplied text scrubbed.
+    fn record_downloads(&mut self) {
+        let Some(downloads) = self.observation["downloads"]
+            .as_array()
+            .filter(|downloads| !downloads.is_empty())
+        else {
+            return;
+        };
+        let mut downloads = downloads.clone();
+        for download in &mut downloads {
+            for key in ["name", "url", "path"] {
+                if let Some(text) = download[key].as_str() {
+                    download[key] = json!(self.secrets.scrub(text));
+                }
+            }
+        }
+        if let Some(entry) = self.history.last_mut() {
+            match entry["downloads"].as_array_mut() {
+                Some(recorded) => recorded.extend(downloads),
+                None => entry["downloads"] = Value::Array(downloads),
+            }
+        }
     }
 
     /// The last action the model chose.
@@ -291,7 +317,8 @@ impl Agent {
 }
 
 /// Upstream's stall rule: three consecutive executed actions, none of them a
-/// wait, none of which changed the page.
+/// wait, none of which changed the page. A choice that set no value (see
+/// `effects`) counts as unchanged even when its page redrew.
 /// A refused cookie banner is not an action the model chose, so it neither
 /// counts nor breaks the run of three. Nor does a wait after which the page
 /// was the same: it is skipped, so no-ops with such waits between them are
@@ -309,7 +336,10 @@ fn stalled(history: &[Value]) -> Option<JevStopCause> {
         .collect::<Vec<_>>();
     let stalled = recent.len() == 3
         && recent.iter().all(|entry| {
-            entry["page_changed"] == json!(false) && entry["kind"].as_str() != Some("wait")
+            // A choice that set no value changed the page (a menu closed)
+            // but did not take.
+            (entry["page_changed"] == json!(false) || entry["set_something"] == json!(false))
+                && entry["kind"].as_str() != Some("wait")
         });
     let covered = recent.iter().all(|entry| entry["covered"] == json!(true));
     match (stalled, covered) {

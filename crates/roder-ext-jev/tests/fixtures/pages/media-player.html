@@ -1,0 +1,30 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Episode 12</title></head>
+<body>
+  <h1>Publish your podcast</h1>
+  <!-- Playback controls under a heading that names a commitment: play,
+       pause and mute are undone by the same control and must never be
+       stopped by the gate. "Publish episode" is the commitment. -->
+  <p>Episode 12: Soil and seasons. Preview it before it goes out.</p>
+  <div class="player">
+    <button type="button" onclick="window.playing = true; status()">Play</button>
+    <button type="button" onclick="window.playing = false; status()">Pause</button>
+    <button type="button" onclick="window.muted = !window.muted; status()">Mute</button>
+    <p id="status">Stopped</p>
+  </div>
+  <form method="post" action="/submit/publish">
+    <button type="submit">Publish episode</button>
+  </form>
+  <script>
+    window.playing = false;
+    window.muted = false;
+    window.plays = 0;
+    function status() {
+      if (window.playing) window.plays += 1;
+      document.getElementById('status').textContent =
+        (window.playing ? 'Playing' : 'Paused') + (window.muted ? ', muted' : '');
+    }
+  </script>
+</body>
+</html>
