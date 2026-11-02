@@ -22,18 +22,41 @@ impl Runtime {
         transcript: Vec<TranscriptItem>,
         options: CompactionOptions,
     ) -> anyhow::Result<Vec<TranscriptItem>> {
+        self.compact_transcript_with_threshold(
+            thread_id, turn_id, provider, model, transcript, options, None,
+        )
+        .await
+    }
+
+    pub(crate) async fn compact_transcript_with_threshold(
+        &self,
+        thread_id: &ThreadId,
+        turn_id: &TurnId,
+        provider: &str,
+        model: &str,
+        transcript: Vec<TranscriptItem>,
+        options: CompactionOptions,
+        threshold_override: Option<u32>,
+    ) -> anyhow::Result<Vec<TranscriptItem>> {
         let cfg = self.status().await;
         let engine = self.engine_for(provider)?;
         let requires_native_compaction = engine.requires_native_compaction();
         let images = ToolImages::for_engine(engine.as_ref(), model);
         let mut compaction_model = model_entry_for_compaction(provider, model).cloned();
+        if threshold_override.is_some()
+            && let Some(entry) = &mut compaction_model
+        {
+            // A custom Chat endpoint may share a catalog model ID while having
+            // a much smaller context window and no native compaction.
+            entry.supports_compaction = false;
+        }
         if requires_native_compaction && let Some(entry) = &mut compaction_model {
             // Explicit native compaction must fit within the context window.
             // Trigger at the normal watermark, before a context overflow.
             entry.supports_compaction = false;
         }
         let model_entry = compaction_model.as_ref();
-        let threshold = cfg.auto_compact_token_limit;
+        let threshold = threshold_override.or(cfg.auto_compact_token_limit);
         if let Some(reason) =
             compaction_skip_reason(&transcript, model_entry, threshold, &options, images)
         {

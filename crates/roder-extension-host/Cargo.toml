@@ -44,6 +44,7 @@ roder-ext-memory.workspace = true
 roder-ext-notify-desktop.workspace = true
 roder-ext-notify-terminal.workspace = true
 roder-ext-openai-embeddings.workspace = true
+roder-ext-openai-chat-completions.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-openai-images.workspace = true
 roder-ext-openai-speech.workspace = true

@@ -21,3 +21,26 @@ fn custom_provider_registry_config_retains_capability_ceilings() {
     assert_eq!(providers[0].id, "my-responses");
     assert_eq!(providers[0].capabilities, capabilities);
 }
+
+#[test]
+fn custom_provider_registry_config_retains_chat_protocol() {
+    let mut config = roder_config::Config::default();
+    config.providers.insert(
+        "my-chat".into(),
+        roder_config::ProviderConfig {
+            base_url: Some("http://localhost/v1".into()),
+            protocol: roder_config::CustomProviderProtocol::ChatCompletions,
+            context_window: Some(16_384),
+            tool_allowlist: vec!["read_file".into(), "grep".into()],
+            ..Default::default()
+        },
+    );
+    let providers = custom_inference_providers(&config);
+    assert_eq!(providers.len(), 1);
+    assert_eq!(
+        providers[0].protocol,
+        roder_config::CustomProviderProtocol::ChatCompletions
+    );
+    assert_eq!(providers[0].tool_allowlist, ["read_file", "grep"]);
+    assert_eq!(providers[0].context_window, Some(16_384));
+}

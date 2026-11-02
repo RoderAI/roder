@@ -165,6 +165,8 @@ pub struct RuntimeConfig {
     pub default_model: String,
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    /// Provider-scoped limits for custom Chat Completions engines.
+    pub custom_chat_providers: HashMap<String, CustomChatProviderBudget>,
     pub file_backed_dynamic_context: bool,
     pub hosted_web_search: HostedWebSearchConfig,
     pub tool_search: ToolSearchConfig,
@@ -203,6 +205,12 @@ pub struct RuntimeConfig {
     pub review: crate::review::RuntimeReviewConfig,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct CustomChatProviderBudget {
+    pub context_window: Option<u32>,
+    pub tool_allowlist: Vec<String>,
+}
+
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
@@ -210,6 +218,7 @@ impl Default for RuntimeConfig {
             default_model: "mock".to_string(),
             reasoning: None,
             auto_compact_token_limit: None,
+            custom_chat_providers: HashMap::new(),
             file_backed_dynamic_context: true,
             hosted_web_search: HostedWebSearchConfig::cached(),
             tool_search: ToolSearchConfig::default(),
@@ -4000,7 +4009,7 @@ impl Runtime {
                 .provider_retry_max_attempts
                 .saturating_sub(provider_stream_retry_attempts)
                 .max(1);
-            let request = AgentInferenceRequest {
+            let mut request = AgentInferenceRequest {
                 model: ModelSelection {
                     provider: provider.clone(),
                     model: model.clone(),
@@ -4031,6 +4040,74 @@ impl Runtime {
                 },
                 metadata: request_metadata,
             };
+            if let Some(window) = cfg
+                .custom_chat_providers
+                .get(&provider)
+                .and_then(|custom| custom.context_window)
+            {
+                let max_output = request.output.max_tokens.unwrap_or(2_048);
+                let prompt_limit = custom_chat_prompt_limit_for_output(window, max_output);
+                request.output.max_tokens = Some(max_output);
+                let overhead = custom_chat_request_overhead(&request);
+                let transcript_limit = prompt_limit.saturating_sub(overhead);
+                let latest_input = request
+                    .transcript
+                    .iter()
+                    .rfind(|item| matches!(item, TranscriptItem::UserMessage(_)))
+                    .map(|item| {
+                        crate::compaction::estimate_prompt_tokens(
+                            std::slice::from_ref(item),
+                            tool_images,
+                        )
+                    })
+                    .unwrap_or_default();
+                if overhead.saturating_add(latest_input) >= prompt_limit {
+                    self.fail_turn_with_error(
+                        &req.thread_id,
+                        &turn_id,
+                        format!(
+                            "custom Chat model {model} context window ({window} tokens) is too small for the current instructions, tools and latest user input; reduce the input or configured tools (no history was dropped)"
+                        ),
+                    )
+                    .await?;
+                    return Ok(TurnRunOutcome::Stopped);
+                }
+                if crate::compaction::estimate_prompt_tokens(&transcript, tool_images)
+                    > transcript_limit
+                {
+                    let generation_before = self.compaction_generation(&req.thread_id);
+                    transcript = self
+                        .compact_transcript_with_threshold(
+                            &req.thread_id,
+                            &turn_id,
+                            &provider,
+                            &model,
+                            transcript,
+                            self.compaction_options_for_turn(&req.thread_id, !compacted_this_turn),
+                            Some(transcript_limit.max(1)),
+                        )
+                        .await?;
+                    compacted_this_turn |=
+                        self.compaction_generation(&req.thread_id) != generation_before;
+                    request.transcript =
+                        crate::tool_result_images::request_transcript(&transcript, tool_images);
+                }
+                if overhead.saturating_add(crate::compaction::estimate_prompt_tokens(
+                    &transcript,
+                    tool_images,
+                )) > prompt_limit
+                {
+                    self.fail_turn_with_error(
+                        &req.thread_id,
+                        &turn_id,
+                        format!(
+                            "custom Chat model {model} context window ({window} tokens) remains too small after local compaction; reduce the input or configured tools"
+                        ),
+                    )
+                    .await?;
+                    return Ok(TurnRunOutcome::Stopped);
+                }
+            }
 
             let mut compaction_template = request.clone();
             compaction_template.instructions = compaction_instructions;
@@ -5756,6 +5833,41 @@ fn reasoning_for_model(cfg: &RuntimeConfig, model: &str) -> ReasoningConfig {
     }
 }
 
+/// Leave output headroom and a margin for tokenizers that differ from our
+/// conservative character-based estimate.
+pub(crate) fn custom_chat_prompt_limit(context_window: u32) -> u32 {
+    custom_chat_prompt_limit_for_output(context_window, 2_048)
+}
+
+fn custom_chat_prompt_limit_for_output(context_window: u32, max_output: u32) -> u32 {
+    context_window.saturating_sub(
+        (context_window / 4)
+            .max(max_output.saturating_add(512))
+            .max(2_048),
+    )
+}
+
+fn custom_chat_request_overhead(request: &AgentInferenceRequest) -> u32 {
+    let instruction_bytes = [
+        request.instructions.system.as_deref(),
+        request.instructions.developer.as_deref(),
+        request.instructions.developer_context.as_deref(),
+    ]
+    .into_iter()
+    .flatten()
+    .map(str::len)
+    .sum::<usize>();
+    let tool_bytes = request
+        .tools
+        .iter()
+        .map(|tool| serde_json::to_string(tool).map_or(0, |json| json.len()))
+        .sum::<usize>();
+    // Chat message wrappers, tool choice and other transport fields.
+    u32::try_from(instruction_bytes.saturating_add(tool_bytes).div_ceil(4))
+        .unwrap_or(u32::MAX)
+        .saturating_add(256)
+}
+
 fn server_side_compaction_threshold(cfg: &RuntimeConfig, model: &str) -> Option<u32> {
     let entry = lookup_model(model)?;
     if !entry.supports_compaction {
@@ -6234,6 +6346,244 @@ mod tests {
             server_side_compaction_threshold(&cfg, "gpt-5.5"),
             Some(123_456)
         );
+    }
+
+    #[test]
+    fn custom_chat_budget_reserves_output_and_tool_schema() {
+        assert_eq!(custom_chat_prompt_limit(16_384), 12_288);
+        assert_eq!(custom_chat_prompt_limit_for_output(16_384, 6_000), 9_872);
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "custom-chat".into(),
+                model: "unknown-model".into(),
+            },
+            instructions: InstructionBundle {
+                system: Some("system".repeat(100)),
+                ..Default::default()
+            },
+            transcript: Vec::new(),
+            tools: vec![ToolSpec {
+                name: "read_file".into(),
+                description: "description".repeat(100),
+                parameters: serde_json::json!({"type":"object"}),
+            }],
+            tool_choice: ToolChoice::Auto,
+            reasoning: Default::default(),
+            output: Default::default(),
+            runtime: Default::default(),
+            metadata: serde_json::json!({}),
+        };
+        assert!(custom_chat_request_overhead(&request) > 500);
+    }
+
+    #[tokio::test]
+    async fn oversized_custom_chat_summary_falls_back_without_losing_first_goal() {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let runtime = Runtime::new(
+            builder.build().unwrap(),
+            RuntimeConfig {
+                custom_chat_providers: HashMap::from([(
+                    PROVIDER_MOCK.into(),
+                    CustomChatProviderBudget {
+                        context_window: Some(16_384),
+                        tool_allowlist: Vec::new(),
+                    },
+                )]),
+                ..RuntimeConfig::default()
+            },
+        )
+        .unwrap();
+        let mut head = vec![TranscriptItem::UserMessage(UserMessage::text(
+            "Keep original task goal",
+        ))];
+        head.extend(
+            (0..30)
+                .map(|_| TranscriptItem::UserMessage(UserMessage::text("old output ".repeat(200)))),
+        );
+        let (summary, strategy) = runtime
+            .build_compaction_summary(
+                crate::compaction_summary::CompactionSummaryContext {
+                    thread_id: &"test-thread".into(),
+                    turn_id: &"test-turn".into(),
+                    provider: PROVIDER_MOCK,
+                    model: "unknown-custom-model",
+                },
+                &head,
+                &head,
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(strategy, "deterministic");
+        assert!(summary.contains("Keep original task goal"));
+        assert!(captured.lock().unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn unknown_custom_chat_model_compacts_before_request() {
+        assert_custom_chat_model_compacts_before_request("unknown-custom-model").await;
+    }
+
+    #[tokio::test]
+    async fn custom_chat_catalog_model_collision_uses_configured_window() {
+        assert_custom_chat_model_compacts_before_request("gpt-5.5").await;
+    }
+
+    async fn assert_custom_chat_model_compacts_before_request(model: &str) {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let thread_root = std::env::temp_dir().join(format!(
+            "roder-custom-chat-compaction-{}",
+            uuid::Uuid::new_v4()
+        ));
+        builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
+            base_path: thread_root.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: PROVIDER_MOCK.into(),
+                    default_model: model.into(),
+                    custom_chat_providers: HashMap::from([(
+                        PROVIDER_MOCK.into(),
+                        CustomChatProviderBudget {
+                            context_window: Some(16_384),
+                            tool_allowlist: Vec::new(),
+                        },
+                    )]),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime.create_thread(None).await.unwrap().thread_id;
+        runtime
+            .persist_turn_item(
+                &thread_id,
+                &"old-turn".into(),
+                &TranscriptItem::UserMessage(UserMessage::text("old work ".repeat(7_000))),
+            )
+            .await
+            .unwrap();
+        let mut events = runtime.subscribe_events();
+        runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "continue".into(),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                developer_context: None,
+                task_ledger_required: false,
+                service_tier_override: None,
+            })
+            .await
+            .unwrap();
+        loop {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if envelope.thread_id.as_deref() == Some(&thread_id)
+                && matches!(envelope.event, RoderEvent::TurnCompleted(_))
+            {
+                break;
+            }
+            if let RoderEvent::TurnFailed(event) = envelope.event {
+                panic!("custom chat turn failed: {}", event.error);
+            }
+        }
+        let request = captured.lock().unwrap().clone().unwrap();
+        assert_eq!(request.output.max_tokens, Some(2_048));
+        assert!(matches!(
+            request.transcript.first(),
+            Some(TranscriptItem::ContextCompaction(_))
+        ));
+        assert!(request.transcript.iter().any(
+            |item| matches!(item, TranscriptItem::UserMessage(message) if message.text == "continue")
+        ));
+        let _ = std::fs::remove_dir_all(thread_root);
+    }
+
+    #[tokio::test]
+    async fn oversized_initial_custom_chat_input_fails_without_sampling() {
+        assert_custom_chat_input_fails_without_sampling(16_384).await;
+    }
+
+    #[tokio::test]
+    async fn zero_custom_chat_context_window_fails_without_sampling() {
+        assert_custom_chat_input_fails_without_sampling(0).await;
+    }
+
+    async fn assert_custom_chat_input_fails_without_sampling(context_window: u32) {
+        let captured = Arc::new(StdMutex::new(None));
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(CapturingEngine {
+            request: captured.clone(),
+        }));
+        let runtime = Arc::new(
+            Runtime::new(
+                builder.build().unwrap(),
+                RuntimeConfig {
+                    default_provider: PROVIDER_MOCK.into(),
+                    default_model: "unknown-custom-model".into(),
+                    custom_chat_providers: HashMap::from([(
+                        PROVIDER_MOCK.into(),
+                        CustomChatProviderBudget {
+                            context_window: Some(context_window),
+                            tool_allowlist: Vec::new(),
+                        },
+                    )]),
+                    ..RuntimeConfig::default()
+                },
+            )
+            .unwrap(),
+        );
+        let thread_id = runtime.create_thread(None).await.unwrap().thread_id;
+        let mut events = runtime.subscribe_events();
+        runtime
+            .start_turn(StartTurnRequest {
+                thread_id: thread_id.clone(),
+                message: "input ".repeat(12_000),
+                images: Vec::new(),
+                provider_override: None,
+                model_override: None,
+                reasoning_override: None,
+                workspace: test_workspace(),
+                instructions: InstructionBundle::default(),
+                developer_context: None,
+                task_ledger_required: false,
+                service_tier_override: None,
+            })
+            .await
+            .unwrap();
+        let mut error = None;
+        for _ in 0..30 {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if envelope.thread_id.as_deref() == Some(&thread_id)
+                && let RoderEvent::TurnFailed(failure) = envelope.event
+            {
+                error = Some(failure.error);
+                break;
+            }
+        }
+        assert!(error.unwrap().contains("no history was dropped"));
+        assert!(captured.lock().unwrap().is_none());
     }
 
     #[tokio::test]

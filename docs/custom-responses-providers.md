@@ -1,6 +1,33 @@
-# Custom Responses provider capabilities
+# Custom inference providers
 
-Custom providers use the OpenAI-compatible Responses API. Capabilities belong to
+Custom providers default to the OpenAI-compatible Responses API. For a
+Chat Completions endpoint, set the protocol explicitly:
+
+```toml
+[providers.my_chat_endpoint]
+base_url = "https://chat.example/v1"
+api_key_env = "MY_CHAT_ENDPOINT_API_KEY"
+protocol = "chat_completions"
+models = ["my-chat-model"]
+context_window = 16384
+tool_allowlist = ["read_file", "grep", "glob", "apply_patch", "shell"]
+```
+
+For custom Chat Completions providers, `models` is optional; when absent, Roder
+discovers models from `/models`. Set `context_window` to the deployed backend's
+actual token limit, which may be smaller than the model's advertised maximum.
+Roder uses this limit for model metadata and prompt budgeting.
+
+`tool_allowlist` is optional and limits the tool schemas sent to this provider.
+It is useful for models with a small context window. It is not an execution
+permission boundary; normal tool approval and access policies still apply.
+These settings apply only to the configured provider; they do not change the
+main model or other providers. Chat Completions uses Roder's native Rust
+streaming and tool-call transport.
+
+## Responses capabilities
+
+Responses custom providers use the OpenAI-compatible Responses API. Capabilities belong to
 the endpoint and constrain, rather than expand, per-turn settings:
 
 ```toml

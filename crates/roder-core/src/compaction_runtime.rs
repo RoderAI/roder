@@ -162,20 +162,40 @@ impl Runtime {
         // to deterministic summarization.
         let mut summary_head = head.to_vec();
         let draft = loop {
+            let prompt = build_compaction_summary_prompt(&summary_head, preserve_hint);
+            if let Some(window) = self
+                .status()
+                .await
+                .custom_chat_providers
+                .get(provider)
+                .and_then(|custom| custom.context_window)
+                && u32::try_from(prompt.len().div_ceil(4))
+                    .unwrap_or(u32::MAX)
+                    .saturating_add(256)
+                    >= crate::runtime::custom_chat_prompt_limit(window)
+            {
+                // Never summarize only a suffix of history solely because the
+                // model window is small; deterministic fallback sees all items.
+                return Ok(None);
+            }
             match self
-                .run_compaction_summary_inference(
-                    thread_id,
-                    turn_id,
-                    provider,
-                    model,
-                    build_compaction_summary_prompt(&summary_head, preserve_hint),
-                )
+                .run_compaction_summary_inference(thread_id, turn_id, provider, model, prompt)
                 .await
             {
                 Ok(draft) => break draft,
                 Err(err)
                     if crate::compaction::is_context_limit_failure_message(&err.to_string()) =>
                 {
+                    if self
+                        .status()
+                        .await
+                        .custom_chat_providers
+                        .contains_key(provider)
+                    {
+                        // Retrying a suffix-only summary would discard the old
+                        // task. Deterministic fallback summarizes the full head.
+                        return Ok(None);
+                    }
                     if summary_head.len() <= 1 {
                         return Ok(None);
                     }

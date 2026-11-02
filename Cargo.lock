@@ -5156,6 +5156,7 @@ dependencies = [
  "roder-ext-mysql-session",
  "roder-ext-notify-desktop",
  "roder-ext-notify-terminal",
+ "roder-ext-openai-chat-completions",
  "roder-ext-openai-embeddings",
  "roder-ext-openai-images",
  "roder-ext-openai-responses",
