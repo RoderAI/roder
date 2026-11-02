@@ -1303,6 +1303,21 @@ pub(crate) async fn build_runtime_with_config(
         stats::extensions_with_usage_analytics(distribution_extensions(), cfg.analytics.clone());
     let inference_providers =
         distribution_inference_providers().unwrap_or_else(|| stock_inference_providers(&keys));
+    let custom_chat_providers = custom_inference_provider_configs
+        .iter()
+        .filter(|provider| {
+            provider.protocol == roder_config::CustomProviderProtocol::ChatCompletions
+        })
+        .map(|provider| {
+            (
+                provider.id.clone(),
+                roder_core::runtime::CustomChatProviderBudget {
+                    context_window: provider.context_window,
+                    tool_allowlist: provider.tool_allowlist.clone(),
+                },
+            )
+        })
+        .collect();
     let registry = build_default_registry(DefaultRegistryConfig {
         inference_providers,
         openai_api_key: keys.openai,
@@ -1389,6 +1404,7 @@ pub(crate) async fn build_runtime_with_config(
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
             auto_compact_token_limit: cfg.auto_compact_token_limit,
+            custom_chat_providers,
             file_backed_dynamic_context: cfg
                 .context
                 .as_ref()
@@ -3077,6 +3093,10 @@ fn custom_inference_providers(cfg: &roder_config::Config) -> Vec<CustomInference
                 name: Some(id),
                 api_key,
                 base_url,
+                protocol: provider.protocol,
+                models: provider.models.clone(),
+                context_window: provider.context_window,
+                tool_allowlist: provider.tool_allowlist.clone(),
                 capabilities: provider.capabilities,
             })
         })
@@ -3962,6 +3982,10 @@ mod tests {
                 name: None,
                 api_key: None,
                 base_url: "http://localhost:11434/v1".to_string(),
+                protocol: Default::default(),
+                models: Vec::new(),
+                context_window: None,
+                tool_allowlist: Vec::new(),
                 capabilities: Default::default(),
             }],
         );
@@ -4033,6 +4057,10 @@ mod tests {
         assert_eq!(providers[0].id, "local-openai");
         assert_eq!(providers[0].api_key.as_deref(), Some("secret"));
         assert_eq!(providers[0].base_url, "http://127.0.0.1:11434/v1");
+        assert_eq!(
+            providers[0].protocol,
+            roder_config::CustomProviderProtocol::Responses
+        );
     }
 
     #[test]

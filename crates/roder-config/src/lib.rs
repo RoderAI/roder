@@ -264,6 +264,17 @@ pub struct ProviderConfig {
     pub api_key: Option<String>,
     pub api_key_env: Option<String>,
     pub base_url: Option<String>,
+    /// Wire protocol for custom inference providers; built-ins use their own transport.
+    #[serde(default)]
+    pub protocol: CustomProviderProtocol,
+    /// Optional explicit model IDs for custom providers whose /models is unavailable.
+    #[serde(default)]
+    pub models: Vec<String>,
+    /// Context window shared by the configured custom provider's models.
+    pub context_window: Option<u32>,
+    /// Tool names exposed to a custom Chat Completions model; empty permits all tools.
+    #[serde(default)]
+    pub tool_allowlist: Vec<String>,
     /// Capability overrides for a custom Responses endpoint.
     #[serde(default)]
     pub capabilities: roder_api::provider_capabilities::ResponsesProviderCapabilities,
@@ -287,6 +298,37 @@ pub struct ProviderConfig {
     /// OpenAI or OpenRouter `service_tier` (for example `default`, `flex`,
     /// `priority`, `ultrafast`); a per-request tier takes precedence.
     pub service_tier: Option<String>,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CustomProviderProtocol {
+    #[default]
+    Responses,
+    ChatCompletions,
+}
+
+#[cfg(test)]
+mod custom_provider_protocol_tests {
+    use super::{CustomProviderProtocol, ProviderConfig};
+
+    #[test]
+    fn custom_provider_defaults_to_responses_and_accepts_chat_completions() {
+        let default: ProviderConfig = toml::from_str("base_url = 'http://localhost/v1'").unwrap();
+        assert_eq!(default.protocol, CustomProviderProtocol::Responses);
+        let chat: ProviderConfig =
+            toml::from_str("base_url = 'http://localhost/v1'\nprotocol = 'chat_completions'")
+                .unwrap();
+        assert_eq!(chat.protocol, CustomProviderProtocol::ChatCompletions);
+        assert!(chat.tool_allowlist.is_empty());
+        let restricted: ProviderConfig = toml::from_str(
+            "protocol = 'chat_completions'\ncontext_window = 16384\ntool_allowlist = ['read_file', 'grep']",
+        )
+        .unwrap();
+        assert_eq!(restricted.tool_allowlist, ["read_file", "grep"]);
+        assert_eq!(restricted.context_window, Some(16_384));
+        assert!(toml::from_str::<ProviderConfig>("protocol = 'chat'").is_err());
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]

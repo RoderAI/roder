@@ -489,6 +489,7 @@ pub(crate) fn is_context_limit_failure_message(message: &str) -> bool {
         || (message.contains("prompt length") && message.contains("token"))
         || (message.contains("request contains") && message.contains("token") && message.contains("maximum"))
         || message.contains("context_length_exceeded")
+        || message.contains("exceed_context_size_error")
         || message.contains("context length exceeded")
         || message.contains("maximum context length")
         || message.contains("max context length")
@@ -610,6 +611,13 @@ mod tests {
     fn xai_maximum_prompt_length_errors_are_context_limit_failures() {
         assert!(is_context_limit_failure_message(
             r#"xAI Responses error: OpenAI Responses error 400 Bad Request: {"code":"invalid-argument","error":"This model's maximum prompt length is 500000 but the request contains 501133 tokens."}"#
+        ));
+    }
+
+    #[test]
+    fn custom_chat_context_error_code_is_a_context_failure() {
+        assert!(is_context_limit_failure_message(
+            r#"{"error":{"code":"exceed_context_size_error"}}"#
         ));
     }
 

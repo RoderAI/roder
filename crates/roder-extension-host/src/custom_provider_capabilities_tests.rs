@@ -10,6 +10,10 @@ async fn registry_propagates_custom_native_compaction_opt_in() {
             name: None,
             api_key: None,
             base_url: "https://custom.example/v1".into(),
+            protocol: Default::default(),
+            models: Vec::new(),
+            context_window: None,
+            tool_allowlist: Vec::new(),
             capabilities: ResponsesProviderCapabilities {
                 remote_compaction: Some(RemoteCompaction::V2),
                 external_web_access: Some(false),

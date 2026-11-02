@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use futures::StreamExt;
 use roder_api::inference::{AgentInferenceRequest, InferenceEventStream};
+use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
 use roder_api::tools::ToolChoice;
 use roder_api::transcript::TranscriptItem;
 use serde_json::{Value, json};
@@ -210,9 +211,29 @@ pub fn provider_status_error_with_body(
     } else {
         scrubbed
     };
-    anyhow::anyhow!(
+    let message = format!(
         "{provider_name} {operation} error {status}: {hint}\n\n--- response body ---\n{body_part}"
-    )
+    );
+    let lower_body = body.to_ascii_lowercase();
+    let failure_kind = if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+        Some(ProviderFailureKind::RequestTooLarge)
+    } else if status == reqwest::StatusCode::BAD_REQUEST
+        && (lower_body.contains("exceed_context_size_error")
+            || lower_body.contains("context_length_exceeded")
+            || lower_body.contains("maximum context length"))
+    {
+        Some(ProviderFailureKind::ContextWindowExceeded)
+    } else {
+        None
+    };
+    match failure_kind {
+        Some(kind) => {
+            let mut failure = ProviderFailure::new(kind, message);
+            failure.status = Some(status.as_u16());
+            anyhow::Error::new(failure)
+        }
+        None => anyhow::anyhow!(message),
+    }
 }
 
 /// Extract the secret value from a [`ChatAuth`] for scrubbing.
@@ -228,21 +249,24 @@ fn config_auth_secret(auth: &ChatAuth) -> Option<&str> {
 fn scrub_secret(body: &str, secret: Option<&str>) -> String {
     let trimmed = body.trim();
     let max = 4096;
-    let mut result = if trimmed.len() <= max {
-        trimmed.to_string()
+    let redacted = if let Some(secret) = secret.filter(|secret| !secret.is_empty()) {
+        trimmed.replace(secret, "<redacted>")
     } else {
+        trimmed.to_string()
+    };
+    if redacted.len() > max {
+        let mut boundary = max;
+        while !redacted.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
         format!(
             "{}…(truncated, {total} bytes total)",
-            &trimmed[..max],
+            &redacted[..boundary],
             total = trimmed.len()
         )
-    };
-    if let Some(secret) = secret
-        && !secret.is_empty()
-    {
-        result = result.replace(secret, "<redacted>");
+    } else {
+        redacted
     }
-    result
 }
 
 fn provider_status_hint(status: reqwest::StatusCode) -> &'static str {
@@ -340,6 +364,9 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
     }
     if let Some(developer) = &request.instructions.developer {
         messages.push(json!({ "role": "system", "content": developer }));
+    }
+    if let Some(context) = &request.instructions.developer_context {
+        messages.push(json!({ "role": "system", "content": context }));
     }
 
     // Pre-scan all tool results so a coalesced assistant message can pair each
@@ -519,6 +546,36 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::*;
+
+    #[test]
+    fn chat_messages_include_turn_developer_context_after_static_instructions() {
+        let request = AgentInferenceRequest {
+            model: ModelSelection {
+                provider: "custom-chat".into(),
+                model: "model".into(),
+            },
+            instructions: InstructionBundle {
+                system: Some("system".into()),
+                developer: Some("developer".into()),
+                developer_context: Some("turn context".into()),
+            },
+            transcript: vec![TranscriptItem::UserMessage(UserMessage::text("hello"))],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            reasoning: Default::default(),
+            output: Default::default(),
+            runtime: Default::default(),
+            metadata: json!({}),
+        };
+        let messages = chat_messages(&request, &ChatToolNameMap::default());
+        assert_eq!(messages[0], json!({"role":"system","content":"system"}));
+        assert_eq!(messages[1], json!({"role":"system","content":"developer"}));
+        assert_eq!(
+            messages[2],
+            json!({"role":"system","content":"turn context"})
+        );
+        assert_eq!(messages[3], json!({"role":"user","content":"hello"}));
+    }
 
     #[test]
     fn parallel_tool_calls_coalesce_into_one_assistant_message() {
@@ -992,6 +1049,51 @@ mod tests {
         assert!(
             error.contains("bad api-key") || error.contains("<redacted>"),
             "body should be included: {error}"
+        );
+    }
+
+    #[test]
+    fn context_overflow_is_typed_and_credentials_are_scrubbed_safely() {
+        let key = "secret-that-crosses-the-boundary";
+        let body = format!(
+            "{}{}{}",
+            "x".repeat(4_080),
+            key,
+            r#"{"error":{"code":"exceed_context_size_error","message":"too long"}}"#
+        );
+        let error = provider_status_error_with_body(
+            "Custom Chat",
+            "Chat Completions",
+            reqwest::StatusCode::BAD_REQUEST,
+            &body,
+            Some(key),
+        );
+        assert_eq!(
+            error
+                .downcast_ref::<ProviderFailure>()
+                .map(|failure| failure.kind),
+            Some(ProviderFailureKind::ContextWindowExceeded)
+        );
+        assert!(!error.to_string().contains(key));
+        assert!(!error.to_string().contains(&key[..12]));
+    }
+
+    #[test]
+    fn error_body_truncation_preserves_utf8_boundary_and_types_413() {
+        let body = format!("{}é", "x".repeat(4_095));
+        let error = provider_status_error_with_body(
+            "Custom Chat",
+            "Chat Completions",
+            reqwest::StatusCode::PAYLOAD_TOO_LARGE,
+            &body,
+            None,
+        );
+        assert!(error.to_string().contains("truncated"));
+        assert_eq!(
+            error
+                .downcast_ref::<ProviderFailure>()
+                .map(|failure| failure.kind),
+            Some(ProviderFailureKind::RequestTooLarge)
         );
     }
 

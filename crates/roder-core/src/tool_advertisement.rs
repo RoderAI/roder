@@ -36,6 +36,16 @@ impl Runtime {
                 .filter(|tool| tool.name != roder_api::computer::COMPUTER_TOOL_NAME)
                 .cloned(),
         );
+        if let Some(custom_chat) = cfg.custom_chat_providers.get(provider)
+            && !custom_chat.tool_allowlist.is_empty()
+        {
+            specs.retain(|spec| {
+                custom_chat
+                    .tool_allowlist
+                    .iter()
+                    .any(|name| name == &spec.name)
+            });
+        }
         specs
     }
 }

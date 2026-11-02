@@ -334,6 +334,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                custom_chat_providers: std::collections::HashMap::new(),
                 file_backed_dynamic_context: true,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 tool_search: Default::default(),
@@ -455,6 +456,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                custom_chat_providers: std::collections::HashMap::new(),
                 file_backed_dynamic_context: true,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 tool_search: Default::default(),
@@ -566,6 +568,7 @@ mod tests {
                 // this local threshold because the provider has no server-side
                 // compaction of its own.
                 auto_compact_token_limit: Some(1),
+                custom_chat_providers: std::collections::HashMap::new(),
                 file_backed_dynamic_context: true,
                 ..RuntimeConfig::default()
             },
@@ -825,6 +828,7 @@ mod tests {
                 default_model: "mock".to_string(),
                 reasoning: None,
                 auto_compact_token_limit: Some(1),
+                custom_chat_providers: std::collections::HashMap::new(),
                 file_backed_dynamic_context: false,
                 hosted_web_search: roder_api::inference::HostedWebSearchConfig::disabled(),
                 tool_search: Default::default(),

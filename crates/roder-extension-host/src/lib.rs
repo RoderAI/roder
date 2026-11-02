@@ -85,6 +85,7 @@ use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
 use semver::Version;
 
 mod context;
+mod custom_chat_provider;
 pub mod discovery_catalog;
 pub mod marketplace;
 mod review;
@@ -551,13 +552,29 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         if known_provider_id(&provider.id) {
             continue;
         }
-        builder.inference_engine(Arc::new(OpenAiResponsesEngine::new_custom_provider(
-            provider.api_key,
-            provider.id.clone(),
-            provider.name.unwrap_or(provider.id),
-            provider.base_url,
-            provider.capabilities,
-        )));
+        let name = provider.name.unwrap_or_else(|| provider.id.clone());
+        match provider.protocol {
+            roder_config::CustomProviderProtocol::Responses => {
+                builder.inference_engine(Arc::new(OpenAiResponsesEngine::new_custom_provider(
+                    provider.api_key,
+                    provider.id,
+                    name,
+                    provider.base_url,
+                    provider.capabilities,
+                )));
+            }
+            roder_config::CustomProviderProtocol::ChatCompletions => {
+                builder.inference_engine(Arc::new(custom_chat_provider::CustomChatProvider {
+                    id: provider.id,
+                    name,
+                    api_key: provider.api_key,
+                    base_url: provider.base_url,
+                    models: provider.models,
+                    context_window: provider.context_window,
+                    tool_allowlist: provider.tool_allowlist,
+                }));
+            }
+        }
     }
     builder.install(LocalInferenceRouterExtension::new(
         local_inference_router_config(config.inference_router)?,
@@ -775,6 +792,10 @@ pub struct CustomInferenceProviderConfig {
     pub name: Option<String>,
     pub api_key: Option<String>,
     pub base_url: String,
+    pub protocol: roder_config::CustomProviderProtocol,
+    pub models: Vec<String>,
+    pub context_window: Option<u32>,
+    pub tool_allowlist: Vec<String>,
     pub capabilities: roder_api::provider_capabilities::ResponsesProviderCapabilities,
 }
 
@@ -1937,6 +1958,10 @@ mod tests {
                 name: Some("Local OpenAI".to_string()),
                 api_key: None,
                 base_url: "http://127.0.0.1:8080".to_string(),
+                protocol: Default::default(),
+                models: Vec::new(),
+                context_window: None,
+                tool_allowlist: Vec::new(),
                 capabilities: Default::default(),
             }],
             ..DefaultRegistryConfig::default()
@@ -1949,6 +1974,39 @@ mod tests {
         let metadata = provider.metadata();
         assert_eq!(metadata.name, "Local OpenAI");
         assert_eq!(metadata.auth_configured, Some(false));
+    }
+
+    #[tokio::test]
+    async fn default_registry_installs_custom_chat_completions_provider() {
+        let registry = build_default_registry(DefaultRegistryConfig {
+            custom_inference_providers: vec![CustomInferenceProviderConfig {
+                id: "local-chat".into(),
+                name: Some("Local Chat".into()),
+                api_key: Some("test-key".into()),
+                base_url: "http://127.0.0.1:8080/v1".into(),
+                protocol: roder_config::CustomProviderProtocol::ChatCompletions,
+                models: vec!["my/model".into()],
+                context_window: Some(16_384),
+                tool_allowlist: vec!["read_file".into()],
+                capabilities: Default::default(),
+            }],
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let engine = registry.inference_engine("local-chat").unwrap();
+        assert_eq!(engine.metadata().name, "Local Chat");
+        assert_eq!(engine.metadata().auth_configured, Some(true));
+        assert!(engine.capabilities().tool_calls);
+        assert!(!engine.capabilities().image_input);
+        let models = engine
+            .list_models(InferenceProviderContext {
+                provider_id: "local-chat",
+            })
+            .await
+            .unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "my/model");
+        assert_eq!(models[0].context_window, Some(16_384));
     }
 
     #[test]
