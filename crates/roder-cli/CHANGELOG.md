@@ -1,3 +1,15 @@
+## 0.4.7 (2026-11-02)
+
+### Features
+
+#### Support native Chat Completions for custom inference providers
+
+Custom endpoints can use Roder's native Rust Chat Completions transport with
+`protocol = "chat_completions"`, including streaming answers and tool-call
+round trips. Optional model IDs, deployed context-window limits, and tool-schema
+allowlists make small-context endpoints easier to configure. Existing custom
+Responses providers retain their defaults.
+
 ## 0.4.6 (2026-10-31)
 
 ### Fixes
