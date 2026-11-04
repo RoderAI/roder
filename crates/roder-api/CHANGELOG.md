@@ -1,3 +1,15 @@
+## 0.3.3 (2026-11-04)
+
+### Features
+
+#### Add Hopper inference provider
+
+Adds a first-class `hopper` provider for [Hopper](https://withhopper.com) using
+its OpenAI-compatible Chat Completions API at `https://api.withhopper.com/v1`,
+with `HOPPER_API_KEY` auth and built-in models `deepseek-v4.1-flash-1017`
+(default) and `deepseek-v4.1-flash-1017-abliterated`: 1M-token context, tool calls and
+DeepSeek thinking-mode efforts from `none` to `max`.
+
 ## 0.3.2 (2026-10-30)
 
 ### Fixes

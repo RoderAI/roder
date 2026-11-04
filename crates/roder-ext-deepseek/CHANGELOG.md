@@ -1,4 +1,19 @@
 # Changelog
+## 0.3.1 (2026-11-04)
+
+### Fixes
+
+#### Forward images through Chat Completions
+
+Preserve user image URLs and inline base64 images in both Chat Completions
+transports, and replay validated tool-result images after the complete batch
+of tool responses in the shared streaming transport. Enable image input for
+Hopper's built-in models.
+
+`ChatMessage.content` is now a JSON value rather than a Rust string so it can
+represent either text or multimodal content parts. Text-only wire messages
+remain unchanged. Release compatible reverse dependencies together.
+
 ## 0.3.0 (2026-10-27)
 
 ### Breaking Changes
