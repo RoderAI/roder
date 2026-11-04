@@ -105,7 +105,7 @@ impl InferenceEngine for HopperInferenceEngine {
 
     fn tool_result_image_input(&self, model: &str) -> bool {
         roder_api::catalog::lookup_model_for_provider(PROVIDER_HOPPER, model)
-            .is_some_and(|model| model.supports_images)
+            .is_some_and(|model| model.provider == PROVIDER_HOPPER && model.supports_images)
     }
 
     async fn stream_turn(
@@ -167,6 +167,24 @@ fn nonempty(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
     use crate::test_support::TestEnv;
+
+    #[test]
+    fn tool_result_images_require_a_hopper_catalog_entry() {
+        let _env = TestEnv::new();
+        let engine = HopperInferenceEngine::new(HopperConfig::default());
+        let foreign = roder_api::catalog::built_in_models(false)
+            .into_iter()
+            .find(|model| model.provider != PROVIDER_HOPPER && model.supports_images)
+            .expect("catalog includes a foreign vision model");
+        let fallback =
+            roder_api::catalog::lookup_model_for_provider(PROVIDER_HOPPER, foreign.id).unwrap();
+        assert_ne!(fallback.provider, PROVIDER_HOPPER);
+        assert!(fallback.supports_images);
+        assert!(!engine.tool_result_image_input(foreign.id));
+        assert!(!engine.tool_result_image_input("unknown-model"));
+        assert!(engine.tool_result_image_input("deepseek-v4.1-flash-1017"));
+        assert!(engine.tool_result_image_input("deepseek-v4.1-flash-1017-abliterated"));
+    }
 
     #[test]
     fn metadata_reports_api_key_auth_state() {
