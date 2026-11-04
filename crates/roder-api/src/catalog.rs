@@ -7,6 +7,7 @@ use crate::inference::{
 
 mod anthropic;
 mod deepseek;
+mod hopper;
 pub mod image_models;
 mod openai_codex;
 mod openrouter;
@@ -14,6 +15,7 @@ mod synthetic;
 mod xiaomi_mimo;
 
 pub use deepseek::{DEEPSEEK_DEFAULT_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_ENV_ALIASES};
+pub use hopper::{HOPPER_DEFAULT_BASE_URL, HOPPER_DEFAULT_MODEL, HOPPER_ENV_ALIASES};
 pub use image_models::{
     IMAGE_PROVIDER_GOOGLE, IMAGE_PROVIDER_OPENAI, ImageModelCatalogEntry,
     ImageProviderCatalogEntry, built_in_image_providers, image_model_descriptors,
@@ -45,6 +47,7 @@ pub const PROVIDER_XIAOMI_MIMO_TOKEN_PLAN: &str = "xiaomi-mimo-token-plan";
 pub const PROVIDER_KIMI_CODE: &str = "kimi-code";
 pub const PROVIDER_SYNTHETIC: &str = "synthetic";
 pub const PROVIDER_DEEPSEEK: &str = "deepseek";
+pub const PROVIDER_HOPPER: &str = "hopper";
 
 pub const PROVIDER_KIND_MOCK: &str = "mock";
 pub const PROVIDER_KIND_OPENAI: &str = "openai";
@@ -63,6 +66,7 @@ pub const PROVIDER_KIND_CURSOR: &str = "cursor";
 pub const PROVIDER_KIND_XIAOMI_MIMO: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 pub const PROVIDER_KIND_SYNTHETIC: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 pub const PROVIDER_KIND_DEEPSEEK: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
+pub const PROVIDER_KIND_HOPPER: &str = PROVIDER_KIND_CHAT_COMPLETIONS;
 
 pub const REASONING_NONE: &str = "none";
 pub const REASONING_MINIMAL: &str = "minimal";
@@ -517,6 +521,7 @@ pub const BUILT_IN_PROVIDERS: &[ProviderCatalogEntry] = &[
     xiaomi_mimo::TOKEN_PLAN_PROVIDER,
     synthetic::SYNTHETIC_PROVIDER,
     deepseek::DEEPSEEK_PROVIDER,
+    hopper::HOPPER_PROVIDER,
     ProviderCatalogEntry {
         id: PROVIDER_KIMI_CODE,
         name: "Kimi Code",
@@ -1226,6 +1231,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
     deepseek::DEEPSEEK_REASONER,
     deepseek::DEEPSEEK_V4_FLASH,
     deepseek::DEEPSEEK_V4_PRO,
+    hopper::HOPPER_DEEPSEEK_V4_1_FLASH_1017,
+    hopper::HOPPER_DEEPSEEK_V4_1_FLASH_1017_ABLITERATED,
     ModelCatalogEntry {
         id: "composer-2.5",
         display_name: "Composer 2.5",
@@ -1793,6 +1800,7 @@ pub fn provider_family_for_provider(provider: &str) -> ProviderFamily {
         PROVIDER_KIMI_CODE => ProviderFamily::OpenAi,
         PROVIDER_SYNTHETIC => ProviderFamily::OpenAi,
         PROVIDER_DEEPSEEK => ProviderFamily::OpenAi,
+        PROVIDER_HOPPER => ProviderFamily::OpenAi,
         _ => ProviderFamily::Mock,
     }
 }
@@ -1858,6 +1866,7 @@ pub fn normalize_provider_id(provider: &str) -> String {
             PROVIDER_SYNTHETIC.to_string()
         }
         "deepseek" | "deepseek-platform" | "deepseek_platform" => PROVIDER_DEEPSEEK.to_string(),
+        "hopper" | "withhopper" | "withhopper.com" => PROVIDER_HOPPER.to_string(),
         provider => provider.to_string(),
     }
 }
@@ -1966,6 +1975,7 @@ mod tests {
                 "xiaomi-mimo-token-plan",
                 "synthetic",
                 "deepseek",
+                "hopper",
                 "kimi-code"
             ]
         );
@@ -2169,6 +2179,8 @@ mod tests {
                 "deepseek-reasoner",
                 "deepseek-v4-flash",
                 "deepseek-v4-pro",
+                "deepseek-v4.1-flash-1017",
+                "deepseek-v4.1-flash-1017-abliterated",
                 "composer-2.5",
                 "composer-2.5-fast",
                 "claude-fable-5",
@@ -2207,6 +2219,7 @@ mod tests {
         assert_eq!(models_for_provider(PROVIDER_KIMI_CODE, false).len(), 1);
         assert_eq!(models_for_provider(PROVIDER_SYNTHETIC, false).len(), 14);
         assert_eq!(models_for_provider(PROVIDER_DEEPSEEK, false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_HOPPER, false).len(), 2);
         assert_eq!(models_for_provider(PROVIDER_MOCK, true).len(), 1);
     }
 
@@ -2417,6 +2430,49 @@ mod tests {
             272_000,
             1_000_000,
         );
+    }
+
+    #[test]
+    fn hopper_catalog_defaults_to_newest_deepseek_flash() {
+        let provider = BUILT_IN_PROVIDERS
+            .iter()
+            .find(|provider| provider.id == PROVIDER_HOPPER)
+            .expect("hopper provider registered");
+        assert_eq!(provider.name, "Hopper");
+        assert_eq!(provider.default_model, "deepseek-v4.1-flash-1017");
+        assert_eq!(provider.base_url, Some("https://api.withhopper.com/v1"));
+        assert_eq!(provider.env_key, Some("HOPPER_API_KEY"));
+        assert_eq!(normalize_provider_id("withhopper"), PROVIDER_HOPPER);
+        assert_eq!(
+            provider_family_for_provider(PROVIDER_HOPPER),
+            ProviderFamily::OpenAi
+        );
+
+        let models = models_for_provider(PROVIDER_HOPPER, false);
+        let ids = models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            vec![
+                "deepseek-v4.1-flash-1017",
+                "deepseek-v4.1-flash-1017-abliterated"
+            ]
+        );
+        let flash = lookup_model_for_provider(PROVIDER_HOPPER, "deepseek-v4.1-flash-1017")
+            .expect("flash 1017");
+        assert_eq!(flash.provider, PROVIDER_HOPPER);
+        assert!(flash.supports_tools);
+        assert!(models.iter().all(|model| {
+            lookup_model_for_provider(PROVIDER_HOPPER, &model.id)
+                .is_some_and(|entry| entry.supports_images && !entry.supports_structured)
+        }));
+        assert!(!flash.supports_structured);
+        assert_eq!(flash.context_window, 1_048_576);
+        assert_eq!(flash.default_reasoning, REASONING_HIGH);
+        assert!(model_supports_reasoning_effort(flash.id, REASONING_NONE));
+        assert!(model_supports_reasoning_effort(flash.id, REASONING_MAX));
     }
 
     #[test]

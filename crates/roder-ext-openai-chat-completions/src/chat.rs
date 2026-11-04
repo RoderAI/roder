@@ -4,9 +4,10 @@ use futures::StreamExt;
 use roder_api::inference::{AgentInferenceRequest, InferenceEventStream};
 use roder_api::provider_error::{ProviderFailure, ProviderFailureKind};
 use roder_api::tools::ToolChoice;
-use roder_api::transcript::TranscriptItem;
+use roder_api::transcript::{ToolResultRecord, TranscriptItem};
 use serde_json::{Value, json};
 
+use crate::chat_images::{tool_image_message, user_content};
 use crate::chat_stream::{ChatStreamState, ChatToolNameMap};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -371,10 +372,10 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
 
     // Pre-scan all tool results so a coalesced assistant message can pair each
     // of its calls with a result regardless of transcript ordering.
-    let mut results_by_id: HashMap<&str, &str> = HashMap::new();
+    let mut results_by_id: HashMap<&str, &ToolResultRecord> = HashMap::new();
     for item in &request.transcript {
         if let TranscriptItem::ToolResult(result) = item {
-            results_by_id.insert(result.id.as_str(), result.result.as_str());
+            results_by_id.insert(result.id.as_str(), result);
         }
     }
 
@@ -409,7 +410,7 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                 // A new user turn ends any leftover CoT that was not attached to
                 // a tool-call assistant message (DeepSeek ignores non-tool CoT).
                 pending_reasoning = None;
-                messages.push(json!({ "role": "user", "content": message.text }));
+                messages.push(json!({ "role": "user", "content": user_content(message) }));
             }
             TranscriptItem::AssistantMessage(message) => {
                 if message.text.is_empty() && pending_reasoning.is_none() {
@@ -475,7 +476,7 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
 fn flush_pending_tool_calls(
     messages: &mut Vec<Value>,
     pending: &mut Vec<(String, Value)>,
-    results_by_id: &HashMap<&str, &str>,
+    results_by_id: &HashMap<&str, &ToolResultRecord>,
     pending_reasoning: &mut Option<String>,
 ) {
     if pending.is_empty() {
@@ -512,10 +513,15 @@ fn flush_pending_tool_calls(
         assistant["reasoning_content"] = json!(reasoning);
     }
     messages.push(assistant);
+    let mut image_messages = Vec::new();
     for (id, _) in pending.drain(..) {
+        let result = results_by_id.get(id.as_str()).copied();
+        if let Some(image) = result.and_then(tool_image_message) {
+            image_messages.push(image);
+        }
         let content = results_by_id
             .get(id.as_str())
-            .copied()
+            .map(|result| result.result.as_str())
             .unwrap_or(MISSING_TOOL_RESULT_PLACEHOLDER);
         messages.push(json!({
             "role": "tool",
@@ -523,6 +529,7 @@ fn flush_pending_tool_calls(
             "content": content,
         }));
     }
+    messages.extend(image_messages);
 }
 
 /// Map Roder effort labels onto DeepSeek thinking-mode wire values.
@@ -533,6 +540,10 @@ fn map_thinking_effort(level: &str) -> &str {
         other => other,
     }
 }
+
+#[cfg(test)]
+#[path = "chat_image_tests.rs"]
+mod image_tests;
 
 #[cfg(test)]
 mod tests {

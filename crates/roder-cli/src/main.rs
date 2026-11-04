@@ -40,8 +40,8 @@ use roder_api::backend::AgentBackend;
 use roder_api::capabilities::CapabilityGrant;
 use roder_api::catalog::{
     DEFAULT_MODEL_ID, PROVIDER_ANTHROPIC, PROVIDER_CLAUDE_CODE, PROVIDER_CODEX, PROVIDER_CURSOR,
-    PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK,
-    PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
+    PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS, PROVIDER_GEMINI, PROVIDER_HOPPER, PROVIDER_KIMI_CODE,
+    PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER,
     PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC,
     PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
     normalize_provider_id,
@@ -1370,6 +1370,8 @@ pub(crate) async fn build_runtime_with_config(
         synthetic_base_url: keys.synthetic_base_url,
         deepseek_api_key: keys.deepseek,
         deepseek_base_url: keys.deepseek_base_url,
+        hopper_api_key: keys.hopper,
+        hopper_base_url: keys.hopper_base_url,
         custom_inference_providers: custom_inference_provider_configs,
         thread_dir: None,
         session_store,
@@ -2659,6 +2661,8 @@ struct ProviderKeys {
     synthetic_base_url: Option<String>,
     deepseek: Option<String>,
     deepseek_base_url: Option<String>,
+    hopper: Option<String>,
+    hopper_base_url: Option<String>,
 }
 
 /**
@@ -3074,7 +3078,37 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
             .and_then(|p| p.base_url.clone())
             .or_else(|| std::env::var("RODER_DEEPSEEK_BASE_URL").ok())
             .or_else(|| std::env::var("DEEPSEEK_BASE_URL").ok()),
+        hopper: std::env::var("HOPPER_API_KEY")
+            .ok()
+            .or_else(|| std::env::var("RODER_HOPPER_API_KEY").ok())
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_HOPPER)
+                    .and_then(|p| p.api_key.clone())
+            })
+            .or_else(|| {
+                cfg.providers
+                    .get(PROVIDER_HOPPER)
+                    .and_then(|p| p.api_key_env.as_deref())
+                    .and_then(env_nonempty)
+            }),
+        hopper_base_url: resolve_hopper_base_url(
+            cfg.providers
+                .get(PROVIDER_HOPPER)
+                .and_then(|p| p.base_url.clone()),
+            env_nonempty,
+        ),
     }
+}
+
+fn resolve_hopper_base_url(
+    configured: Option<String>,
+    mut env: impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
+    configured
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env("HOPPER_BASE_URL"))
+        .or_else(|| env("RODER_HOPPER_BASE_URL"))
 }
 
 fn custom_inference_providers(cfg: &roder_config::Config) -> Vec<CustomInferenceProviderConfig> {
@@ -3132,6 +3166,7 @@ fn is_builtin_provider_id(id: &str) -> bool {
             | "xiaomi-mimo-token-plan"
             | "synthetic"
             | "deepseek"
+            | "hopper"
     )
 }
 
@@ -3629,7 +3664,8 @@ fn provider_can_be_registered(
         | PROVIDER_XIAOMI_MIMO_TOKEN_PLAN
         | PROVIDER_KIMI_CODE
         | PROVIDER_SYNTHETIC
-        | PROVIDER_DEEPSEEK => true,
+        | PROVIDER_DEEPSEEK
+        | PROVIDER_HOPPER => true,
         PROVIDER_CURSOR => keys.cursor.is_some() || keys.cursor_access_token.is_some(),
         PROVIDER_OPENAI => keys.openai.is_some(),
         PROVIDER_ANTHROPIC => keys.anthropic.is_some(),
@@ -3645,6 +3681,30 @@ fn provider_can_be_registered(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hopper_base_url_prefers_config_then_primary_environment_variable() {
+        let env = |key: &str| match key {
+            "HOPPER_BASE_URL" => Some("https://primary.example/v1".to_string()),
+            "RODER_HOPPER_BASE_URL" => Some("https://alias.example/v1".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            resolve_hopper_base_url(None, env).as_deref(),
+            Some("https://primary.example/v1")
+        );
+        assert_eq!(
+            resolve_hopper_base_url(Some("https://config.example/v1".into()), env).as_deref(),
+            Some("https://config.example/v1")
+        );
+        assert_eq!(
+            resolve_hopper_base_url(None, |key| {
+                (key == "RODER_HOPPER_BASE_URL").then(|| "https://alias.example/v1".into())
+            })
+            .as_deref(),
+            Some("https://alias.example/v1")
+        );
+    }
 
     #[test]
     fn agent_backend_selection_is_explicit() {
@@ -3738,6 +3798,8 @@ mod tests {
             synthetic_base_url: None,
             deepseek: None,
             deepseek_base_url: None,
+            hopper: None,
+            hopper_base_url: None,
         }
     }
 
