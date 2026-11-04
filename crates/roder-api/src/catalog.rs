@@ -2464,6 +2464,11 @@ mod tests {
             .expect("flash 1017");
         assert_eq!(flash.provider, PROVIDER_HOPPER);
         assert!(flash.supports_tools);
+        assert!(models.iter().all(|model| {
+            lookup_model_for_provider(PROVIDER_HOPPER, &model.id)
+                .is_some_and(|entry| entry.supports_images && !entry.supports_structured)
+        }));
+        assert!(!flash.supports_structured);
         assert_eq!(flash.context_window, 1_048_576);
         assert_eq!(flash.default_reasoning, REASONING_HIGH);
         assert!(model_supports_reasoning_effort(flash.id, REASONING_NONE));

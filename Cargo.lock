@@ -4356,6 +4356,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "futures",
+ "reqwest",
  "roder-api",
  "roder-config",
  "roder-ext-openai-chat-completions",

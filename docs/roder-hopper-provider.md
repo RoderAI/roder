@@ -81,7 +81,19 @@ RODER_HOPPER_BASE_URL
 | `deepseek-v4.1-flash-1017-abliterated` | DeepSeek V4.1 Flash 1017 Abliterated | Same snapshot with refusals ablated |
 
 Both models have a 1M-token context window, tool calls and thinking mode
-(default effort `high`). Model ids are preserved exactly on the wire.
+(default execution effort `low`). Model ids are preserved exactly on the wire.
+
+## Images
+
+Both models accept user-attached images through Chat Completions `image_url`
+content parts, including HTTPS URLs and inline base64 data URLs. Text-only
+messages retain their string content format.
+
+Images returned by `view_image` and desktop/browser tools are forwarded as
+follow-up user image messages after all tool responses in a parallel batch.
+Only validated, bounded inline tool images are replayed; external tool-result
+URLs are never fetched. Structured outputs are not advertised until Hopper
+documents support for `response_format`.
 
 ## Thinking mode
 

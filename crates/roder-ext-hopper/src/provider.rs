@@ -73,8 +73,8 @@ impl InferenceEngine for HopperInferenceEngine {
             tool_calls: true,
             parallel_tool_calls: true,
             reasoning_summaries: true,
-            structured_output: true,
-            image_input: false,
+            structured_output: false,
+            image_input: true,
             prompt_cache: true,
             provider_metadata: true,
             tool_search: false,
@@ -101,6 +101,11 @@ impl InferenceEngine for HopperInferenceEngine {
         _ctx: InferenceProviderContext<'_>,
     ) -> anyhow::Result<Vec<ModelDescriptor>> {
         Ok(models_for_provider(PROVIDER_HOPPER, false))
+    }
+
+    fn tool_result_image_input(&self, model: &str) -> bool {
+        roder_api::catalog::lookup_model_for_provider(PROVIDER_HOPPER, model)
+            .is_some_and(|model| model.supports_images)
     }
 
     async fn stream_turn(
@@ -159,29 +164,13 @@ fn nonempty(value: Option<String>) -> Option<String> {
 }
 
 #[cfg(test)]
-fn isolate_config_dir() {
-    use std::sync::OnceLock;
-    static CONFIG_ISOLATION: OnceLock<()> = OnceLock::new();
-    CONFIG_ISOLATION.get_or_init(|| {
-        let temp =
-            std::env::temp_dir().join(format!("roder-ext-hopper-tests-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&temp);
-        std::fs::create_dir_all(&temp).unwrap();
-        // SAFETY: set once before any test reads the config; all tests run in
-        // the same process and never restore a real config dir.
-        unsafe {
-            std::env::set_var("RODER_CONFIG_DIR", &temp);
-        }
-    });
-}
-
-#[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TestEnv;
 
     #[test]
     fn metadata_reports_api_key_auth_state() {
-        isolate_config_dir();
+        let _env = TestEnv::new();
 
         let unauth = HopperInferenceEngine::new(HopperConfig::default());
         let metadata = unauth.metadata();
@@ -199,6 +188,7 @@ mod tests {
 
     #[test]
     fn base_url_defaults_to_documented_openai_endpoint() {
+        let _env = TestEnv::new();
         let engine = HopperInferenceEngine::new(HopperConfig::default());
         assert_eq!(engine.base_url(), "https://api.withhopper.com/v1");
 
@@ -211,7 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_models_returns_built_in_models_without_credentials() {
-        isolate_config_dir();
+        let _env = TestEnv::new_async().await;
         let engine = HopperInferenceEngine::new(HopperConfig::default());
         let models = engine
             .list_models(InferenceProviderContext {

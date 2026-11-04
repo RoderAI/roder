@@ -3092,13 +3092,23 @@ fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
                     .and_then(|p| p.api_key_env.as_deref())
                     .and_then(env_nonempty)
             }),
-        hopper_base_url: cfg
-            .providers
-            .get(PROVIDER_HOPPER)
-            .and_then(|p| p.base_url.clone())
-            .or_else(|| std::env::var("RODER_HOPPER_BASE_URL").ok())
-            .or_else(|| std::env::var("HOPPER_BASE_URL").ok()),
+        hopper_base_url: resolve_hopper_base_url(
+            cfg.providers
+                .get(PROVIDER_HOPPER)
+                .and_then(|p| p.base_url.clone()),
+            env_nonempty,
+        ),
     }
+}
+
+fn resolve_hopper_base_url(
+    configured: Option<String>,
+    mut env: impl FnMut(&str) -> Option<String>,
+) -> Option<String> {
+    configured
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| env("HOPPER_BASE_URL"))
+        .or_else(|| env("RODER_HOPPER_BASE_URL"))
 }
 
 fn custom_inference_providers(cfg: &roder_config::Config) -> Vec<CustomInferenceProviderConfig> {
@@ -3671,6 +3681,30 @@ fn provider_can_be_registered(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hopper_base_url_prefers_config_then_primary_environment_variable() {
+        let env = |key: &str| match key {
+            "HOPPER_BASE_URL" => Some("https://primary.example/v1".to_string()),
+            "RODER_HOPPER_BASE_URL" => Some("https://alias.example/v1".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            resolve_hopper_base_url(None, env).as_deref(),
+            Some("https://primary.example/v1")
+        );
+        assert_eq!(
+            resolve_hopper_base_url(Some("https://config.example/v1".into()), env).as_deref(),
+            Some("https://config.example/v1")
+        );
+        assert_eq!(
+            resolve_hopper_base_url(None, |key| {
+                (key == "RODER_HOPPER_BASE_URL").then(|| "https://alias.example/v1".into())
+            })
+            .as_deref(),
+            Some("https://alias.example/v1")
+        );
+    }
 
     #[test]
     fn agent_backend_selection_is_explicit() {

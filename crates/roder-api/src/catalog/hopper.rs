@@ -79,11 +79,9 @@ const fn model(
         max_context_window: HOPPER_CONTEXT_WINDOW,
         auto_compact_token_limit: HOPPER_CONTEXT_WINDOW.saturating_mul(9) / 10,
         supports_compaction: false,
-        // Hopper accepts `image_url` parts, but Roder's Chat Completions
-        // transport is text-only today.
-        supports_images: false,
+        supports_images: true,
         supports_tools: true,
-        supports_structured: true,
+        supports_structured: false,
         edit_tool: Some("edit"),
         hidden: false,
     }

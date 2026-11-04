@@ -8,10 +8,13 @@ use roder_api::inference::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::chat_images::user_content;
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,
-    pub content: String,
+    /// A string for text-only messages, or a list of multimodal content parts.
+    pub content: Value,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -42,19 +45,19 @@ impl OpenAiChatCompletionsEngine {
         if let Some(sys) = &req.instructions.system {
             messages.push(ChatMessage {
                 role: "system".to_string(),
-                content: sys.clone(),
+                content: json!(sys),
             });
         }
         if let Some(dev) = &req.instructions.developer {
             messages.push(ChatMessage {
                 role: "developer".to_string(),
-                content: dev.clone(),
+                content: json!(dev),
             });
         }
         if let Some(context) = &req.instructions.developer_context {
             messages.push(ChatMessage {
                 role: "developer".to_string(),
-                content: context.clone(),
+                content: json!(context),
             });
         }
         for item in &req.transcript {
@@ -62,19 +65,19 @@ impl OpenAiChatCompletionsEngine {
                 roder_api::transcript::TranscriptItem::UserMessage(m) => {
                     messages.push(ChatMessage {
                         role: "user".to_string(),
-                        content: m.text.clone(),
+                        content: user_content(m),
                     });
                 }
                 roder_api::transcript::TranscriptItem::AssistantMessage(m) => {
                     messages.push(ChatMessage {
                         role: "assistant".to_string(),
-                        content: m.text.clone(),
+                        content: json!(m.text),
                     });
                 }
                 roder_api::transcript::TranscriptItem::ToolResult(m) => {
                     messages.push(ChatMessage {
                         role: "tool".to_string(),
-                        content: m.result.clone(),
+                        content: json!(m.result),
                     });
                 }
                 _ => {}
@@ -104,7 +107,7 @@ impl InferenceEngine for OpenAiChatCompletionsEngine {
             parallel_tool_calls: false,
             reasoning_summaries: false,
             structured_output: true,
-            image_input: false,
+            image_input: true,
             prompt_cache: false,
             provider_metadata: true,
             tool_search: false,
