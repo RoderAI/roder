@@ -10,10 +10,10 @@ use futures::stream;
 use roder_api::capabilities::CapabilityRequest;
 use roder_api::catalog::{
     PROVIDER_ANTHROPIC, PROVIDER_CODEX, PROVIDER_CURSOR, PROVIDER_DEEPSEEK, PROVIDER_FIREWORKS,
-    PROVIDER_GEMINI, PROVIDER_KIMI_CODE, PROVIDER_MOCK, PROVIDER_OPENAI, PROVIDER_OPENCODE,
-    PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE, PROVIDER_RODER_CLOUD,
-    PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI, PROVIDER_XIAOMI_MIMO,
-    PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
+    PROVIDER_GEMINI, PROVIDER_HOPPER, PROVIDER_KIMI_CODE, PROVIDER_MOCK, PROVIDER_OPENAI,
+    PROVIDER_OPENCODE, PROVIDER_OPENCODE_GO, PROVIDER_OPENROUTER, PROVIDER_POOLSIDE,
+    PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI,
+    PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
 use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::{
@@ -41,6 +41,7 @@ use roder_ext_google_embeddings::{
 use roder_ext_google_images::{GoogleImagesConfig, GoogleImagesExtension};
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
 use roder_ext_honcho::{HonchoMemoryConfig, HonchoMemoryExtension};
+use roder_ext_hopper::{HopperConfig, HopperExtension};
 use roder_ext_inference_router::{
     LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
 };
@@ -165,6 +166,8 @@ pub struct DefaultRegistryConfig {
     pub synthetic_base_url: Option<String>,
     pub deepseek_api_key: Option<String>,
     pub deepseek_base_url: Option<String>,
+    pub hopper_api_key: Option<String>,
+    pub hopper_base_url: Option<String>,
     pub xiaomi_mimo_api_key: Option<String>,
     pub xiaomi_mimo_base_url: Option<String>,
     pub xiaomi_mimo_token_plan_api_key: Option<String>,
@@ -315,6 +318,8 @@ impl Default for DefaultRegistryConfig {
             synthetic_base_url: None,
             deepseek_api_key: None,
             deepseek_base_url: None,
+            hopper_api_key: None,
+            hopper_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -547,6 +552,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(DeepSeekExtension::new(DeepSeekConfig {
         api_key: config.deepseek_api_key.clone(),
         base_url: config.deepseek_base_url.clone(),
+    }))?;
+    builder.install(HopperExtension::new(HopperConfig {
+        api_key: config.hopper_api_key.clone(),
+        base_url: config.hopper_base_url.clone(),
     }))?;
     for provider in config.custom_inference_providers {
         if known_provider_id(&provider.id) {
@@ -825,6 +834,7 @@ fn known_provider_id(id: &str) -> bool {
             | PROVIDER_KIMI_CODE
             | PROVIDER_SYNTHETIC
             | PROVIDER_DEEPSEEK
+            | PROVIDER_HOPPER
     )
 }
 
@@ -1899,6 +1909,8 @@ mod tests {
             synthetic_base_url: None,
             deepseek_api_key: None,
             deepseek_base_url: None,
+            hopper_api_key: None,
+            hopper_base_url: None,
             custom_inference_providers: Vec::new(),
             thread_dir: None,
             session_store: SessionStoreConfig::Jsonl,
@@ -2122,6 +2134,40 @@ mod tests {
         })
         .unwrap();
         let engine = registry.inference_engine(PROVIDER_DEEPSEEK).unwrap();
+        assert_eq!(engine.metadata().auth_configured, Some(true));
+    }
+
+    #[test]
+    fn default_registry_installs_hopper_provider_without_credentials() {
+        use roder_api::catalog::PROVIDER_HOPPER;
+        if test_config::run_in_child(
+            "tests::default_registry_installs_hopper_provider_without_credentials",
+            false,
+        ) {
+            return;
+        }
+
+        let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+        let engine = registry
+            .inference_engine(PROVIDER_HOPPER)
+            .expect("hopper provider registered without credentials");
+
+        let metadata = engine.metadata();
+        assert_eq!(metadata.name, "Hopper");
+        assert_eq!(metadata.auth_configured, Some(false));
+        assert_eq!(metadata.auth_label.as_deref(), Some("HOPPER_API_KEY"));
+    }
+
+    #[test]
+    fn default_registry_hopper_provider_reports_configured_with_key() {
+        use roder_api::catalog::PROVIDER_HOPPER;
+
+        let registry = build_default_registry(DefaultRegistryConfig {
+            hopper_api_key: Some("sk_hopper_secret".to_string()),
+            ..DefaultRegistryConfig::default()
+        })
+        .unwrap();
+        let engine = registry.inference_engine(PROVIDER_HOPPER).unwrap();
         assert_eq!(engine.metadata().auth_configured, Some(true));
     }
 

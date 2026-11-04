@@ -9473,6 +9473,7 @@ fn provider_api_key_url(provider_id: &str) -> &'static str {
         "cursor" => "https://cursor.com/dashboard/integrations",
         "poolside" => "https://platform.poolside.ai/api-keys",
         "deepseek" => "https://platform.deepseek.com/api_keys",
+        "hopper" => "https://withhopper.com/console/keys",
         _ => "https://opencode.ai/auth",
     }
 }
@@ -14681,6 +14682,10 @@ mod tests {
         assert_eq!(
             provider_api_key_url("deepseek"),
             "https://platform.deepseek.com/api_keys"
+        );
+        assert_eq!(
+            provider_api_key_url("hopper"),
+            "https://withhopper.com/console/keys"
         );
     }
 

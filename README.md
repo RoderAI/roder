@@ -49,6 +49,7 @@ Quickstart for bundled chat providers:
 | Roder Cloud | `export RODER_CLOUD_API_KEY=...` and configure a base URL if needed | `roder-cloud/roder.cloud/free` |
 | Synthetic | `export SYNTHETIC_API_KEY=...` | `synthetic/syn:large:text` |
 | DeepSeek Platform | `export DEEPSEEK_API_KEY=...` | `deepseek/deepseek-chat` |
+| Hopper | `export HOPPER_API_KEY=...` | `hopper/deepseek-v4.1-flash-1017` |
 
 Useful commands:
 
@@ -83,7 +84,8 @@ Detailed provider docs live in [`docs/roder-opencode-providers.md`](./docs/roder
 [`docs/roder-kimi-code-provider.md`](./docs/roder-kimi-code-provider.md),
 [`docs/roder-xiaomi-mimo-providers.md`](./docs/roder-xiaomi-mimo-providers.md),
 [`docs/roder-synthetic-provider.md`](./docs/roder-synthetic-provider.md),
-[`docs/roder-deepseek-provider.md`](./docs/roder-deepseek-provider.md), and
+[`docs/roder-deepseek-provider.md`](./docs/roder-deepseek-provider.md),
+[`docs/roder-hopper-provider.md`](./docs/roder-hopper-provider.md), and
 [`docs/roder-image-generation-providers.md`](./docs/roder-image-generation-providers.md).
 
 ---

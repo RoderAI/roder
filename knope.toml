@@ -291,6 +291,14 @@ versioned_files = [
 ]
 changelog = "crates/roder-ext-honcho/CHANGELOG.md"
 
+[packages."roder-ext-hopper"]
+versioned_files = [
+    "crates/roder-ext-hopper/Cargo.toml",
+    "Cargo.lock",
+    { path = "Cargo.toml", dependency = "roder-ext-hopper" },
+]
+changelog = "crates/roder-ext-hopper/CHANGELOG.md"
+
 [packages."roder-ext-inference-router"]
 versioned_files = [
     "crates/roder-ext-inference-router/Cargo.toml",

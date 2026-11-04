@@ -4350,6 +4350,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "roder-ext-hopper"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "roder-api",
+ "roder-config",
+ "roder-ext-openai-chat-completions",
+ "semver",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "roder-ext-inference-router"
 version = "0.3.0"
 dependencies = [
@@ -5147,6 +5162,7 @@ dependencies = [
  "roder-ext-google-images",
  "roder-ext-google-speech",
  "roder-ext-honcho",
+ "roder-ext-hopper",
  "roder-ext-inference-router",
  "roder-ext-jev",
  "roder-ext-jsonl-thread-store",
