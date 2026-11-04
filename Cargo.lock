@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.4.7"
+version = "0.4.8"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3739,7 +3739,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3765,7 +3765,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3970,7 +3970,7 @@ dependencies = [
 
 [[package]]
 name = "roder-dist-hosted"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "futures",
@@ -4173,7 +4173,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-deepseek"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4351,7 +4351,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-hopper"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4423,7 +4423,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-kimi-code"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4533,7 +4533,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-openai-chat-completions"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4914,7 +4914,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-synthetic"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5086,7 +5086,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-xiaomi-mimo"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5134,7 +5134,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5378,7 +5378,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-trait",
