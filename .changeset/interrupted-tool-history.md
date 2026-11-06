@@ -1,5 +1,6 @@
 ---
 roder-core: patch
+roder: patch
 ---
 
 When resuming after Stop or a runtime restart, represent unanswered previous
