@@ -171,7 +171,7 @@ roder-search = { path = "crates/roder-search", version = "0.1.0" }
 roder-skills = { path = "crates/roder-skills", version = "0.3.0" }
 roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.3.0" }
-roder-tools = { path = "crates/roder-tools", version = "0.3.1" }
+roder-tools = { path = "crates/roder-tools", version = "0.3.2" }
 roder-tui = { path = "crates/roder-tui", version = "0.4.2" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
