@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.4.9"
+version = "0.4.10"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3936,7 +3936,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "async-trait",
