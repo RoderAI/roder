@@ -50,7 +50,9 @@ pub(super) fn spawn_waiter(
                                 kill_process_group(pid);
                             }
                             let _ = child.kill().await;
-                            let _ = child.wait().await;
+                            if child.wait().await.is_ok() {
+                                kill_group.disarm();
+                            }
                             ExecExit { exit_code: -1, timed_out: true }
                         }
                     }
