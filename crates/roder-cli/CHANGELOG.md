@@ -1,3 +1,12 @@
+## 0.4.10 (2026-11-06)
+
+### Fixes
+
+#### When resuming after Stop or a runtime restart, represent unanswered previous
+
+tool calls as unknown errors in inference context. Preserve the original
+transcript and completed results, and tell the model not to repeat those calls.
+
 ## 0.4.9 (2026-11-06)
 
 ### Fixes
