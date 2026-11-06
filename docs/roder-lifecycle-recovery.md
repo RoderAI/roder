@@ -36,6 +36,11 @@ record for a turn is authoritative.
   completed. Inspect the transcript and lifecycle record before explicitly
   resuming or retrying safe work.
 
+When a new turn resumes the thread, unanswered tool calls from previous turns
+receive an unknown error result in inference context, with an instruction not
+to repeat them. Their side effects may already have occurred. This does not
+rewrite the stored transcript, certify process cleanup, or retry old work.
+
 Cleanup values are `not_requested`, `requested`, `completed`, `timed_out`, and
 `unknown`. `completed` only describes the cleanup path represented by the
 lifecycle record; use `ownership` to understand the available proof:

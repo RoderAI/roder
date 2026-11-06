@@ -46,6 +46,7 @@ pub mod tool_search;
 mod tool_validation;
 mod transcript;
 mod transcript_compaction;
+mod transcript_recovery;
 mod verification_gate;
 mod workspace_changes;
 mod workspace_tools;
