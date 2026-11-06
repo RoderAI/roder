@@ -70,7 +70,7 @@ fn completed_exit(
     status: std::io::Result<std::process::ExitStatus>,
     kill_group: &mut ProcessGroupKillOnDrop,
 ) -> ExecExit {
-    if status.is_ok() {
+    if status.as_ref().is_ok_and(|exit| exit.code().is_some()) {
         // A command that finishes normally may intentionally leave a server
         // running. Only interrupted/unfinished command groups belong to cleanup.
         kill_group.disarm();
@@ -211,6 +211,32 @@ mod tests {
         assert!(
             alive(pid),
             "a completed command's background process must not be cancelled"
+        );
+    }
+
+    #[test]
+    fn signalled_exec_leader_does_not_leave_descendants_running() {
+        let (runtime, fixture, pid) = start(true);
+        let leader: i32 = std::fs::read_to_string(fixture.root.join("group.pid"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        // SAFETY: the still-running leader was spawned by this fixture. Signal
+        // only that process so the command owner must clean up its descendants.
+        assert_eq!(unsafe { libc::kill(leader, libc::SIGTERM) }, 0);
+        let gone = runtime.block_on(async {
+            tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                while alive(pid) {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+        });
+        drop(runtime);
+        assert!(
+            gone.is_ok(),
+            "a signalled command left its owned descendant running"
         );
     }
 }
