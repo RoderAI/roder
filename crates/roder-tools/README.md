@@ -6,6 +6,13 @@
 
 It implements shared Roder tools such as search and package-visible tool definitions used by runtime extensions.
 
+Local exec sessions can keep running after a tool yields its session ID.
+On macOS and Linux, graceful runtime shutdown terminates unfinished local
+commands and their process groups. When a command finishes normally, background
+processes it started remain running. Windows cleanup stops the direct command;
+it does not yet guarantee termination of descendants. Force-killing the host
+does not provide graceful cleanup.
+
 ## How It Fits Into Roder
 
 Roder is an agentic software development system with a Rust CLI/TUI, a JSON-RPC app-server, SDKs, package resources, and first-party runtime extensions. This package is released as part of that workspace so downstream users can depend on the same component boundaries that Roder itself uses.

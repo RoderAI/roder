@@ -1,3 +1,7 @@
+#[path = "exec_process.rs"]
+mod process;
+use process::{spawn_output_reader, spawn_waiter};
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -11,15 +15,15 @@ use roder_api::tools::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt;
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, Notify};
 
 use crate::backend::WorkspaceBackendHandle;
 use crate::command_shell::{
-    command_args_for_shell, detach_controlling_terminal, kill_process_group, shell_for_context,
+    command_args_for_shell, detach_controlling_terminal, shell_for_context,
 };
-use crate::exec_output::{format_exec_output, trim_output_buffer_to_max_bytes, truncate_output};
+use crate::exec_output::{format_exec_output, truncate_output};
 use crate::files::{parse, require_nonempty, result};
 use crate::remote_cancel::RemoteCancelOnDrop;
 use crate::workspace::Workspace;
@@ -818,61 +822,8 @@ fn build_command(shell: &str, command: &str, login: bool, tty: bool) -> Command 
     };
     cmd.args(command_args_for_shell(shell, command, login));
     detach_controlling_terminal(&mut cmd);
+    cmd.kill_on_drop(true);
     cmd
-}
-
-fn spawn_output_reader<R>(mut reader: R, session: Arc<ExecSession>)
-where
-    R: AsyncRead + Unpin + Send + 'static,
-{
-    tokio::spawn(async move {
-        let mut buf = [0_u8; 8192];
-        loop {
-            match reader.read(&mut buf).await {
-                Ok(0) | Err(_) => break,
-                Ok(n) => {
-                    let mut output = session.output.lock().await;
-                    output.push_str(&String::from_utf8_lossy(&buf[..n]));
-                    let mut cursor = session.cursor.lock().await;
-                    trim_output_buffer_to_max_bytes(&mut output, &mut cursor, MAX_BUFFER_BYTES);
-                }
-            }
-        }
-    });
-}
-
-fn spawn_waiter(
-    mut child: tokio::process::Child,
-    session: Arc<ExecSession>,
-    timeout_ms: Option<u64>,
-) {
-    tokio::spawn(async move {
-        let exit = if let Some(timeout_ms) = timeout_ms {
-            tokio::select! {
-                status = child.wait() => exit_from_status(status, false),
-                _ = tokio::time::sleep(Duration::from_millis(timeout_ms)) => {
-                    // The command may have exited just before the deadline and
-                    // lost the select race; keep its real status and leave any
-                    // background processes it started alone.
-                    match child.try_wait() {
-                        Ok(Some(status)) => exit_from_status(Ok(status), false),
-                        _ => {
-                            if let Some(pid) = child.id() {
-                                kill_process_group(pid);
-                            }
-                            let _ = child.kill().await;
-                            let _ = child.wait().await;
-                            ExecExit { exit_code: -1, timed_out: true }
-                        }
-                    }
-                }
-            }
-        } else {
-            exit_from_status(child.wait().await, false)
-        };
-        *session.exit.lock().await = Some(exit);
-        session.exit_notify.notify_waiters();
-    });
 }
 
 fn effective_timeout_ms(
