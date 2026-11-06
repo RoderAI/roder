@@ -32,8 +32,9 @@ pub(super) fn spawn_waiter(
     session: Arc<ExecSession>,
     timeout_ms: Option<u64>,
 ) {
-    // The waiter outlives a yielded tool call. Keep group custody in its
-    // future so runtime shutdown also cancels detached command descendants.
+    // The waiter outlives a yielded tool call. On Unix, retain group custody
+    // in its future so runtime shutdown cancels detached command descendants.
+    // Windows relies on the direct child's kill-on-drop behavior.
     let mut kill_group = ProcessGroupKillOnDrop::new(child.id());
     tokio::spawn(async move {
         let exit = if let Some(timeout_ms) = timeout_ms {
