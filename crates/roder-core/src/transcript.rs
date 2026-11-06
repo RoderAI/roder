@@ -169,7 +169,9 @@ impl Runtime {
             if &turn.turn_id == current_turn_id {
                 continue;
             }
-            out.extend(turn.items);
+            let mut items = turn.items;
+            crate::transcript_recovery::close_unanswered_calls(&mut items);
+            out.extend(items);
         }
         Ok(trim_to_last_compaction_boundary(out))
     }
