@@ -1,0 +1,6 @@
+{"type":"session","harness":"roder","id":"synthetic-sts"}
+{"type":"message","message":{"role":"user","content":"Say hello","timestamp":1767225601123}}
+{"type":"message","message":{"role":"assistant","content":"","reasoningContent":"Use the greeting tool.","timestamp":1767225602123}}
+{"type":"message","message":{"role":"assistant","content":"","toolCalls":[{"id":"call-1","function":{"name":"greet","arguments":"{}"}}],"timestamp":1767225603123}}
+{"type":"message","message":{"role":"tool","content":"hello","toolCallId":"call-1","timestamp":1767225604123}}
+{"type":"message","message":{"role":"assistant","content":"Hello!","timestamp":1767225605123}}
