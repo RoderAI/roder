@@ -2618,34 +2618,15 @@ impl Runtime {
             None
         };
         if let Some(snapshot) = loaded.as_ref() {
-            let live_turn_ids = self
-                .active_turns
-                .read()
-                .await
-                .keys()
-                .cloned()
-                .chain(self.turn_drains.read().await.keys().cloned())
-                .collect::<std::collections::HashSet<_>>();
-            let lifecycle = turn_lifecycle_snapshot(&snapshot.extension_states);
-            for record in lifecycle.records.into_iter().filter(|record| {
-                record.state.requires_recovery() && !live_turn_ids.contains(&record.turn_id)
-            }) {
-                self.lifecycle_restart_reconciliations
-                    .fetch_add(1, Ordering::AcqRel);
-                self.record_turn_lifecycle(
-                    record.thread_id,
-                    record.turn_id,
-                    TurnLifecycleState::RecoveryNeeded,
-                    TurnCleanupState::Unknown,
-                    Some(TurnLifecycleReason::RuntimeRestart),
-                )
-                .await;
+            if turn_lifecycle_snapshot(&snapshot.extension_states)
+                .records
+                .iter()
+                .any(|record| record.state.requires_recovery())
+            {
+                self.resume_thread_history(thread_id).await?;
+            } else {
+                self.emit_thread_loaded(thread_id).await;
             }
-            self.emit(RoderEvent::ThreadLoaded(ThreadLoaded {
-                thread_id: thread_id.clone(),
-                timestamp: OffsetDateTime::now_utc(),
-            }))
-            .await;
         }
         Ok(loaded)
     }
@@ -3531,23 +3512,6 @@ impl Runtime {
         self.goals
             .begin_turn(&req.thread_id, &turn_id, automatic_goal_turn)
             .await?;
-        let turn_started_at = OffsetDateTime::now_utc();
-        self.emit(RoderEvent::TurnStarted(TurnStarted {
-            thread_id: req.thread_id.clone(),
-            turn_id: turn_id.clone(),
-            runtime_profile: self.config.read().await.runtime_profile,
-            timestamp: turn_started_at,
-        }))
-        .await;
-        self.persist_turn_item(
-            &req.thread_id,
-            &turn_id,
-            &TranscriptItem::UserMessage(UserMessage::with_images(
-                req.message.clone(),
-                req.images.clone(),
-            )),
-        )
-        .await?;
         crate::hooks::run_lifecycle(
             self,
             &req.thread_id,
@@ -5647,31 +5611,39 @@ impl Runtime {
         item: &TranscriptItem,
     ) -> anyhow::Result<()> {
         let item_index = self.next_transcript_item_index(thread_id, turn_id).await?;
-        let timestamp = OffsetDateTime::now_utc();
-        self.emit(RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
-            thread_id: thread_id.clone(),
-            turn_id: turn_id.clone(),
-            item_type: match item {
-                TranscriptItem::UserMessage(_) => "user_message",
-                TranscriptItem::AssistantMessage(_) => "assistant_message",
-                TranscriptItem::ReasoningSummary(_) => "reasoning_summary",
-                TranscriptItem::ToolCall(_) => "tool_call",
-                TranscriptItem::ToolResult(_) => "tool_result",
-                TranscriptItem::FileChange(_) => "file_change",
-                TranscriptItem::ContextCompaction(_) => "context_compaction",
-                TranscriptItem::Error(_) => "error",
-                TranscriptItem::ProviderMetadata(_) => "provider_metadata",
-            }
-            .to_string(),
-            item_index: Some(item_index),
-            item: Some(item.clone()),
-            timestamp,
-        }))
-        .await;
+        self.emit(turn_item_event(thread_id, turn_id, item, item_index))
+            .await;
         self.remember_transcript_item_index(thread_id, turn_id, item_index)
             .await?;
         Ok(())
     }
+}
+
+fn turn_item_event(
+    thread_id: &ThreadId,
+    turn_id: &TurnId,
+    item: &TranscriptItem,
+    item_index: usize,
+) -> RoderEvent {
+    RoderEvent::TranscriptItemAppended(TranscriptItemAppended {
+        thread_id: thread_id.clone(),
+        turn_id: turn_id.clone(),
+        item_type: match item {
+            TranscriptItem::UserMessage(_) => "user_message",
+            TranscriptItem::AssistantMessage(_) => "assistant_message",
+            TranscriptItem::ReasoningSummary(_) => "reasoning_summary",
+            TranscriptItem::ToolCall(_) => "tool_call",
+            TranscriptItem::ToolResult(_) => "tool_result",
+            TranscriptItem::FileChange(_) => "file_change",
+            TranscriptItem::ContextCompaction(_) => "context_compaction",
+            TranscriptItem::Error(_) => "error",
+            TranscriptItem::ProviderMetadata(_) => "provider_metadata",
+        }
+        .to_string(),
+        item_index: Some(item_index),
+        item: Some(item.clone()),
+        timestamp: OffsetDateTime::now_utc(),
+    })
 }
 
 fn transcript_has_images(transcript: &[TranscriptItem]) -> bool {

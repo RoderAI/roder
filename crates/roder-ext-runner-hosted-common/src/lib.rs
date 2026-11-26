@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 use roder_api::remote_runner::{
     RemoteRunnerProvider, RemoteRunnerProviderId, RemoteRunnerSession, RunnerArtifactExportRequest,
     RunnerArtifactExportResult, RunnerCapabilities, RunnerCommandId, RunnerCommandRequest,
@@ -9,6 +9,9 @@ use roder_api::remote_runner::{
     RunnerSnapshotRef,
 };
 use serde::Deserialize;
+
+mod response;
+use response::{decode_bytes, decode_empty, decode_response};
 
 #[derive(Debug, Clone)]
 pub struct HostedRunnerSpec {
@@ -87,6 +90,7 @@ impl RemoteRunnerProvider for HostedRunnerProvider {
             .body(serde_json::to_vec(&payload)?)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("create {} runner session", self.spec.provider_id))?;
         let created: CreateSessionResponse = decode_response(response, "create session").await?;
         let state = RunnerSessionState {
@@ -127,6 +131,7 @@ impl RemoteRunnerProvider for HostedRunnerProvider {
             .bearer_auth(&config.token)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("resume {} runner session", self.spec.provider_id))?;
         let _: serde_json::Value = decode_response(response, "resume session").await?;
         Ok(Arc::new(HostedRunnerSession {
@@ -250,6 +255,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .body(serde_json::to_vec(&request)?)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("run {} runner command", self.spec.provider_id))?;
         decode_response(response, "run command").await
     }
@@ -264,6 +270,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .bearer_auth(&self.token)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("cancel {} runner command", self.spec.provider_id))?;
         let result: CancelCommandResponse = decode_response(response, "cancel command").await?;
         Ok(result.cancelled)
@@ -284,6 +291,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .bearer_auth(&self.token)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("read {} runner file", self.spec.provider_id))?;
         let bytes = decode_bytes(response, "read file").await?;
         Ok(RunnerFileReadResult {
@@ -305,6 +313,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .body(request.contents)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("write {} runner file", self.spec.provider_id))?;
         decode_empty(response, "write file").await
     }
@@ -321,6 +330,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .body(serde_json::to_vec(&request)?)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("expose {} runner port", self.spec.provider_id))?;
         decode_response(response, "expose port").await
     }
@@ -340,6 +350,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .body(serde_json::to_vec(&request)?)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("export {} runner artifact", self.spec.provider_id))?;
         decode_response(response, "export artifact").await
     }
@@ -354,6 +365,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .bearer_auth(&self.token)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("snapshot {} runner", self.spec.provider_id))?;
         let result: SnapshotResponse = decode_response(response, "snapshot").await?;
         Ok(result.snapshot)
@@ -369,6 +381,7 @@ impl RemoteRunnerSession for HostedRunnerSession {
             .bearer_auth(&self.token)
             .send()
             .await
+            .map_err(reqwest::Error::without_url)
             .with_context(|| format!("delete {} runner session", self.spec.provider_id))?;
         decode_empty(response, "delete session").await
     }
@@ -392,36 +405,6 @@ struct SnapshotResponse {
     snapshot: Option<RunnerSnapshotRef>,
 }
 
-async fn decode_response<T: for<'de> Deserialize<'de>>(
-    response: reqwest::Response,
-    operation: &str,
-) -> anyhow::Result<T> {
-    let status = response.status();
-    let body = response.bytes().await?;
-    if !status.is_success() {
-        bail!("{operation} failed with {status}: {}", redact_body(&body));
-    }
-    serde_json::from_slice(&body).with_context(|| format!("decode {operation} response"))
-}
-
-async fn decode_bytes(response: reqwest::Response, operation: &str) -> anyhow::Result<Vec<u8>> {
-    let status = response.status();
-    let body = response.bytes().await?;
-    if !status.is_success() {
-        bail!("{operation} failed with {status}: {}", redact_body(&body));
-    }
-    Ok(body.to_vec())
-}
-
-async fn decode_empty(response: reqwest::Response, operation: &str) -> anyhow::Result<()> {
-    let status = response.status();
-    let body = response.bytes().await?;
-    if !status.is_success() {
-        bail!("{operation} failed with {status}: {}", redact_body(&body));
-    }
-    Ok(())
-}
-
 fn redacted_config(config: &serde_json::Value) -> serde_json::Value {
     let mut value = config.clone();
     if let Some(object) = value.as_object_mut() {
@@ -435,15 +418,6 @@ fn redacted_config(config: &serde_json::Value) -> serde_json::Value {
         }
     }
     value
-}
-
-fn redact_body(body: &[u8]) -> String {
-    let text = String::from_utf8_lossy(body);
-    let mut out = text.to_string();
-    for marker in ["token", "api_key", "secret", "authorization"] {
-        out = out.replace(marker, "<redacted>");
-    }
-    out
 }
 
 pub async fn run_mock_lifecycle_test(spec: HostedRunnerSpec) {
@@ -664,16 +638,5 @@ mod tests {
         assert_eq!(redacted["region"], "iad");
         assert!(!redacted.to_string().contains("plain-token"));
         assert!(!redacted.to_string().contains("plain-key"));
-    }
-
-    #[test]
-    fn redacts_secret_error_bodies() {
-        let body = br#"{"error":"authorization token secret api_key leaked"}"#;
-        let redacted = redact_body(body);
-
-        assert!(!redacted.contains("authorization"));
-        assert!(!redacted.contains("token"));
-        assert!(!redacted.contains("secret"));
-        assert!(!redacted.contains("api_key"));
     }
 }

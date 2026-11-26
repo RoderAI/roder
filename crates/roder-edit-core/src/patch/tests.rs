@@ -20,6 +20,22 @@ fn parses_and_applies_codex_patch() {
 }
 
 #[test]
+fn local_patch_preserves_crlf() {
+    let root = temp_dir("roder-edit-core-crlf");
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("sample.txt");
+    std::fs::write(&path, b"first\r\nold\r\nlast\r\n").unwrap();
+    apply_codex_patch_to_workspace(
+        &root,
+        "*** Begin Patch\n*** Update File: sample.txt\n@@\n-old\n+new\n*** End Patch",
+    )
+    .unwrap();
+    let bytes = std::fs::read(path).unwrap();
+    std::fs::remove_dir_all(root).unwrap();
+    assert_eq!(bytes, b"first\r\nnew\r\nlast\r\n");
+}
+
+#[test]
 fn rejects_paths_outside_workspace() {
     let root = temp_dir("roder-edit-core-outside");
     std::fs::create_dir_all(&root).unwrap();
@@ -93,8 +109,8 @@ fn ordered_matching_codex_fixtures() {
         ("first\n\nlast\n", " first\n\n-last\n+new", "first\n\nnew\n"),
         ("old\n", "@@\n-old", ""),
         ("", "@@\n+new", "new\n"),
-        ("a\n\n", "@@\n-a\n-\n+b\n+", "b\n"),
-        ("old\r\nkeep\r\n", "@@\n-old\n+new", "new\nkeep\r\n"),
+        ("a\n\n", "@@\n-a\n-\n+b\n+", "b\n\n"),
+        ("old\r\nkeep\r\n", "@@\n-old\n+new", "new\r\nkeep\r\n"),
     ] {
         let parsed = parse_patch(&format!(
             "*** Begin Patch\n*** Update File: fixture.txt\n{body}\n*** End Patch"
@@ -118,7 +134,7 @@ fn ordered_matching_codex_fixtures() {
 }
 
 #[test]
-fn preserves_context_bytes_and_mixed_line_endings_when_selected() {
+fn preserves_context_bytes_and_mixed_line_endings_by_default() {
     let parsed = parse_patch(
         "*** Begin Patch\n*** Update File: file\n@@\n first\n-old\n+new\n last\n*** End Patch",
     )
@@ -131,7 +147,7 @@ fn preserves_context_bytes_and_mixed_line_endings_when_selected() {
             "first \t\r\nold\nlast\r",
             "file",
             chunks,
-            ApplyPatchFileUpdateMode::PreserveLineEndings
+            ApplyPatchFileUpdateMode::default()
         )
         .unwrap(),
         "first \t\r\nnew\r\nlast\r"

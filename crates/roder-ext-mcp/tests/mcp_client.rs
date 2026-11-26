@@ -1,3 +1,6 @@
+#[path = "mcp_client/session_recovery.rs"]
+mod session_recovery;
+
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};

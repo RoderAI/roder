@@ -68,6 +68,9 @@ impl AgentBackendBridge {
             "providers/list" => self.providers().await,
             "providers/select" | "model/select" => self.select_model(&req.method, params).await,
             "thread/start" => self.start(params).await,
+            "thread/resume" => Err(anyhow::anyhow!(
+                "thread/resume is unsupported by this backend"
+            )),
             "thread/history/read" => Err(anyhow::anyhow!(
                 "thread/history/read is unsupported by this backend"
             )),

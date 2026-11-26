@@ -1530,16 +1530,28 @@ struct ThreadParts {
     thread_message_count: usize,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 struct ResumeHistoryState {
     older_items: Vec<Item>,
     loaded_items: usize,
     total_items: usize,
+    before: Option<String>,
+    seen: HashSet<(String, String)>,
+    pending:
+        Option<tokio::task::JoinHandle<anyhow::Result<roder_protocol::ThreadHistoryReadResult>>>,
+}
+
+impl Drop for ResumeHistoryState {
+    fn drop(&mut self) {
+        if let Some(pending) = &self.pending {
+            pending.abort();
+        }
+    }
 }
 
 impl ResumeHistoryState {
     fn has_older_items(&self) -> bool {
-        !self.older_items.is_empty()
+        !self.older_items.is_empty() || self.before.is_some()
     }
 }
 
@@ -1587,6 +1599,7 @@ where
             let thread_read = thread_resume::read_thread(&client, &member.thread_id).await?;
             let thread = thread_read.thread;
             let lifecycle = thread_read.lifecycle;
+            let before = thread_read.before;
             let thread_model = member
                 .model
                 .clone()
@@ -1635,7 +1648,7 @@ where
             app.team_ui.focus_member(&member_id);
             app.load_focused_team_timeline();
             if let Some(thread) = thread {
-                app.apply_thread_with_lifecycle(thread, lifecycle);
+                app.apply_resumed_thread(thread, lifecycle, before);
             }
             return Ok(app);
         }
@@ -1683,7 +1696,7 @@ where
                 },
             )
             .await?;
-            app.apply_thread_with_lifecycle(thread, thread_read.lifecycle);
+            app.apply_resumed_thread(thread, thread_read.lifecycle, thread_read.before);
             return Ok(app);
         }
 
@@ -2036,6 +2049,7 @@ where
             needs_redraw |= self.finish_turn_requests_if_ready().await;
             needs_redraw |= self.poll_prompt_receipt().await;
             needs_redraw |= self.poll_source_copy_completion().await;
+            needs_redraw |= self.poll_older_resume_history().await;
             needs_redraw |= self.submit_next_queued_prompt().await;
             let images_visible = self.image_previews_visible();
             needs_redraw |= self.timeline.set_image_previews_visible(images_visible);
@@ -4142,7 +4156,7 @@ where
             Ok(read) => match read.thread {
                 Some(thread) => {
                     self.roadmap_mode = None;
-                    self.apply_thread_with_lifecycle(thread, read.lifecycle);
+                    self.apply_resumed_thread(thread, read.lifecycle, read.before);
                     self.timeline.push_system(format!(
                         "monitoring roadmap worker {}.",
                         short_id(&thread_id)
@@ -4174,7 +4188,11 @@ where
                             Some(protocol_thread) => {
                                 let replacement_id = thread.thread_id.clone();
                                 self.roadmap_mode = None;
-                                self.apply_thread_with_lifecycle(protocol_thread, read.lifecycle);
+                                self.apply_resumed_thread(
+                                    protocol_thread,
+                                    read.lifecycle,
+                                    read.before,
+                                );
                                 self.timeline.push_system(format!(
                                     "monitoring replacement roadmap worker {}.",
                                     short_id(&replacement_id)

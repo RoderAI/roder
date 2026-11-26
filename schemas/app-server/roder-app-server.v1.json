@@ -2279,6 +2279,15 @@
       "sideEffect": "localState"
     },
     {
+      "method": "thread/resume",
+      "paramsType": "ThreadResumeParams",
+      "resultType": "ThreadResumeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",

@@ -1,12 +1,18 @@
 use super::*;
+use roder_api::extension_state::ExtensionStateRecord;
+use roder_api::lifecycle::{TurnCleanupState, TurnLifecycleRecord, TurnLifecycleState};
 use roder_api::thread::{
     ThreadHistoryPage, ThreadHistoryReadOptions, ThreadHistoryTurn, ThreadHistoryTurnStatus,
     ThreadItem,
 };
-use roder_protocol::ThreadHistoryReadResult;
+use roder_protocol::{ThreadHistoryReadResult, ThreadResumeResult, TurnStartResult};
 
-struct HistoryOnlyStore;
-struct HistoryOnlyFactory;
+#[derive(Default)]
+struct HistoryOnlyStore {
+    lifecycle: tokio::sync::Mutex<Vec<ExtensionStateRecord>>,
+}
+
+struct HistoryOnlyFactory(Arc<HistoryOnlyStore>);
 
 impl ThreadStoreFactory for HistoryOnlyFactory {
     fn id(&self) -> String {
@@ -14,7 +20,7 @@ impl ThreadStoreFactory for HistoryOnlyFactory {
     }
 
     fn create(&self) -> Arc<dyn ThreadStore> {
-        Arc::new(HistoryOnlyStore)
+        self.0.clone()
     }
 }
 
@@ -32,8 +38,32 @@ impl ThreadStore for HistoryOnlyStore {
         Ok(Vec::new())
     }
 
-    async fn load_thread(&self, _: &String) -> anyhow::Result<Option<ThreadSnapshot>> {
-        panic!("thread/history/read must never load a complete snapshot")
+    async fn load_thread(&self, thread_id: &String) -> anyhow::Result<Option<ThreadSnapshot>> {
+        // The inference worker may hydrate its context after accepting a turn.
+        if thread_id == "metadata-only" && tokio::task::try_id().is_some() {
+            return Ok(None);
+        }
+        panic!("bounded history and workspace admission must never load a complete snapshot")
+    }
+
+    async fn load_thread_metadata(
+        &self,
+        thread_id: &String,
+    ) -> anyhow::Result<Option<ThreadMetadata>> {
+        FailingThreadStore.load_thread_metadata(thread_id).await
+    }
+
+    async fn load_extension_states(&self, _: &String) -> anyhow::Result<Vec<ExtensionStateRecord>> {
+        Ok(self.lifecycle.lock().await.clone())
+    }
+
+    async fn append_extension_state(
+        &self,
+        _: &String,
+        record: &ExtensionStateRecord,
+    ) -> anyhow::Result<()> {
+        self.lifecycle.lock().await.push(record.clone());
+        Ok(())
     }
 
     async fn read_history_page(
@@ -93,9 +123,13 @@ impl ThreadStore for HistoryOnlyStore {
 }
 
 fn history_client() -> LocalAppClient {
+    history_client_with_store(Arc::new(HistoryOnlyStore::default()))
+}
+
+fn history_client_with_store(store: Arc<HistoryOnlyStore>) -> LocalAppClient {
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(Arc::new(FakeInferenceEngine));
-    builder.thread_store_factory(Arc::new(HistoryOnlyFactory));
+    builder.thread_store_factory(Arc::new(HistoryOnlyFactory(store)));
     let runtime = Arc::new(Runtime::new(builder.build().unwrap(), Default::default()).unwrap());
     LocalAppClient::new(Arc::new(app_server(runtime)))
 }
@@ -143,6 +177,70 @@ async fn history_endpoint_pages_without_loading_snapshot() {
         serde_json::to_value(&turns[0].items[119]).unwrap()["id"],
         "item-339"
     );
+}
+
+#[tokio::test]
+async fn bounded_thread_resume_reconciles_lifecycle_and_publishes_thread_loaded() {
+    let thread_id = "history".to_string();
+    let turn_id = "stale-turn".to_string();
+    let store = Arc::new(HistoryOnlyStore::default());
+    let record = TurnLifecycleRecord::new(
+        thread_id.clone(),
+        turn_id.clone(),
+        TurnLifecycleState::Running,
+        TurnCleanupState::NotRequested,
+        None,
+        time::OffsetDateTime::UNIX_EPOCH,
+    );
+    store
+        .append_extension_state(&thread_id, &record.extension_state().unwrap())
+        .await
+        .unwrap();
+    let client = history_client_with_store(store.clone());
+    let mut events = client.subscribe_events();
+    let read: ThreadHistoryReadResult = request(
+        &client,
+        "thread/history/read",
+        Some(serde_json::json!({"threadId": thread_id, "limit": 7})),
+    )
+    .await;
+    assert_eq!(read.thread.unwrap().turns.unwrap()[0].items.len(), 7);
+    assert!(events.try_recv().is_err());
+    assert_eq!(store.lifecycle.lock().await.len(), 1);
+
+    let resumed: ThreadResumeResult = request(
+        &client,
+        "thread/resume",
+        Some(serde_json::json!({"threadId": thread_id, "limit": 7})),
+    )
+    .await;
+    assert_eq!(
+        resumed.history.thread.unwrap().turns.unwrap()[0]
+            .items
+            .len(),
+        7
+    );
+    assert_eq!(resumed.history.before.as_deref(), Some("older-493"));
+    assert_eq!(resumed.lifecycle.records.len(), 1);
+    assert_eq!(resumed.lifecycle.records[0].turn_id, turn_id);
+    assert_eq!(
+        resumed.lifecycle.records[0].state,
+        TurnLifecycleState::RecoveryNeeded
+    );
+    assert!(std::iter::from_fn(|| events.try_recv().ok()).any(|envelope| {
+        matches!(envelope.event, roder_api::events::RoderEvent::ThreadLoaded(event) if event.thread_id == thread_id)
+    }));
+}
+
+#[tokio::test]
+async fn turn_start_resolves_workspace_without_a_full_thread_read() {
+    let client = history_client();
+    let result: TurnStartResult = request(
+        &client,
+        "turn/start",
+        Some(serde_json::json!({"threadId": "metadata-only", "input": [{"type": "text", "text": "hi"}]})),
+    ).await;
+    assert!(!result.turn_id.is_empty());
 }
 
 #[tokio::test]

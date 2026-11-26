@@ -17,8 +17,8 @@ pub use update::derive_new_contents;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum ApplyPatchFileUpdateMode {
-    #[default]
     NormalizeToLf,
+    #[default]
     PreserveLineEndings,
 }
 

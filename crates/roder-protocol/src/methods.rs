@@ -749,6 +749,7 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
         LocalState,
         NonIdempotent
     ),
+    method_spec!("thread/resume", "thread", LocalState, NonIdempotent),
     method_spec!("thread/roadmap/open", "thread", LocalState, NonIdempotent),
     method_spec!(
         "thread/set_agent_swarm_mode",

@@ -280,6 +280,7 @@
               "thread/remove_fork",
               "thread/resolve_approval",
               "thread/resolve_user_input",
+              "thread/resume",
               "thread/roadmap/open",
               "thread/set_agent_swarm_mode",
               "thread/set_mode",

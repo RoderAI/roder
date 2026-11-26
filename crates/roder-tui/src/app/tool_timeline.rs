@@ -353,9 +353,14 @@ impl TimelineState {
         self.prepend_item(TimelineItemKind::System(text.into()));
     }
 
-    pub fn preserve_scroll_after_prepend(&mut self, added_visual_rows: usize) {
-        self.scroll_offset = self.scroll_offset.saturating_add(added_visual_rows);
-        self.auto_follow = false;
+    pub fn preserve_scroll_after_prepend(
+        &mut self,
+        before_scroll: usize,
+        added_visual_rows: usize,
+    ) {
+        if !self.auto_follow {
+            self.scroll_offset = before_scroll.saturating_add(added_visual_rows);
+        }
     }
 
     pub fn last_viewport_height(&self) -> u16 {
@@ -597,6 +602,39 @@ impl TimelineState {
         self.follow_live_updates_from_composer();
     }
 
+    pub fn prepend_saved_tool(
+        &mut self,
+        tool_id: String,
+        entry: ToolTimelineEntry,
+        status: roder_protocol::ThreadItemStatus,
+        output: Option<String>,
+    ) {
+        let paths = if status == roder_protocol::ThreadItemStatus::Completed {
+            tool_image_paths(
+                &self.image_origin,
+                &entry.name,
+                &entry.arguments,
+                output.as_deref(),
+            )
+        } else {
+            Vec::new()
+        };
+        let status = match status {
+            roder_protocol::ThreadItemStatus::InProgress => ToolTimelineStatus::Running,
+            roder_protocol::ThreadItemStatus::Completed => ToolTimelineStatus::Completed,
+            roder_protocol::ThreadItemStatus::Failed => ToolTimelineStatus::Failed,
+        };
+        self.prepend_item(TimelineItemKind::Tool(ToolTimelineTool {
+            tool_id,
+            entry,
+            status,
+            output,
+            started_at: time::OffsetDateTime::now_utc(),
+            swarm_progress: None,
+        }));
+        self.image_previews.attach(0, paths);
+    }
+
     pub fn remove_tool(&mut self, tool_id: &str) -> bool {
         let Some(index) = self.tool_indices.remove(tool_id) else {
             return false;
@@ -835,6 +873,13 @@ impl TimelineState {
     fn prepend_item(&mut self, kind: TimelineItemKind) {
         self.items.insert(0, TimelineItem { kind });
         self.image_previews.prepend();
+        self.selected = self.selected.map(|index| {
+            if index == TOOL_OVERFLOW_INDEX {
+                index
+            } else {
+                index + 1
+            }
+        });
         self.rebuild_item_indices();
         self.invalidate_render_cache();
     }

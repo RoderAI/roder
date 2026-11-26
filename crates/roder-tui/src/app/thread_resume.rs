@@ -1,7 +1,10 @@
+#[cfg(test)]
+mod pagination_tests;
+
 use roder_api::lifecycle::{TurnLifecycleSnapshot, TurnLifecycleState};
 use roder_protocol::{
-    Thread, ThreadItemStatus, ThreadListParams, ThreadListResult, ThreadReadParams,
-    ThreadReadResult,
+    Thread, ThreadHistoryReadParams, ThreadHistoryReadResult, ThreadItemStatus, ThreadListParams,
+    ThreadListResult, ThreadReadParams, ThreadReadResult, ThreadResumeParams, ThreadResumeResult,
 };
 
 use super::*;
@@ -54,10 +57,10 @@ where
     pub(super) async fn load_thread(&mut self, thread_id: String) {
         match read_thread(&self.client, &thread_id).await {
             Ok(read) => match read.thread {
-                Some(thread) => self.apply_thread_with_lifecycle(thread, read.lifecycle),
+                Some(thread) => self.apply_resumed_thread(thread, read.lifecycle, read.before),
                 None => self.record_error(format!("thread not found: {}", short_id(&thread_id))),
             },
-            Err(err) => self.record_error(format!("thread/read failed: {err}")),
+            Err(err) => self.record_error(format!("thread resume failed: {err}")),
         }
     }
 
@@ -69,6 +72,15 @@ where
         &mut self,
         thread: Thread,
         lifecycle: TurnLifecycleSnapshot,
+    ) {
+        self.apply_resumed_thread(thread, lifecycle, None);
+    }
+
+    pub(super) fn apply_resumed_thread(
+        &mut self,
+        thread: Thread,
+        lifecycle: TurnLifecycleSnapshot,
+        before: Option<String>,
     ) {
         let thread_id = thread.id.clone();
         let active_turn_id = thread.status.active_turn_id.clone();
@@ -114,13 +126,17 @@ where
             .or_else(|| (!thread.preview.trim().is_empty()).then(|| thread.preview.clone()));
         self.thread_message_count = message_count_from_thread(&thread);
 
-        let items = resume_items(thread.turns.as_deref().unwrap_or_default());
+        let mut seen = HashSet::new();
+        let items = take_unseen_items(thread.turns.as_deref().unwrap_or_default(), &mut seen);
         let item_count = items.len();
         let (older_items, visible_items) = split_resume_items(items);
         self.resume_history = ResumeHistoryState {
             older_items,
             loaded_items: visible_items.len(),
             total_items: item_count,
+            before,
+            seen,
+            pending: None,
         };
         self.replay_resume_items(&visible_items);
 
@@ -129,27 +145,18 @@ where
         }
 
         self.timeline.push_system(format!(
-            "resumed thread {} with {} saved item{}.",
+            "resumed thread {} with {item_count} {}saved item{}.",
             short_id(&thread_id),
-            item_count,
-            if item_count == 1 { "" } else { "s" }
+            if self.resume_history.before.is_some() {
+                "recent "
+            } else {
+                ""
+            },
+            plural_s(item_count),
         ));
         if self.resume_history.has_older_items() {
-            self.timeline.push_system(format!(
-                "showing latest {} saved item{}; scroll up to load {} older item{}.",
-                self.resume_history.loaded_items,
-                if self.resume_history.loaded_items == 1 {
-                    ""
-                } else {
-                    "s"
-                },
-                self.resume_history.older_items.len(),
-                if self.resume_history.older_items.len() == 1 {
-                    ""
-                } else {
-                    "s"
-                }
-            ));
+            self.timeline
+                .push_system("scroll up to load older saved items.");
         }
         if let Some(warning) = lifecycle_recovery_warning(&thread_id, &lifecycle) {
             self.timeline.push_system(warning);
@@ -159,37 +166,98 @@ where
     }
 
     pub(super) fn load_older_resume_history_if_needed(&mut self) {
-        if self.timeline.scroll_offset() > 0 || !self.resume_history.has_older_items() {
+        if self.focused_thread_id() != self.thread_id || self.timeline.scroll_offset() > 0 {
             return;
         }
 
-        let before_height = self.timeline_rendered_height();
-        let batch_start = self
-            .resume_history
-            .older_items
-            .len()
-            .saturating_sub(RESUME_OLDER_BATCH_ITEMS);
-        let batch = self.resume_history.older_items.split_off(batch_start);
-        let batch_len = batch.len();
-        self.replay_older_resume_items(&batch);
-        self.resume_history.loaded_items =
-            self.resume_history.loaded_items.saturating_add(batch_len);
-        let remaining = self.resume_history.older_items.len();
-        self.timeline.prepend_system(format!(
-            "loaded {batch_len} older saved item{} ({} remaining).",
-            if batch_len == 1 { "" } else { "s" },
-            remaining
-        ));
-        if remaining > 0 {
-            self.timeline.prepend_system(format!(
-                "scroll up to load {} more older saved item{}.",
-                remaining,
-                if remaining == 1 { "" } else { "s" }
-            ));
+        if !self.resume_history.older_items.is_empty() {
+            let batch_start = self
+                .resume_history
+                .older_items
+                .len()
+                .saturating_sub(RESUME_OLDER_BATCH_ITEMS);
+            let batch = self.resume_history.older_items.split_off(batch_start);
+            self.prepend_resume_batch(&batch);
+            return;
         }
+
+        if self.resume_history.pending.is_none()
+            && let Some(before) = self.resume_history.before.clone()
+        {
+            let client = self.client.clone();
+            let thread_id = self.thread_id.clone();
+            self.resume_history.pending = Some(tokio::spawn(async move {
+                let response = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    request_history_page(&client, &thread_id, Some(before)),
+                )
+                .await
+                .map_err(|_| anyhow::anyhow!("history request timed out"))?;
+                decode_response(response)
+            }));
+        }
+    }
+
+    pub(super) async fn poll_older_resume_history(&mut self) -> bool {
+        if !self
+            .resume_history
+            .pending
+            .as_ref()
+            .is_some_and(|pending| pending.is_finished())
+        {
+            return false;
+        }
+        let pending = self
+            .resume_history
+            .pending
+            .take()
+            .expect("finished history request");
+        let result = pending
+            .await
+            .map_err(anyhow::Error::new)
+            .and_then(|result| result);
+        if self.focused_thread_id() == self.thread_id {
+            let result = result.and_then(|page| self.apply_older_resume_page(page));
+            if let Err(error) = result {
+                self.record_error(format!("could not load older saved items: {error}"));
+            }
+        }
+        true
+    }
+
+    fn apply_older_resume_page(&mut self, page: ThreadHistoryReadResult) -> anyhow::Result<()> {
+        let thread = page
+            .thread
+            .filter(|thread| thread.id == self.thread_id)
+            .ok_or_else(|| anyhow::anyhow!("thread history is unavailable"))?;
+        let before = page_cursor(page.has_more, page.before)?;
+        anyhow::ensure!(
+            before.is_none() || before != self.resume_history.before,
+            "history cursor did not advance"
+        );
+        self.resume_history.before = before;
+        let batch = take_unseen_items(
+            thread.turns.as_deref().unwrap_or_default(),
+            &mut self.resume_history.seen,
+        );
+        self.resume_history.total_items += batch.len();
+        self.prepend_resume_batch(&batch);
+        Ok(())
+    }
+
+    fn prepend_resume_batch(&mut self, batch: &[Item]) {
+        if batch.is_empty() {
+            return;
+        }
+        let before_height = self.timeline_rendered_height();
+        let before_scroll = self.timeline.scroll_offset();
+        self.replay_older_resume_items(batch);
+        self.resume_history.loaded_items += batch.len();
         let after_height = self.timeline_rendered_height();
-        self.timeline
-            .preserve_scroll_after_prepend(after_height.saturating_sub(before_height));
+        self.timeline.preserve_scroll_after_prepend(
+            before_scroll,
+            after_height.saturating_sub(before_height),
+        );
     }
 
     fn replay_resume_items(&mut self, items: &[Item]) {
@@ -301,7 +369,25 @@ where
                     self.timeline.prepend_reasoning(text);
                 }
             }
-            Item::ToolExecution { .. } => {}
+            Item::ToolExecution {
+                id,
+                tool_name,
+                status,
+                input,
+                output,
+                error,
+                ..
+            } => {
+                if !is_stdin_tool(tool_name) {
+                    let arguments = input.as_ref().map(ToString::to_string).unwrap_or_default();
+                    self.timeline.prepend_saved_tool(
+                        format!("history:{id}"),
+                        ToolTimelineEntry::new(tool_name.clone(), arguments),
+                        *status,
+                        error.clone().or_else(|| output.clone()),
+                    );
+                }
+            }
             Item::RoutingDecision { decision, .. } => {
                 self.timeline
                     .prepend_system(routing_decision_summary(decision));
@@ -334,11 +420,29 @@ where
     }
 }
 
-fn resume_items(turns: &[Turn]) -> Vec<Item> {
+fn take_unseen_items(turns: &[Turn], seen: &mut HashSet<(String, String)>) -> Vec<Item> {
     turns
         .iter()
-        .flat_map(|turn| turn.items.iter().cloned())
+        .flat_map(|turn| {
+            turn.items
+                .iter()
+                .map(move |item| ((turn.id.clone(), resume_item_id(item).to_string()), item))
+        })
+        .filter_map(|(key, item)| seen.insert(key).then(|| item.clone()))
         .collect()
+}
+
+fn resume_item_id(item: &Item) -> &str {
+    match item {
+        Item::UserMessage { id, .. }
+        | Item::AgentMessage { id, .. }
+        | Item::Reasoning { id, .. }
+        | Item::ToolExecution { id, .. }
+        | Item::RoutingDecision { id, .. }
+        | Item::Compaction { id, .. }
+        | Item::Error { id, .. }
+        | Item::Raw { id, .. } => id,
+    }
 }
 
 fn split_resume_items(items: Vec<Item>) -> (Vec<Item>, Vec<Item>) {
@@ -394,10 +498,137 @@ fn routing_decision_summary(decision: &roder_protocol::InferenceRoutingDecisionE
     format!("Auto {verb} {selected}{thinking}")
 }
 
-pub(super) async fn read_thread<C>(client: &C, thread_id: &str) -> anyhow::Result<ThreadReadResult>
-where
-    C: AppClient,
-{
+pub(super) struct ResumedThread {
+    pub thread: Option<Thread>,
+    pub lifecycle: TurnLifecycleSnapshot,
+    pub before: Option<String>,
+}
+
+pub(super) async fn read_thread<C: AppClient>(
+    client: &C,
+    thread_id: &str,
+) -> anyhow::Result<ResumedThread> {
+    let response = client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("thread/resume")),
+            method: "thread/resume".to_string(),
+            params: Some(
+                serde_json::to_value(ThreadResumeParams {
+                    thread_id: thread_id.to_string(),
+                    limit: Some(RESUME_VISIBLE_TAIL_ITEMS),
+                    max_bytes: None,
+                })
+                .unwrap(),
+            ),
+        })
+        .await;
+    if response
+        .error
+        .as_ref()
+        .is_some_and(|error| error.code == -32012 && error.message == "forbidden: missing_scope")
+    {
+        // A read-only session can still browse bounded history without opening
+        // a runtime session or running resume hooks.
+        let (page, read) = tokio::join!(
+            request_history_page(client, thread_id, None),
+            read_thread_snapshot(client, thread_id, false),
+        );
+        let mut page = decode_response::<ThreadHistoryReadResult>(page)?;
+        let read = read?;
+        page.thread = page.thread.or(read.thread);
+        return resumed_thread(thread_id, page, read.lifecycle);
+    }
+    if response.error.as_ref().is_some_and(|error| {
+        error.code == -32601
+            || matches!(
+                error.message.as_str(),
+                "thread store does not support bounded history pagination"
+                    | "thread history requires a thread store"
+                    | "thread/resume is unsupported by this backend"
+            )
+    }) {
+        let read = read_thread_snapshot(client, thread_id, true).await?;
+        return Ok(ResumedThread {
+            thread: read.thread,
+            lifecycle: read.lifecycle,
+            before: None,
+        });
+    }
+    let ThreadResumeResult {
+        history: mut page,
+        lifecycle,
+    } = decode_response(response)?;
+    if page.thread.is_none() {
+        // The thread may exist only in the current app-server instance.
+        let read = read_thread_snapshot(client, thread_id, false).await?;
+        page.thread = read.thread;
+        return resumed_thread(thread_id, page, read.lifecycle);
+    }
+    resumed_thread(thread_id, page, lifecycle)
+}
+
+fn resumed_thread(
+    thread_id: &str,
+    page: ThreadHistoryReadResult,
+    lifecycle: TurnLifecycleSnapshot,
+) -> anyhow::Result<ResumedThread> {
+    anyhow::ensure!(
+        page.thread
+            .as_ref()
+            .is_none_or(|thread| thread.id == thread_id),
+        "history response references another thread"
+    );
+    Ok(ResumedThread {
+        thread: page.thread,
+        lifecycle,
+        before: page_cursor(page.has_more, page.before)?,
+    })
+}
+
+async fn request_history_page<C: AppClient>(
+    client: &C,
+    thread_id: &str,
+    before: Option<String>,
+) -> roder_protocol::JsonRpcResponse {
+    let limit = if before.is_some() {
+        RESUME_OLDER_BATCH_ITEMS
+    } else {
+        RESUME_VISIBLE_TAIL_ITEMS
+    };
+    client
+        .send_request(JsonRpcRequest {
+            jsonrpc: "2.0".to_string(),
+            id: Some(serde_json::json!("thread/history/read")),
+            method: "thread/history/read".to_string(),
+            params: Some(
+                serde_json::to_value(ThreadHistoryReadParams {
+                    thread_id: thread_id.to_string(),
+                    before,
+                    limit: Some(limit),
+                    max_bytes: None,
+                })
+                .unwrap(),
+            ),
+        })
+        .await
+}
+
+fn page_cursor(has_more: bool, before: Option<String>) -> anyhow::Result<Option<String>> {
+    if !has_more {
+        return Ok(None);
+    }
+    let before = before
+        .filter(|cursor| !cursor.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("history page is missing its next cursor"))?;
+    Ok(Some(before))
+}
+
+async fn read_thread_snapshot<C: AppClient>(
+    client: &C,
+    thread_id: &str,
+    include_turns: bool,
+) -> anyhow::Result<ThreadReadResult> {
     let res = client
         .send_request(JsonRpcRequest {
             jsonrpc: "2.0".to_string(),
@@ -406,13 +637,13 @@ where
             params: Some(
                 serde_json::to_value(ThreadReadParams {
                     thread_id: thread_id.to_string(),
-                    include_turns: true,
+                    include_turns,
                 })
                 .unwrap(),
             ),
         })
         .await;
-    decode_response::<ThreadReadResult>(res)
+    decode_response(res)
 }
 
 fn lifecycle_recovery_warning(
@@ -464,6 +695,9 @@ fn title_from_thread(thread: &Thread) -> Option<String> {
 }
 
 fn message_count_from_thread(thread: &Thread) -> usize {
+    if let Some(message_count) = thread.message_count {
+        return message_count as usize;
+    }
     thread
         .turns
         .as_deref()

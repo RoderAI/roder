@@ -223,6 +223,7 @@ Threads and turns:
 | `thread/list` | List threads. |
 | `thread/read` | Read a thread with optional turns. |
 | `thread/history/read` | Read a bounded chronological item page without loading a complete snapshot. |
+| `thread/resume` | Resume a stored thread and return its first bounded history page and lifecycle snapshot. |
 | `thread/unload` | Cancel and drain work, then release live resources while preserving the conversation. |
 | `thread/archive` | Archive a thread and remove it from active listings. |
 | `thread/goal/get` | Read the thread goal state. |
@@ -1425,8 +1426,10 @@ Behavior:
 ### `thread/history/read`
 
 Read recent transcript items or an older page without hydrating a full thread.
-This is the history API for interactive clients; `thread/read` with
-`includeTurns: true` remains an explicit complete-snapshot operation.
+Use `thread/resume` to open an interactive session, then call this method
+with its cursor to load older history. A history read does not run resume
+hooks or reconcile lifecycle state. `thread/read` with `includeTurns: true`
+returns a complete snapshot.
 
 ```json
 {
@@ -1456,6 +1459,26 @@ by streaming committed log records once, without constructing a full snapshot.
 Subsequent reads and appends process only the indexed records or new log suffix.
 Stores and provider-specific backends without this capability report an
 explicit unsupported error; there is no full-read paging fallback.
+
+### `thread/resume`
+
+Open a stored session and return the first bounded page of its transcript.
+The request accepts `threadId`, `limit`, and `maxBytes` with the initial-page
+defaults from `thread/history/read`. For example:
+
+```json
+{"threadId": "thread-123", "limit": 160}
+```
+
+The result contains `thread`, `before`, and `hasMore` with the same shapes as
+`thread/history/read`, plus a `lifecycle` snapshot. The runtime reconciles
+stale turns and emits `ThreadLoaded`, which runs the session-start hook once
+for that thread in the runtime. Call `thread/history/read` with the returned
+cursor for older items. Hosted credentials require both read and write scopes.
+
+An unknown thread returns an empty page and an empty lifecycle snapshot.
+Stores and provider backends without bounded history return an unsupported
+error.
 
 ### `thread/read`
 

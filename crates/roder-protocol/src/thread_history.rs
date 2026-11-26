@@ -1,3 +1,4 @@
+use roder_api::lifecycle::TurnLifecycleSnapshot;
 use serde::{Deserialize, Serialize};
 
 use crate::Thread;
@@ -24,6 +25,26 @@ pub struct ThreadHistoryReadResult {
     pub thread: Option<Thread>,
     pub before: Option<String>,
     pub has_more: bool,
+}
+
+/// Resume a stored session and fetch its initial chronological history page.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ThreadResumeParams {
+    pub thread_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadResumeResult {
+    #[serde(flatten)]
+    pub history: ThreadHistoryReadResult,
+    #[serde(default)]
+    pub lifecycle: TurnLifecycleSnapshot,
 }
 
 #[cfg(test)]
