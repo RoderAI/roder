@@ -1,4 +1,5 @@
 ---
+roder: patch
 roder-app-server: minor
 roder-core: minor
 roder-edit-core: patch
