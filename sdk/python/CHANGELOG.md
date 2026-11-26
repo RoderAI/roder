@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.8 (2026-11-26)
+
+### Features
+
+#### Keep prompts durable and thread history responsive
+
+Record accepted prompts before interruptible execution and coordinate thread-list writes across processes. Bound hosted WebSocket backlogs, omit credentials from runner errors, and renew expired MCP sessions on the next request. Page terminal history on resume and preserve line endings when applying local and remote patches.
+
 ## 0.1.7 (2026-10-27)
 
 ### Fixes
