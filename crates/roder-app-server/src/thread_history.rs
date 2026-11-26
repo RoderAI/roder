@@ -1,5 +1,8 @@
 use roder_api::thread::{ThreadHistoryReadOptions, ThreadHistoryTurn, ThreadHistoryTurnStatus};
-use roder_protocol::{JsonRpcError, ThreadHistoryReadParams, ThreadHistoryReadResult, Turn};
+use roder_protocol::{
+    JsonRpcError, ThreadHistoryReadParams, ThreadHistoryReadResult, ThreadResumeParams,
+    ThreadResumeResult, Turn,
+};
 use serde_json::Value;
 
 use crate::server::{AppServer, internal_error};
@@ -9,6 +12,52 @@ impl AppServer {
         &self,
         params: ThreadHistoryReadParams,
     ) -> Result<Value, JsonRpcError> {
+        let result = self.read_thread_history_page(params).await?;
+        serde_json::to_value(result).map_err(internal_error)
+    }
+
+    pub(crate) async fn handle_thread_resume(
+        &self,
+        params: ThreadResumeParams,
+    ) -> Result<Value, JsonRpcError> {
+        let request = ThreadHistoryReadParams {
+            thread_id: params.thread_id,
+            before: None,
+            limit: params.limit,
+            max_bytes: params.max_bytes,
+        };
+        let mut history = self.read_thread_history_page(request.clone()).await?;
+        if history.thread.is_none() {
+            // Older local threads can have an event log but no metadata file.
+            // Loading metadata repairs that file before retrying the indexed read.
+            if self
+                .runtime
+                .load_thread_metadata(&request.thread_id)
+                .await
+                .map_err(internal_error)?
+                .is_some()
+            {
+                history = self.read_thread_history_page(request).await?;
+            }
+        }
+        let lifecycle = if let Some(thread) = history.thread.take() {
+            let lifecycle = self
+                .runtime
+                .resume_thread_history(&thread.id)
+                .await
+                .map_err(internal_error)?;
+            history.thread = Some(self.thread_with_live_status(thread).await);
+            lifecycle
+        } else {
+            Default::default()
+        };
+        serde_json::to_value(ThreadResumeResult { history, lifecycle }).map_err(internal_error)
+    }
+
+    async fn read_thread_history_page(
+        &self,
+        params: ThreadHistoryReadParams,
+    ) -> Result<ThreadHistoryReadResult, JsonRpcError> {
         let default_limit = if params.before.is_some() { 120 } else { 160 };
         let page = self
             .runtime
@@ -25,7 +74,7 @@ impl AppServer {
             )
             .await
             .map_err(internal_error)?;
-        let result = match page {
+        Ok(match page {
             Some(page) => {
                 let turns = page.turns.into_iter().map(protocol_history_turn).collect();
                 ThreadHistoryReadResult {
@@ -45,8 +94,7 @@ impl AppServer {
                 before: None,
                 has_more: false,
             },
-        };
-        serde_json::to_value(result).map_err(internal_error)
+        })
     }
 }
 

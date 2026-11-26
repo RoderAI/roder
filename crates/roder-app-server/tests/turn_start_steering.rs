@@ -116,7 +116,7 @@ impl ThreadStore for MetadataDroppingThreadStore {
         self.snapshots.lock().await.insert(
             metadata.thread_id.clone(),
             ThreadSnapshot {
-                metadata: None,
+                metadata: Some(metadata.clone()),
                 events: Vec::new(),
                 turns: Vec::new(),
                 item_events: Vec::new(),
@@ -130,8 +130,39 @@ impl ThreadStore for MetadataDroppingThreadStore {
         Ok(Vec::new())
     }
 
+    async fn load_thread_metadata(
+        &self,
+        thread_id: &ThreadId,
+    ) -> anyhow::Result<Option<ThreadMetadata>> {
+        Ok(self
+            .snapshots
+            .lock()
+            .await
+            .get(thread_id)
+            .and_then(|snapshot| snapshot.metadata.clone()))
+    }
+
+    async fn update_thread_metadata(
+        &self,
+        metadata: ThreadMetadata,
+    ) -> anyhow::Result<ThreadMetadata> {
+        let mut snapshots = self.snapshots.lock().await;
+        if let Some(snapshot) = snapshots.get_mut(&metadata.thread_id) {
+            snapshot.metadata = Some(metadata.clone());
+        }
+        Ok(metadata)
+    }
+
     async fn load_thread(&self, thread_id: &ThreadId) -> anyhow::Result<Option<ThreadSnapshot>> {
-        Ok(self.snapshots.lock().await.get(thread_id).cloned())
+        let snapshot = self.snapshots.lock().await.get(thread_id).cloned();
+        assert!(
+            tokio::task::try_id().is_some()
+                || snapshot
+                    .as_ref()
+                    .is_none_or(|snapshot| snapshot.metadata.is_some()),
+            "turn/start must not load a full snapshot to resolve the workspace fallback"
+        );
+        Ok(snapshot)
     }
 
     async fn append_event(
@@ -205,7 +236,8 @@ async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missin
     });
     let mut builder = ExtensionRegistryBuilder::new();
     builder.inference_engine(engine.clone());
-    builder.thread_store_factory(Arc::new(MetadataDroppingThreadStoreFactory::default()));
+    let store = Arc::new(MetadataDroppingThreadStoreFactory::default());
+    builder.thread_store_factory(store.clone());
     let runtime =
         Arc::new(Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap());
     let server = Arc::new(AppServer::new(runtime));
@@ -236,6 +268,16 @@ async fn turn_start_uses_protocol_thread_workspace_when_snapshot_metadata_missin
         ),
     )
     .await;
+
+    // The thread can lose its backing metadata after the server has established
+    // its own protocol mapping. Reproduce that state after thread/start succeeds.
+    store
+        .snapshots
+        .lock()
+        .await
+        .get_mut(&started.thread.id)
+        .unwrap()
+        .metadata = None;
 
     let turn: TurnStartResult = request(
         &client,

@@ -967,3 +967,6 @@ mod connection_policy;
 
 #[path = "hosted_gateway/process_loss.rs"]
 mod process_loss;
+
+#[path = "hosted_gateway/backpressure.rs"]
+mod backpressure;

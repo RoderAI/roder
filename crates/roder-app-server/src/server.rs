@@ -422,6 +422,13 @@ impl AppServer {
                 })
                 .await
             }
+            "thread/resume" => {
+                self.decode_and(
+                    req.params,
+                    |p| async move { self.handle_thread_resume(p).await },
+                )
+                .await
+            }
             "thread/read" => {
                 self.decode_and(
                     req.params,
@@ -2761,7 +2768,7 @@ impl AppServer {
         protocol_thread_from_metadata(metadata, turns, status)
     }
 
-    async fn thread_with_live_status(&self, mut thread: Thread) -> Thread {
+    pub(crate) async fn thread_with_live_status(&self, mut thread: Thread) -> Thread {
         thread.status = self.live_thread_status(&thread.id).await;
         thread
     }
@@ -3415,7 +3422,14 @@ impl AppServer {
             return Ok(serde_json::to_value(TurnStartResult { turn_id }).unwrap());
         }
 
-        let thread_selection = self.protocol_thread_model(&params.thread_id).await;
+        let metadata = self
+            .runtime
+            .load_thread_metadata(&params.thread_id)
+            .await
+            .map_err(internal_error)?;
+        let thread_selection = self
+            .protocol_thread_model_from_metadata(&params.thread_id, metadata.as_ref())
+            .await;
         let thread_manual_selection = thread_selection
             .as_ref()
             .filter(|selection| !selection.selection_mode.is_auto());
@@ -3436,23 +3450,19 @@ impl AppServer {
                 .then(|| thread_manual_selection.and_then(|selection| selection.reasoning.clone()))
                 .flatten()
         });
-        let protocol_thread_workspace = self
-            .protocol_threads
-            .read()
-            .await
-            .get(&params.thread_id)
-            .map(|thread| thread.cwd.clone());
-        let snapshot = self
-            .runtime
-            .load_thread(&params.thread_id)
-            .await
-            .map_err(internal_error)?;
-        let workspace = if let Some(metadata) = snapshot.and_then(|snapshot| snapshot.metadata) {
+        let workspace = if let Some(metadata) = metadata {
+            self.runtime
+                .prepare_stored_thread_for_turn(&params.thread_id)
+                .await
+                .map_err(internal_error)?;
             metadata.workspace
-        } else if let Some(workspace) = protocol_thread_workspace {
-            workspace
         } else {
-            return Err(not_found(format!("thread not found: {}", params.thread_id)));
+            self.protocol_threads
+                .read()
+                .await
+                .get(&params.thread_id)
+                .map(|thread| thread.cwd.clone())
+                .ok_or_else(|| not_found(format!("thread not found: {}", params.thread_id)))?
         };
         if let Some(token) = mcp_auth_token {
             roder_api::mcp_auth::set_thread_token(params.thread_id.clone(), token);
@@ -3684,26 +3694,36 @@ impl AppServer {
     }
 
     async fn protocol_thread_model(&self, thread_id: &str) -> Option<ProtocolThreadModelSelection> {
-        if let Some(selection) = self
+        let metadata = self
             .runtime
             .load_thread_metadata(thread_id)
             .await
             .ok()
-            .flatten()
-            .and_then(|metadata| {
-                if let Some(selection_mode) = metadata.selection_mode {
-                    return Some(ProtocolThreadModelSelection::from_selection_mode(
-                        selection_mode,
-                    ));
-                }
-                match (metadata.provider, metadata.model) {
-                    (Some(provider), Some(model)) => {
-                        Some(ProtocolThreadModelSelection::manual(provider, model, None))
-                    }
-                    _ => None,
-                }
-            })
-        {
+            .flatten();
+        self.protocol_thread_model_from_metadata(thread_id, metadata.as_ref())
+            .await
+    }
+
+    async fn protocol_thread_model_from_metadata(
+        &self,
+        thread_id: &str,
+        metadata: Option<&roder_api::thread::ThreadMetadata>,
+    ) -> Option<ProtocolThreadModelSelection> {
+        if let Some(selection) = metadata.and_then(|metadata| {
+            if let Some(selection_mode) = &metadata.selection_mode {
+                return Some(ProtocolThreadModelSelection::from_selection_mode(
+                    selection_mode.clone(),
+                ));
+            }
+            match (&metadata.provider, &metadata.model) {
+                (Some(provider), Some(model)) => Some(ProtocolThreadModelSelection::manual(
+                    provider.clone(),
+                    model.clone(),
+                    None,
+                )),
+                _ => None,
+            }
+        }) {
             return Some(selection);
         }
         self.protocol_thread_models

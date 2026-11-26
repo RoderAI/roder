@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "turn_start/persistence.rs"]
+mod persistence;
+
 impl Runtime {
     pub fn start_turn(
         self: &Arc<Self>,
@@ -107,9 +110,6 @@ impl Runtime {
                 .clone()
                 .unwrap_or_else(|| cfg.default_provider.clone());
             self.engine_for(&provider)?;
-            if !event_only {
-                self.thread_events.remember(&req).await;
-            }
             let turn_id = uuid::Uuid::new_v4().to_string();
             let mut initial_mailbox_ack = None;
             if let Some((team_id, member)) = &team_member {
@@ -132,6 +132,70 @@ impl Runtime {
                     });
                 }
             }
+            let start_events = match self
+                .prepare_turn_start(&req, &turn_id, cfg.runtime_profile)
+                .await
+            {
+                Ok(events) => events,
+                Err(error) => {
+                    self.teams
+                        .release_mailbox_reservations_for_turn(&turn_id)
+                        .await;
+                    return Err(error);
+                }
+            };
+
+            let team_status = if let Some((team_id, member)) = team_member {
+                let updated = match self
+                    .teams
+                    .update_member(&team_id, &member.id, |member| {
+                        member.current_turn_id = Some(turn_id.clone());
+                        member.status = TeamMemberStatus::Running;
+                        member.final_message = None;
+                        member.terminal_error = None;
+                    })
+                    .await
+                {
+                    Ok(updated) => updated,
+                    Err(error) => {
+                        drop(start_events);
+                        self.teams
+                            .release_mailbox_reservations_for_turn(&turn_id)
+                            .await;
+                        self.record_rejected_turn(&req.thread_id, &turn_id).await;
+                        return Err(error);
+                    }
+                };
+                updated
+                    .members
+                    .into_iter()
+                    .find(|candidate| candidate.id == member.id)
+                    .map(|member| {
+                        RoderEvent::TeamMemberStatusChanged(TeamMemberStatusChanged {
+                            team_id,
+                            member_id: member.id,
+                            member_thread_id: member.thread_id,
+                            status: TeamMemberStatus::Running,
+                            timestamp: OffsetDateTime::now_utc(),
+                        })
+                    })
+            } else {
+                None
+            };
+            if !event_only {
+                self.thread_events.remember(&req).await;
+            }
+            self.active_turn_contexts.write().await.insert(
+                turn_id.clone(),
+                InheritedTurnContext {
+                    workspace: req.workspace.clone(),
+                    instructions: req.instructions.clone(),
+                    developer_context: req.developer_context.clone(),
+                },
+            );
+            if let Some(status) = team_status {
+                self.emit(status).await;
+            }
             let (abort_handle, abort_registration) = AbortHandle::new_pair();
             let drain = Arc::new(TurnDrainHandle {
                 thread_id: req.thread_id.clone(),
@@ -148,71 +212,25 @@ impl Runtime {
                 steer_changed,
                 drain,
             };
-            self.active_turns
-                .write()
-                .await
-                .insert(turn_id.clone(), active);
-            self.record_turn_lifecycle(
-                req.thread_id.clone(),
-                turn_id.clone(),
-                TurnLifecycleState::Running,
-                TurnCleanupState::NotRequested,
-                None,
-            )
-            .await;
-            self.active_turn_contexts.write().await.insert(
-                turn_id.clone(),
-                InheritedTurnContext {
-                    workspace: req.workspace.clone(),
-                    instructions: req.instructions.clone(),
-                    developer_context: req.developer_context.clone(),
-                },
-            );
-            if let Some((team_id, member)) = team_member {
-                let updated = match self
-                    .teams
-                    .update_member(&team_id, &member.id, |member| {
-                        member.current_turn_id = Some(turn_id.clone());
-                        member.status = TeamMemberStatus::Running;
-                        member.final_message = None;
-                        member.terminal_error = None;
-                    })
-                    .await
-                {
-                    Ok(updated) => updated,
-                    Err(error) => {
-                        self.active_turns.write().await.remove(&turn_id);
-                        self.active_turn_contexts.write().await.remove(&turn_id);
-                        self.teams
-                            .release_mailbox_reservations_for_turn(&turn_id)
-                            .await;
-                        return Err(error);
-                    }
-                };
-                if let Some(member) = updated
-                    .members
-                    .into_iter()
-                    .find(|candidate| candidate.id == member.id)
-                {
-                    self.emit(RoderEvent::TeamMemberStatusChanged(
-                        TeamMemberStatusChanged {
-                            team_id,
-                            member_id: member.id,
-                            member_thread_id: member.thread_id,
-                            status: TeamMemberStatus::Running,
-                            timestamp: OffsetDateTime::now_utc(),
-                        },
-                    ))
-                    .await;
-                }
-            }
             self.goals.remember_turn_options(&req).await;
             let runtime = Arc::clone(self);
             let turn_req = req;
             let thread_id_for_task = turn_req.thread_id.clone();
             let turn_id_for_task = turn_id.clone();
             runtime.initialize_turn_usage(&turn_id).await;
+            self.active_turns
+                .write()
+                .await
+                .insert(turn_id.clone(), active);
+            let start_events = start_events.map(|prepared| {
+                let envelope = prepared.envelope().clone();
+                prepared.publish();
+                envelope
+            });
             tokio::spawn(async move {
+                for envelope in &start_events {
+                    runtime.dispatch_event_sinks(envelope).await;
+                }
                 let result = Abortable::new(
                     runtime.run_turn(
                         turn_req,
@@ -404,3 +422,7 @@ impl Runtime {
         })
     }
 }
+
+#[cfg(test)]
+#[path = "turn_start/tests.rs"]
+mod tests;

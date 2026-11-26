@@ -19,12 +19,17 @@
 //! connection holds a tenant lease so its runtime is never idle-evicted
 //! mid-session.
 
+mod outbound;
+
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use futures::{SinkExt, StreamExt};
+use futures::StreamExt;
+use outbound::{
+    Disconnect, OutboundMessage, OutboundQueue, WRITE_TIMEOUT, disconnected, write_frames,
+};
 use roder_api::identity::{AuthorizationDecision, HostedRequestContext, HostedRole, HostedScope};
 use roder_protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse};
 use time::OffsetDateTime;
@@ -358,33 +363,19 @@ async fn serve_connection(
     let mut executor_connection =
         super::executor_gateway::ExecutorConnection::new(app_server.clone());
 
-    let (mut ws_write, mut ws_read) = websocket.split();
+    let (ws_write, mut ws_read) = websocket.split();
     let connection_authorized = Arc::new(AtomicBool::new(true));
     let writer_authorized = connection_authorized.clone();
-    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<OutboundMessage>();
+    let (outbound_tx, outbound_rx, mut connection_disconnect) = OutboundQueue::new();
     let writer_server = app_server.clone();
     let mut writer_tasks = tokio::task::JoinSet::new();
-    writer_tasks.spawn(async move {
-        while let Some(outbound) = outbound_rx.recv().await {
-            if writer_server.runtime.ensure_execution_authority().is_err() {
-                writer_authorized.store(false, Ordering::Release);
-                let _ = ws_write.send(Message::Close(None)).await;
-                break;
-            }
-            let message = match outbound {
-                OutboundMessage::Control(message) => message,
-                OutboundMessage::Notification(message)
-                    if writer_authorized.load(Ordering::Acquire) =>
-                {
-                    message
-                }
-                OutboundMessage::Notification(_) => continue,
-            };
-            if ws_write.send(message).await.is_err() {
-                break;
-            }
-        }
-    });
+    writer_tasks.spawn(write_frames(
+        ws_write,
+        outbound_rx,
+        outbound_tx.disconnect_signal(),
+        move || writer_server.runtime.ensure_execution_authority().is_ok(),
+        move || writer_authorized.load(Ordering::Acquire),
+    ));
 
     // Notifications come from the tenant's own app-server, so everything on
     // this stream already belongs to this tenant; the read scope gates the
@@ -400,20 +391,7 @@ async fn serve_connection(
                 let notification = match notifications.recv().await {
                     Ok(notification) => notification,
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        for revoked in executor_server
-                            .external_tool_executors
-                            .revoke_connection(&executor_id, "uncertain")
-                            .await
-                        {
-                            super::executor_gateway::revoke(
-                                &executor_server,
-                                revoked,
-                                "notification_lag",
-                            )
-                            .await;
-                        }
-                        let _ =
-                            notification_tx.send(OutboundMessage::Control(Message::Close(None)));
+                        notification_tx.abort(Disconnect::NotificationLag);
                         break;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
@@ -438,9 +416,7 @@ async fn serve_connection(
                 let Ok(text) = serde_json::to_string(&notification) else {
                     continue;
                 };
-                if notification_tx
-                    .send(OutboundMessage::Notification(Message::Text(text.into())))
-                    .is_err()
+                if !notification_tx.send(OutboundMessage::Notification(Message::Text(text.into())))
                 {
                     break;
                 }
@@ -467,6 +443,8 @@ async fn serve_connection(
             break;
         }
         let message = tokio::select! {
+            biased;
+            _ = disconnected(&mut connection_disconnect) => break 'connection,
             _ = auth_revalidation.tick() => {
                 match revalidate_connection(
                     &authenticator,
@@ -700,56 +678,106 @@ async fn serve_connection(
                 continue;
             }
         };
-        let response = if let Some(response) =
-            super::executor_gateway::dispatch(&app_server, &executor_connection.id, &request).await
-        {
-            response
-        } else if request.method.starts_with("hosted/") {
-            handle_hosted_method(&context, &authenticator, &tenants, &audit, &hooks, request)
-        } else {
-            let method = request.method.clone();
-            let response = app_server.handle_request(request).await;
-            // Dispatch matching tenant hooks for lifecycle events
-            // (fire-and-forget; failures are bounded by the delivery
-            // service and recorded as redacted delivery records).
-            if response.error.is_none()
-                && let Some(event_kind) = hook_event_kind(&method)
+        if outbound_tx.is_aborted() {
+            break;
+        }
+        let binds_executor = request.method == "tools/bind_executor";
+        let executor_id = executor_connection.id.clone();
+        let dispatch = async {
+            if let Some(response) =
+                super::executor_gateway::dispatch(&app_server, &executor_id, &request).await
             {
-                let thread_id = response
-                    .result
-                    .as_ref()
-                    .and_then(|result| result.get("thread"))
-                    .and_then(|thread| thread.get("id"))
-                    .and_then(serde_json::Value::as_str)
-                    .map(str::to_string);
-                let payload = serde_json::json!({
-                    "kind": event_kind,
-                    "tenantId": context.tenant.tenant_id,
-                    "threadId": thread_id,
-                });
-                for hook in hooks.matching(&context.tenant.tenant_id, event_kind) {
-                    let delivery = hook_delivery.clone();
-                    let payload = payload.clone();
-                    let kind = event_kind.to_string();
-                    tokio::spawn(async move {
-                        let _ = delivery.deliver(&hook, &kind, &payload).await;
+                response
+            } else if request.method.starts_with("hosted/") {
+                handle_hosted_method(&context, &authenticator, &tenants, &audit, &hooks, request)
+            } else {
+                let method = request.method.clone();
+                let response = app_server.handle_request(request).await;
+                // Dispatch matching tenant hooks for lifecycle events
+                // (fire-and-forget; failures are bounded by the delivery
+                // service and recorded as redacted delivery records).
+                if response.error.is_none()
+                    && let Some(event_kind) = hook_event_kind(&method)
+                {
+                    let thread_id = response
+                        .result
+                        .as_ref()
+                        .and_then(|result| result.get("thread"))
+                        .and_then(|thread| thread.get("id"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string);
+                    let payload = serde_json::json!({
+                        "kind": event_kind,
+                        "tenantId": context.tenant.tenant_id,
+                        "threadId": thread_id,
                     });
+                    for hook in hooks.matching(&context.tenant.tenant_id, event_kind) {
+                        let delivery = hook_delivery.clone();
+                        let payload = payload.clone();
+                        let kind = event_kind.to_string();
+                        tokio::spawn(async move {
+                            let _ = delivery.deliver(&hook, &kind, &payload).await;
+                        });
+                    }
                 }
+                response
             }
-            response
+        };
+        tokio::pin!(dispatch);
+        let response = tokio::select! {
+            biased;
+            response = &mut dispatch => response,
+            _ = disconnected(&mut connection_disconnect) => {
+                // Release the socket before waiting for admitted work to finish.
+                // Keep the request admission guard until dispatch completes.
+                drop(ws_read);
+                notification_tasks.shutdown().await;
+                writer_tasks.shutdown().await;
+                let reason = *connection_disconnect.borrow();
+                if binds_executor {
+                    // Revoke after the only dispatch that can create a binding.
+                    (&mut dispatch).await;
+                    disconnect_executor(&mut executor_connection, reason).await;
+                } else {
+                    tokio::join!(disconnect_executor(&mut executor_connection, reason), &mut dispatch);
+                }
+                return;
+            }
         };
         if let Ok(text) = serde_json::to_string(&response) {
             let _ = outbound_tx.send(OutboundMessage::Control(Message::Text(text.into())));
         }
     }
-    executor_connection.close().await;
-    // Stop tenant notifications first, then close the outbound channel and
-    // let the writer drain any final authentication error + close frame.
-    notification_tasks.abort_all();
-    while notification_tasks.join_next().await.is_some() {}
+    drop(ws_read);
+    // Stop producing notifications before draining any terminal response.
+    notification_tasks.shutdown().await;
     drop(outbound_tx);
-    while writer_tasks.join_next().await.is_some() {}
+    let disconnect_reason = *connection_disconnect.borrow();
+    tokio::join!(
+        disconnect_executor(&mut executor_connection, disconnect_reason),
+        async {
+            if tokio::time::timeout(WRITE_TIMEOUT, writer_tasks.join_next())
+                .await
+                .is_err()
+            {
+                writer_tasks.shutdown().await;
+            }
+        }
+    );
     drop(lease);
+}
+
+async fn disconnect_executor(
+    executor: &mut super::executor_gateway::ExecutorConnection,
+    reason: Option<Disconnect>,
+) {
+    match reason {
+        Some(Disconnect::Overflow) => executor.disconnect_uncertain("outbound_backpressure").await,
+        Some(Disconnect::NotificationLag) => {
+            executor.disconnect_uncertain("notification_lag").await
+        }
+        _ => executor.close().await,
+    }
 }
 
 #[derive(Clone)]
@@ -757,15 +785,6 @@ struct AuthenticatedConnection {
     context: HostedRequestContext,
     bearer_token: String,
     forwarded: bool,
-}
-
-enum OutboundMessage {
-    /// Responses and terminal close frames that must still drain after an auth
-    /// failure so the client receives a useful, redacted reason.
-    Control(Message),
-    /// Tenant events that are discarded as soon as the connection loses
-    /// authorization, including events already queued by the subscriber task.
-    Notification(Message),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -863,12 +882,7 @@ fn denies_local_workspace(request: &JsonRpcRequest) -> bool {
     }
 }
 
-fn send_error(
-    outbound: &tokio::sync::mpsc::UnboundedSender<OutboundMessage>,
-    id: serde_json::Value,
-    code: i32,
-    message: &str,
-) {
+fn send_error(outbound: &OutboundQueue, id: serde_json::Value, code: i32, message: &str) {
     let response = JsonRpcResponse {
         jsonrpc: "2.0".to_string(),
         id: Some(id),

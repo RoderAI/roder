@@ -6,11 +6,10 @@ use std::sync::Arc;
 #[tokio::test]
 async fn runner_uses_codex_ordered_context_matching_and_moves() {
     let state = Arc::new(RecordingRunnerState::default());
-    state
-        .files
-        .lock()
-        .unwrap()
-        .insert("source.txt".into(), b"first\nold\nsecond\nold\n".to_vec());
+    state.files.lock().unwrap().insert(
+        "source.txt".into(),
+        b"first\r\nold\r\nsecond\r\nold\r\n".to_vec(),
+    );
     state
         .files
         .lock()
@@ -28,7 +27,7 @@ async fn runner_uses_codex_ordered_context_matching_and_moves() {
     );
     let files = state.files.lock().unwrap();
     assert!(!files.contains_key("source.txt"));
-    assert_eq!(files["dest.txt"], b"first\nold\nsecond\nnew\n");
+    assert_eq!(files["dest.txt"], b"first\r\nold\r\nsecond\r\nnew\r\n");
 }
 
 #[tokio::test]

@@ -2281,6 +2281,15 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "thread/resume",
+      "paramsType": "ThreadResumeParams",
+      "resultType": "ThreadResumeResult",
+      "stability": "stable",
+      "featureGroup": "thread",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "thread/roadmap/open",
       "paramsType": "ThreadRoadmapOpenParams",
       "resultType": "ThreadRoadmapOpenResult",
@@ -3159,6 +3168,7 @@ export const appServerMethods = [
   "thread/remove_fork",
   "thread/resolve_approval",
   "thread/resolve_user_input",
+  "thread/resume",
   "thread/roadmap/open",
   "thread/set_agent_swarm_mode",
   "thread/set_mode",

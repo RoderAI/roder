@@ -34,6 +34,10 @@ impl ExecutorConnection {
         self.cleanup("disconnected", "disconnected").await;
     }
 
+    pub(super) async fn disconnect_uncertain(&mut self, reason: &str) {
+        self.cleanup("uncertain", reason).await;
+    }
+
     async fn cleanup(&mut self, state: &'static str, reason: &str) {
         if self.closed {
             return;

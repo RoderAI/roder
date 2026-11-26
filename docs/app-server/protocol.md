@@ -17,7 +17,9 @@ for backend selection and policy mapping.
 | `initialize` | startup handshake | Return app-server status, capabilities, cwd, active model, and provider metadata. | Startup entrypoint. |
 | `thread/start` | new chat | Create a Roder thread with typed `selection` or legacy `model`, optional `modelProvider`, optional `reasoning`, required absolute `cwd`, and `ephemeral`. | Returns a protocol `Thread` with `selectionMode`; missing, empty, or relative cwd is rejected. |
 | `thread/list` | sidebar bootstrap/refresh | List persisted Roder threads as stable protocol `Thread` objects. | Pagination cursors are reserved. |
-| `thread/read` | thread switch | Read a persisted thread by `threadId`; include turns/items when `includeTurns` is true. | Returns `thread: null` when not found, plus a lifecycle snapshot with latest durable record per turn and a redacted corrupt-record count. |
+| `thread/resume` | thread switch | Resume a persisted thread with an initial bounded page. | Returns `thread`, lifecycle, and a cursor for `thread/history/read`. |
+| `thread/history/read` | older history | Fetch a bounded page using the previous page's `before` cursor. | Chronological items. Merge using turn and item IDs. |
+| `thread/read` | snapshot inspection | Read stored metadata or the complete transcript when `includeTurns` is true. | Returns `thread: null` when missing, plus the latest durable lifecycle record per turn and a redacted corrupt-record count. |
 | `thread/archive` | archive/delete thread action | Archive a persisted thread and remove in-memory protocol state for that thread. | `thread/list` no longer returns archived threads. |
 | `turn/start` | send prompt | Start a Roder turn on `threadId`, or queue same-turn steering when a turn is already active. Accepts protocol `input` text blocks and temporary `prompt` fallback. | Emits turn and item notifications for new turns; active-turn steering continues the existing turn. |
 | `turn/steer` | steer active turn | Send additional user input to the active turn, enforcing `expectedTurnId` when provided. | Requires an active turn. |

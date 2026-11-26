@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use anyhow::Context;
+use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
@@ -53,12 +54,11 @@ pub struct McpHttpClient {
     config: McpServerConfig,
     http: reqwest::Client,
     next_id: Arc<AtomicI64>,
-    session: Arc<Mutex<SessionState>>,
+    session: Arc<Mutex<Option<Arc<InitializedSession>>>>,
 }
 
-#[derive(Debug, Default)]
-struct SessionState {
-    initialized: bool,
+#[derive(Debug)]
+struct InitializedSession {
     session_id: Option<String>,
 }
 
@@ -72,7 +72,7 @@ impl McpHttpClient {
             config,
             http,
             next_id: Arc::new(AtomicI64::new(1)),
-            session: Arc::new(Mutex::new(SessionState::default())),
+            session: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -91,7 +91,7 @@ impl McpHttpClient {
             config,
             http: self.http.clone(),
             next_id: Arc::new(AtomicI64::new(1)),
-            session: Arc::new(Mutex::new(SessionState::default())),
+            session: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -141,7 +141,10 @@ impl McpHttpClient {
     /// Release a stateful HTTP MCP session. Stateless and non-deletable servers need no cleanup.
     pub async fn shutdown(&self) -> anyhow::Result<()> {
         let mut session = self.session.lock().await;
-        let Some(id) = session.session_id.as_deref() else {
+        let Some(id) = session
+            .as_ref()
+            .and_then(|current| current.session_id.as_deref())
+        else {
             return Ok(());
         };
         let mut request = self
@@ -157,13 +160,12 @@ impl McpHttpClient {
             request = request.header(name, value);
         }
         let response = request.send().await?;
-        if response.status() != reqwest::StatusCode::NOT_FOUND
-            && response.status() != reqwest::StatusCode::METHOD_NOT_ALLOWED
+        if response.status() != StatusCode::NOT_FOUND
+            && response.status() != StatusCode::METHOD_NOT_ALLOWED
         {
             response.error_for_status()?;
         }
-        session.session_id = None;
-        session.initialized = false;
+        *session = None;
         Ok(())
     }
 
@@ -174,14 +176,32 @@ impl McpHttpClient {
         method: &str,
         params: serde_json::Value,
     ) -> anyhow::Result<serde_json::Value> {
-        self.ensure_initialized().await?;
-        self.send_rpc(method, params).await
+        let session = self.ensure_initialized().await?;
+        let body = self.rpc_body(method, params);
+        let response = self.post(&body, session.session_id.as_deref()).await?;
+
+        if response.status() == StatusCode::NOT_FOUND && session.session_id.is_some() {
+            let mut current = self.session.lock().await;
+            // The server can reuse an ID when it creates a fresh session.
+            if current
+                .as_ref()
+                .is_some_and(|value| Arc::ptr_eq(value, &session))
+            {
+                *current = None;
+            }
+            // The caller owns any retry decision. A tool can have already acted.
+            return Err(self.expired_session_error());
+        }
+
+        let response = self.check_status(response).await?;
+        let message = parse_rpc_response(response).await?;
+        rpc_result(message)
     }
 
-    async fn ensure_initialized(&self) -> anyhow::Result<()> {
+    async fn ensure_initialized(&self) -> anyhow::Result<Arc<InitializedSession>> {
         let mut session = self.session.lock().await;
-        if session.initialized {
-            return Ok(());
+        if let Some(current) = session.as_ref() {
+            return Ok(current.clone());
         }
 
         let params = serde_json::json!({
@@ -190,34 +210,34 @@ impl McpHttpClient {
             "clientInfo": { "name": "roder-ext-mcp", "version": env!("CARGO_PKG_VERSION") }
         });
         let body = self.rpc_body("initialize", params);
-        let response = self.post(&body, session.session_id.as_deref()).await?;
-        if let Some(session_id) = header_string(&response, "mcp-session-id") {
-            session.session_id = Some(session_id);
-        }
+        let response = self.check_status(self.post(&body, None).await?).await?;
+        let session_id = header_string(&response, "mcp-session-id");
         let message = parse_rpc_response(response).await?;
         rpc_result(message)?;
 
-        // Required by the MCP lifecycle; stateless servers reply 202.
         let initialized = serde_json::json!({
             "jsonrpc": "2.0",
             "method": "notifications/initialized"
         });
-        let _ = self.post(&initialized, session.session_id.as_deref()).await;
+        // Some servers reject the notification. Preserve best-effort delivery
+        // but never publish a session the server has already reported expired.
+        let notified = self.post(&initialized, session_id.as_deref()).await;
+        if session_id.is_some()
+            && notified.is_ok_and(|response| response.status() == StatusCode::NOT_FOUND)
+        {
+            return Err(self.expired_session_error());
+        }
 
-        session.initialized = true;
-        Ok(())
+        let initialized = Arc::new(InitializedSession { session_id });
+        *session = Some(initialized.clone());
+        Ok(initialized)
     }
 
-    async fn send_rpc(
-        &self,
-        method: &str,
-        params: serde_json::Value,
-    ) -> anyhow::Result<serde_json::Value> {
-        let session_id = self.session.lock().await.session_id.clone();
-        let body = self.rpc_body(method, params);
-        let response = self.post(&body, session_id.as_deref()).await?;
-        let message = parse_rpc_response(response).await?;
-        rpc_result(message)
+    fn expired_session_error(&self) -> anyhow::Error {
+        anyhow::anyhow!(
+            "MCP server {} returned HTTP 404: session expired",
+            self.config.name
+        )
     }
 
     fn rpc_body(&self, method: &str, params: serde_json::Value) -> serde_json::Value {
@@ -250,12 +270,15 @@ impl McpHttpClient {
             request = request.header(key, value);
         }
 
-        let response = request
+        request
             .send()
             .await
-            .with_context(|| format!("POST {}", self.config.url))?;
+            .with_context(|| format!("POST {}", self.config.url))
+    }
+
+    async fn check_status(&self, response: reqwest::Response) -> anyhow::Result<reqwest::Response> {
         let status = response.status();
-        if !(status.is_success() || status.as_u16() == 202) {
+        if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             anyhow::bail!(
                 "MCP server {} returned HTTP {status}: {}",
