@@ -1,3 +1,4 @@
+mod args;
 #[cfg(test)]
 mod image_origin_tests;
 mod markdown;
@@ -220,10 +221,32 @@ struct ToolTimelineTool {
     status: ToolTimelineStatus,
     output: Option<String>,
     started_at: time::OffsetDateTime,
+    /// Set when the tool completes or fails; the row shows `finished_at - started_at`.
+    finished_at: Option<time::OffsetDateTime>,
     /// Live `agent_swarm` progress while the swarm is running, rendered as a
     /// "swarm: N/total done" tick until the final `<agent_swarm_result>` grid
     /// arrives.
     swarm_progress: Option<roder_api::subagents::AgentSwarmProgressSnapshot>,
+}
+
+impl ToolTimelineTool {
+    fn mark_finished_if_terminal(&mut self) {
+        match self.status {
+            ToolTimelineStatus::Running => self.finished_at = None,
+            ToolTimelineStatus::Completed | ToolTimelineStatus::Failed => {
+                self.finished_at.get_or_insert_with(local_now);
+            }
+        }
+    }
+
+    /// How long the tool ran, or has been running so far.
+    fn elapsed(&self, now: time::OffsetDateTime) -> time::Duration {
+        self.finished_at.unwrap_or(now) - self.started_at
+    }
+}
+
+fn local_now() -> time::OffsetDateTime {
+    time::OffsetDateTime::now_local().unwrap_or_else(|_| time::OffsetDateTime::now_utc())
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -298,7 +321,6 @@ pub(super) struct TimelineState {
     requested_detail: Option<ToolDetail>,
     scroll_accel: ScrollAccelState,
     settings: TimelineSettings,
-    turn_started_at: Option<time::OffsetDateTime>,
 }
 
 impl TimelineState {
@@ -592,8 +614,8 @@ impl TimelineState {
                 entry,
                 status: ToolTimelineStatus::Running,
                 output: None,
-                started_at: time::OffsetDateTime::now_local()
-                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
+                started_at: local_now(),
+                finished_at: None,
                 swarm_progress: None,
             }),
         });
@@ -624,12 +646,16 @@ impl TimelineState {
             roder_protocol::ThreadItemStatus::Completed => ToolTimelineStatus::Completed,
             roder_protocol::ThreadItemStatus::Failed => ToolTimelineStatus::Failed,
         };
+        // History items carry no timing; pin terminal ones so they don't count up.
+        let started_at = local_now();
+        let finished_at = (status != ToolTimelineStatus::Running).then_some(started_at);
         self.prepend_item(TimelineItemKind::Tool(ToolTimelineTool {
             tool_id,
             entry,
             status,
             output,
-            started_at: time::OffsetDateTime::now_utc(),
+            started_at,
+            finished_at,
             swarm_progress: None,
         }));
         self.image_previews.attach(0, paths);
@@ -696,6 +722,7 @@ impl TimelineState {
             } else {
                 ToolTimelineStatus::Completed
             };
+            tool.mark_finished_if_terminal();
             if let Some(delta) = output_delta
                 .as_deref()
                 .filter(|text| !text.trim().is_empty())
@@ -742,6 +769,7 @@ impl TimelineState {
             } else {
                 ToolTimelineStatus::Completed
             };
+            tool.mark_finished_if_terminal();
             tool.output = output.filter(|text| !text.trim().is_empty());
             if !failed {
                 let paths = tool_image_paths(
@@ -1312,12 +1340,6 @@ impl TimelineState {
     }
 
     fn push_item(&mut self, kind: TimelineItemKind) {
-        if let TimelineItemKind::User(_) = &kind {
-            self.turn_started_at = Some(
-                time::OffsetDateTime::now_local()
-                    .unwrap_or_else(|_| time::OffsetDateTime::now_utc()),
-            );
-        }
         self.items.push(TimelineItem { kind });
         self.invalidate_render_cache();
         self.follow_live_updates_from_composer();
@@ -1622,7 +1644,7 @@ impl TimelineState {
         let visible_tools = &tool_visibility.visible;
         let mut overflow_insertions = tool_visibility.overflow_insertions.iter().peekable();
         let latest_reasoning_index = self.latest_reasoning_index();
-        let mut last_timestamp = self.turn_started_at;
+        let now = local_now();
         for (index, item) in self.items.iter().enumerate() {
             while let Some(overflow) = overflow_insertions.next_if(|overflow| overflow.0 == index) {
                 let line_start = lines.len();
@@ -1669,14 +1691,11 @@ impl TimelineState {
                 width,
                 animation_frame,
                 self.settings.message_folding,
-                last_timestamp,
+                now,
                 &mut lines,
             );
             self.image_previews
                 .append_rows(index, theme, width, &mut lines);
-            if let TimelineItemKind::Tool(tool) = &item.kind {
-                last_timestamp = Some(tool.started_at);
-            }
             visual_row =
                 map_rendered_lines(&lines, line_start, visual_row, width, index, &mut row_items);
             if self.should_separate_visible_item(

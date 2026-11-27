@@ -9,6 +9,7 @@ use super::super::Theme;
 use super::super::stream_animation::{
     AnimatedText, StreamFadePalette, animated_markdown_lines, animated_plain_lines,
 };
+use super::args::{RELATIVE_TIME_COLUMN_WIDTH, format_tool_arguments};
 use super::is_shell_like_tool;
 use super::markdown::markdown_lines;
 use super::patch_preview::{tool_diff_preview, tool_diff_preview_lines};
@@ -28,7 +29,7 @@ impl TimelineItem {
         width: u16,
         animation_frame: u64,
         message_folding: bool,
-        prev_timestamp: Option<OffsetDateTime>,
+        now: OffsetDateTime,
         lines: &mut Vec<Line<'static>>,
     ) {
         match &self.kind {
@@ -214,7 +215,7 @@ impl TimelineItem {
                     theme,
                     width,
                     animation_frame,
-                    prev_timestamp,
+                    now,
                     lines,
                 );
             }
@@ -283,7 +284,7 @@ impl ToolTimelineTool {
         theme: Theme,
         width: u16,
         animation_frame: u64,
-        prev_timestamp: Option<OffsetDateTime>,
+        now: OffsetDateTime,
         lines: &mut Vec<Line<'static>>,
     ) {
         // 1. Calculate symbol and style
@@ -312,14 +313,11 @@ impl ToolTimelineTool {
             self.started_at.minute(),
             self.started_at.second()
         );
-        let rel_str = if let Some(prev) = prev_timestamp {
-            let diff = self.started_at - prev;
-            format_relative_seconds(diff.whole_seconds().unsigned_abs())
-        } else {
-            "0s".to_string()
-        };
+        let rel_str = format_tool_elapsed(self.elapsed(now));
 
         // 5. Layout calculation
+        // Right-align the duration in a fixed column so timestamps line up across rows.
+        let rel_str = format!("{rel_str:>RELATIVE_TIME_COLUMN_WIDTH$}");
         let right_width = 8 + 2 + rel_str.chars().count(); // HH:MM:SS  relative time
 
         // Left width excluding args:
@@ -623,7 +621,13 @@ fn ansi_color(index: u16, bright: bool) -> Color {
     Color::Indexed((if bright { 8 } else { 0 } + index) as u8)
 }
 
-fn format_relative_seconds(total_seconds: u64) -> String {
+/// Compact tool runtime: tenths under 10s so quick tools aren't all `0s`.
+fn format_tool_elapsed(elapsed: time::Duration) -> String {
+    let millis = elapsed.whole_milliseconds().max(0) as u64;
+    if millis < 10_000 {
+        return format!("{}.{}s", millis / 1_000, (millis % 1_000) / 100);
+    }
+    let total_seconds = millis / 1_000;
     let minutes = total_seconds / 60;
     let seconds = total_seconds % 60;
     if minutes == 0 {
@@ -1157,59 +1161,6 @@ fn tool_status_symbol_and_style(
             }
         }
     }
-}
-
-fn format_tool_arguments(arguments_json: &str) -> String {
-    let trimmed = arguments_json.trim();
-    if trimmed.is_empty() || trimmed == "{}" {
-        return String::new();
-    }
-    let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
-        return trimmed.to_string();
-    };
-    let serde_json::Value::Object(map) = val else {
-        return trimmed.to_string();
-    };
-
-    let mut parts = Vec::new();
-    let main_keys = ["path", "query", "pattern", "command", "cmd", "url"];
-    let mut handled = std::collections::HashSet::new();
-    for key in main_keys {
-        if let Some(v) = map.get(key) {
-            let s = match v {
-                serde_json::Value::String(text) => text.clone(),
-                other => other.to_string(),
-            };
-            if !s.is_empty() {
-                parts.push(s);
-            }
-            handled.insert(key.to_string());
-        }
-    }
-
-    let mut keys: Vec<&String> = map.keys().collect();
-    keys.sort();
-    for key in keys {
-        if handled.contains(key) {
-            continue;
-        }
-        let v = map.get(key).unwrap();
-        if v.is_null() {
-            continue;
-        }
-        if let serde_json::Value::String(s) = v
-            && s.is_empty()
-        {
-            continue;
-        }
-        let val_str = match v {
-            serde_json::Value::String(s) => s.clone(),
-            other => other.to_string(),
-        };
-        parts.push(format!("{}={}", key, val_str));
-    }
-
-    parts.join("  ")
 }
 
 fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
