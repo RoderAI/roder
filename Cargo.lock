@@ -3695,7 +3695,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3745,7 +3745,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4033,7 +4033,7 @@ dependencies = [
 
 [[package]]
 name = "roder-evals"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4128,7 +4128,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -5403,7 +5403,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.4.10"
+version = "0.4.11"
 dependencies = [
  "anyhow",
  "async-trait",

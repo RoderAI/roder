@@ -81,7 +81,7 @@ uuid = "1.29.0"
 wasm-bindgen = "0.2.129"
 which = "8.0.6"
 
-roder-api = { path = "crates/roder-api", version = "0.3.5" }
+roder-api = { path = "crates/roder-api", version = "0.3.6" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.3.0" }
 roder-app-server = { path = "crates/roder-app-server", version = "0.7.7" }
@@ -100,7 +100,7 @@ roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.3.2" }
 roder-ext-cua = { path = "crates/roder-ext-cua", version = "0.2.1" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.3.5" }
 roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.6.3" }
-roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.2" }
+roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.3" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.3.1" }
 roder-ext-deepseek = { path = "crates/roder-ext-deepseek", version = "0.3.2" }
 roder-ext-hopper = { path = "crates/roder-ext-hopper", version = "0.1.2" }
@@ -166,7 +166,7 @@ roder-ext-xai = { path = "crates/roder-ext-xai", version = "0.3.0" }
 roder-ext-xiaomi-mimo = { path = "crates/roder-ext-xiaomi-mimo", version = "0.3.2" }
 roder-ext-zerolang = { path = "crates/roder-ext-zerolang", version = "0.3.0" }
 roder-extension-host = { path = "crates/roder-extension-host", version = "0.7.5" }
-roder-evals = { path = "crates/roder-evals", version = "0.4.1" }
+roder-evals = { path = "crates/roder-evals", version = "0.4.2" }
 roder-protocol = { path = "crates/roder-protocol", version = "0.5.1" }
 roder-sandbox = { path = "crates/roder-sandbox", version = "0.3.0" }
 roder-search = { path = "crates/roder-search", version = "0.1.0" }
@@ -174,7 +174,7 @@ roder-skills = { path = "crates/roder-skills", version = "0.3.0" }
 roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.3.0" }
 roder-tools = { path = "crates/roder-tools", version = "0.3.4" }
-roder-tui = { path = "crates/roder-tui", version = "0.4.10" }
+roder-tui = { path = "crates/roder-tui", version = "0.4.11" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
 [profile.dev]
