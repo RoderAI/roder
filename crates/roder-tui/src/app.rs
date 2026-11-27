@@ -9989,6 +9989,12 @@ impl ContextWindowBreakdown {
     }
 
     fn record_usage(&mut self, usage: &TokenUsage) {
+        // Usage carrying `context_tokens` aggregates several model requests;
+        // its prompt count is not one prompt. Providers that report it also
+        // report each request, which is what the breakdown sizes from.
+        if usage.context_tokens.is_some() {
+            return;
+        }
         self.prompt_tokens = self.prompt_tokens.max(u64::from(usage.prompt_tokens));
         self.cached_prompt_tokens = self
             .cached_prompt_tokens
@@ -10367,8 +10373,9 @@ fn record_usage_counters(
         *thread_tokens = thread_tokens.saturating_add(u64::from(delta));
         *current_turn_total_tokens = total_tokens;
     }
-    if total_tokens > 0 {
-        *context_window_tokens = u64::from(total_tokens);
+    let context_tokens = usage.context_window_tokens();
+    if context_tokens > 0 {
+        *context_window_tokens = u64::from(context_tokens);
     }
 }
 
@@ -12850,6 +12857,35 @@ mod tests {
 
         assert_eq!(entry.name, "read_file");
         assert!(entry.arguments.contains("roder-ext-claude-code"));
+    }
+
+    #[test]
+    fn context_window_uses_latest_request_when_usage_aggregates_requests() {
+        let mut input = 0;
+        let mut output = 0;
+        let mut turn_total = 0;
+        let mut thread_total = 0;
+        let mut context_total = 0;
+
+        // Two requests of a Claude Code turn, then the turn result that sums them.
+        for usage in [
+            TokenUsage::new(43_855, 16, 43_871),
+            TokenUsage::new(44_021, 138, 44_159),
+            TokenUsage::new(87_876, 154, 88_030).with_context_tokens(Some(44_159)),
+        ] {
+            record_usage_counters(
+                &mut input,
+                &mut output,
+                &mut turn_total,
+                &mut thread_total,
+                &mut context_total,
+                usage,
+            );
+        }
+
+        assert_eq!(context_total, 44_159);
+        assert_eq!(turn_total, 88_030);
+        assert_eq!(thread_total, 88_030);
     }
 
     #[test]

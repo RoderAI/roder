@@ -449,6 +449,10 @@ fn map_stream_events(
         // (`conversation_reset`): its history no longer matches the synced
         // transcript prefix, so the turn must not be committed for reuse.
         let mut conversation_reset = false;
+        // The CLI runs its own agent loop, so the turn result's usage sums every
+        // API request in the turn. Track the latest request separately: its
+        // prompt plus output is what occupies the context window.
+        let mut last_request = LastRequestUsage::default();
         let mut last_session_id: Option<String> = None;
         let mut last_stop_reason: Option<String> = None;
         // Tool-use ids for `mcp__roder__*` tools. Those tools are executed
@@ -579,6 +583,7 @@ fn map_stream_events(
                         continue;
                     }
                     if let Some(usage) = usage_from_response(&response) {
+                        last_request.observe(&usage);
                         yield InferenceEvent::Usage(usage);
                     }
                     if response.content.is_empty() {
@@ -607,7 +612,9 @@ fn map_stream_events(
                         });
                     }
                     if let Some(usage) = usage_from_response(&response) {
-                        yield InferenceEvent::Usage(usage);
+                        yield InferenceEvent::Usage(
+                            usage.with_context_tokens(last_request.context_tokens()),
+                        );
                     }
                     completed = true;
                     let session_id = (!response.session_id.trim().is_empty())
@@ -693,6 +700,32 @@ fn clear_session(continuity: &Arc<Mutex<SessionContinuity>>) {
     if let Ok(mut state) = continuity.lock() {
         state.session_id = None;
         state.synced.clear();
+    }
+}
+
+/// Prompt and output size of the most recent API request in a CLI turn.
+///
+/// The CLI reports one request's usage on several messages (each assistant
+/// content block, then the streamed `message_delta` carrying the final output
+/// count), so the latest values win rather than being summed. A
+/// `message_delta` may omit the prompt counts; the request's prompt is then
+/// kept from its assistant message.
+#[derive(Default)]
+struct LastRequestUsage {
+    prompt_tokens: u32,
+    completion_tokens: u32,
+}
+
+impl LastRequestUsage {
+    fn observe(&mut self, usage: &TokenUsage) {
+        if usage.prompt_tokens > 0 {
+            self.prompt_tokens = usage.prompt_tokens;
+        }
+        self.completion_tokens = usage.completion_tokens;
+    }
+
+    fn context_tokens(&self) -> Option<u32> {
+        (self.prompt_tokens > 0).then(|| self.prompt_tokens.saturating_add(self.completion_tokens))
     }
 }
 
@@ -899,6 +932,86 @@ mod tests {
             events
                 .iter()
                 .any(|event| matches!(event, InferenceEvent::Completed(_)))
+        );
+    }
+
+    #[tokio::test]
+    async fn turn_usage_reports_the_last_request_as_context() {
+        fn usage(
+            input: u64,
+            created: u64,
+            read: u64,
+            output: u64,
+        ) -> Option<std::collections::HashMap<String, serde_json::Value>> {
+            Some(std::collections::HashMap::from([
+                ("input_tokens".to_string(), json!(input)),
+                ("cache_creation_input_tokens".to_string(), json!(created)),
+                ("cache_read_input_tokens".to_string(), json!(read)),
+                ("output_tokens".to_string(), json!(output)),
+                (
+                    "cache_creation".to_string(),
+                    json!({"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": created}),
+                ),
+            ]))
+        }
+        fn message(
+            usage: Option<std::collections::HashMap<String, serde_json::Value>>,
+        ) -> MessageResponse {
+            MessageResponse {
+                content: String::new(),
+                blocks: Vec::new(),
+                model: String::new(),
+                stop_reason: None,
+                session_id: "session".to_string(),
+                usage,
+            }
+        }
+        // Shapes captured from `claude -p --output-format stream-json`: two
+        // requests (a tool call, then the answer), then the turn result whose
+        // usage sums both.
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(FakeRunner {
+                events: vec![
+                    StreamEvent::Complete(message(usage(2, 32_042, 11_811, 16))),
+                    StreamEvent::Complete(message(usage(2, 166, 43_853, 2))),
+                    StreamEvent::Complete(message(usage(2, 166, 43_853, 138))),
+                    StreamEvent::TurnComplete(message(usage(4, 32_208, 55_664, 154))),
+                ],
+            }),
+        );
+        let events = engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request(),
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let usages = events
+            .iter()
+            .filter_map(|event| match event {
+                InferenceEvent::Usage(usage) => Some(usage.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let turn = usages.last().unwrap();
+        assert_eq!(turn.prompt_tokens, 87_876);
+        assert_eq!(turn.completion_tokens, 154);
+        assert_eq!(turn.context_tokens, Some(44_021 + 138));
+        assert_eq!(turn.context_window_tokens(), 44_159);
+        assert!(
+            usages[..usages.len() - 1]
+                .iter()
+                .all(|usage| usage.context_tokens.is_none())
         );
     }
 
@@ -1361,6 +1474,20 @@ mod tests {
             )),
             "mcp__ tool lifecycle events must not be surfaced from the CLI stream"
         );
+    }
+
+    #[test]
+    fn last_request_usage_keeps_the_latest_prompt_and_output() {
+        let mut last = LastRequestUsage::default();
+        assert_eq!(last.context_tokens(), None);
+        // Request 1: assistant message, then a message_delta without prompt counts.
+        last.observe(&TokenUsage::new(43_855, 16, 43_871));
+        last.observe(&TokenUsage::new(0, 30, 30));
+        assert_eq!(last.context_tokens(), Some(43_885));
+        // Request 2 replaces request 1 rather than adding to it.
+        last.observe(&TokenUsage::new(44_021, 2, 44_023));
+        last.observe(&TokenUsage::new(44_021, 138, 44_159));
+        assert_eq!(last.context_tokens(), Some(44_159));
     }
 
     #[test]
