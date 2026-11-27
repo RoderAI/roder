@@ -1,0 +1,38 @@
+name: OpenClaw plugin
+
+on:
+  pull_request:
+    paths:
+      - 'packages/openclaw/**'
+      - '.github/workflows/openclaw.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/openclaw/**'
+      - '.github/workflows/openclaw.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24.22.1', '26.12.1']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Test standalone plugin without installing a host
+        working-directory: packages/openclaw
+        run: npm test
+      - name: Validate distributable package
+        working-directory: packages/openclaw
+        run: npm pack --dry-run

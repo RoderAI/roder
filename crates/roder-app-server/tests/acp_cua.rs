@@ -16,6 +16,9 @@ impl InferenceEngine for DecisionEngine {
     fn capabilities(&self) -> InferenceCapabilities {
         InferenceCapabilities::coding_agent_default()
     }
+    fn tool_result_image_input(&self, _: &str) -> bool {
+        true
+    }
     async fn list_models(
         &self,
         _: InferenceProviderContext<'_>,
@@ -342,6 +345,7 @@ async fn exercise(mode: PolicyMode, refuse_click: bool, backend: CuaBackend) {
     .unwrap()
     .unwrap()
     .unwrap();
+    assert!(response.error.is_none(), "{:?}", response.error);
     assert_eq!(response.result.unwrap()["stopReason"], "end_turn");
     let notifications = peer.notifications.lock().await;
     let updates: Vec<_> = notifications

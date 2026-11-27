@@ -45,6 +45,10 @@ EXTRA_PACKAGES: dict[str, tuple[list[str], str]] = {
         ["packages/edit-tools/package.json"],
         "packages/edit-tools/CHANGELOG.md",
     ),
+    "roder-openclaw": (
+        ["packages/openclaw/package.json"],
+        "packages/openclaw/CHANGELOG.md",
+    ),
 }
 
 HEADER = """\

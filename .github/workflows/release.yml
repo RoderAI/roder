@@ -26,6 +26,7 @@ jobs:
        (github.head_ref == 'knope/release' && github.event.pull_request.merged == true))
     outputs:
       cli_changed: ${{ steps.packages.outputs.cli_changed }}
+      openclaw_changed: ${{ steps.openclaw.outputs.changed }}
     permissions:
       contents: write
     steps:
@@ -49,6 +50,22 @@ jobs:
             echo "cli_changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "cli_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect OpenClaw plugin version change
+        id: openclaw
+        shell: bash
+        env:
+          BASE_SHA: ${{ inputs.base_sha || github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          before="$(git show "$BASE_SHA:packages/openclaw/package.json" 2>/dev/null || true)"
+          before_version="$(printf '%s' "$before" | python3 -c 'import json,sys; s=sys.stdin.read(); print(json.loads(s)["version"] if s.strip() else "")')"
+          after_version="$(python3 -c 'import json; print(json.load(open("packages/openclaw/package.json"))["version"])')"
+          if [[ "$before_version" != "$after_version" ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Install knope
@@ -273,5 +290,17 @@ jobs:
       actions: read
       id-token: write
     uses: ./.github/workflows/cli-npm-release.yml
+    with:
+      release_sha: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}
+
+  openclaw-npm:
+    name: Publish OpenClaw plugin to npm
+    needs: release
+    if: needs.release.outputs.openclaw_changed == 'true'
+    permissions:
+      contents: read
+      id-token: write
+    # knope uses GITHUB_TOKEN, whose new tags cannot trigger another workflow.
+    uses: ./.github/workflows/openclaw-release.yml
     with:
       release_sha: ${{ inputs.release_sha || github.event.pull_request.merge_commit_sha }}

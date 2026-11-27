@@ -33,6 +33,7 @@
     --subtle:             #6b6b6b;
     --accent:             var(--indigo);
     --accent-soft:        var(--blue);
+    --user-message-bg:    var(--paper-elev);
     --tool:               var(--blue);
     --diff-added:         var(--green);
     --diff-added-bg:      var(--add-bg);

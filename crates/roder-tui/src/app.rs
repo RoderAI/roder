@@ -46,6 +46,7 @@ mod subagent_trace_tests;
 #[allow(dead_code)]
 mod team_panes;
 mod team_ui;
+mod terminal_theme;
 mod thread_resume;
 mod tool_detail;
 mod tool_timeline;
@@ -321,7 +322,10 @@ enum TerminalColorDepth {
 
 impl Theme {
     fn for_terminal() -> Self {
-        Self::for_terminal_capabilities(detect_dark_background(), detect_terminal_color_depth())
+        Self::for_terminal_background(
+            terminal_theme::detect_dark_background(),
+            detect_terminal_color_depth(),
+        )
     }
 
     fn for_terminal_capabilities(dark: bool, color_depth: TerminalColorDepth) -> Self {
@@ -10370,19 +10374,6 @@ fn centered_rect(area: Rect, width: u16, height: u16) -> Rect {
         width.min(area.width),
         height.min(area.height),
     )
-}
-
-fn detect_dark_background() -> bool {
-    std::env::var("COLORFGBG")
-        .ok()
-        .and_then(|value| {
-            value
-                .rsplit(';')
-                .next()
-                .and_then(|bg| bg.parse::<u8>().ok())
-        })
-        .map(|bg| matches!(bg, 0..=6 | 8))
-        .unwrap_or(true)
 }
 
 fn detect_terminal_color_depth() -> TerminalColorDepth {

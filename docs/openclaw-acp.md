@@ -1,5 +1,11 @@
 # Use Roder with ACPx and OpenClaw
 
+> **Direct plugin alternative:** [Roder's OpenClaw runtime
+> plugin](../packages/openclaw/README.md) launches `roder acp` directly with
+> `acp.backend: "roder"` and plugin id `roder`, without ACPx. This guide remains
+> the ACPx path (`acp.backend: "acpx"`); its `plugins.entries.acpx` settings do
+> not configure the direct plugin. Use one backend at a time.
+
 Users can run Roder through ACPx and OpenClaw today by registering a local command
 named `roder`. An entry in the upstream agent registry is not required.
 

@@ -6632,6 +6632,29 @@ remains on disk for a later load/resume; prompt calls against a detached ID fail
 until it is reopened. Closing an unknown or detached ACP ID returns `-32002`.
 Cleanup failures retain the mapping for retry and return a server error.
 
+### ACP prompt terminal results
+
+`session/prompt` streams `session/update` notifications before its JSON-RPC
+response. Successful responses contain the ACP `stopReason`; cancellation
+returns `{"stopReason":"cancelled"}` rather than an error.
+
+A failed native turn instead returns `-32603`, even if partial output was
+already streamed:
+
+```json
+{"jsonrpc":"2.0","id":4,"error":{"code":-32603,"message":"Inference provider failed","data":{"threadId":"thread-123","turnId":"turn-456","error":{"message":"Inference provider failed"}}}}
+```
+
+The message and `data.error` come from the native turn error. If there is no
+nonempty native error message, the message is `"Roder turn failed"`;
+`data.error` may be null. This code is distinct from ACP's authentication error
+(`-32000`). The session remains available for another prompt.
+
+The adapter waits for native turn teardown before settling the prompt, so an
+immediate follow-up cannot steer an already-finished turn. If teardown does not
+finish within 30 seconds, the prompt returns `-32603` rather than claiming
+success. Streamed text or tool activity alone is not a terminal success signal.
+
 These methods follow the [ACP v1 session lifecycle](https://agentclientprotocol.com/protocol/v1/session-setup).
 Model/mode selection, image prompts, MCP transports and host instructions are
 documented in [ACP integration](../roder-acp.md). Session deletion and additional

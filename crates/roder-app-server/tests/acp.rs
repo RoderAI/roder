@@ -357,3 +357,6 @@ mod lifecycle;
 
 #[path = "acp/capabilities.rs"]
 mod capabilities;
+
+#[path = "acp/failures.rs"]
+mod failures;
