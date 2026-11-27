@@ -498,6 +498,10 @@ For local ACPx registration and OpenClaw setup, see
 [Use Roder with ACPx and OpenClaw](docs/openclaw-acp.md). An upstream registry
 entry is not required.
 
+For a direct OpenClaw runtime backend that launches `roder acp` without ACPx,
+see the [Roder OpenClaw plugin](packages/openclaw/README.md), including local
+installation, gateway configuration, permissions, and persistent sessions.
+
 `roder acp` starts a stdio Agent Client Protocol endpoint backed by the Roder
 app-server runtime. The adapter targets the latest stable ACP v1 wire schema
 from `agent-client-protocol-schema` 0.13.8.

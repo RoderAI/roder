@@ -31,6 +31,9 @@ mod mcp;
 mod prompt;
 mod translation;
 
+#[cfg(test)]
+mod completion_tests;
+
 pub use auth::AcpAuthentication;
 
 pub(crate) use translation::acp_session_update;
@@ -359,14 +362,38 @@ fn notification_matches_turn(
             .is_some_and(|id| id == turn_id)
 }
 
-fn turn_completed_stop_reason(notification: &JsonRpcNotification) -> acp::StopReason {
+fn turn_completed_stop_reason(
+    notification: &JsonRpcNotification,
+) -> Result<acp::StopReason, JsonRpcError> {
     let status = notification
         .params
         .get("turn")
         .and_then(|turn| turn.get("status"))
         .and_then(serde_json::Value::as_str);
+    if status == Some("failed") {
+        let error = notification
+            .params
+            .get("turn")
+            .and_then(|turn| turn.get("error"))
+            .filter(|error| !error.is_null());
+        let message = error
+            .and_then(|error| error.get("message"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|message| !message.is_empty())
+            .unwrap_or("Roder turn failed");
+        return Err(JsonRpcError {
+            // ACP reserves the native server's -32000 for authentication.
+            code: -32603,
+            message: message.to_string(),
+            data: Some(serde_json::json!({
+                "threadId": notification.params.get("threadId"),
+                "turnId": notification.params.get("turn").and_then(|turn| turn.get("id")),
+                "error": error,
+            })),
+        });
+    }
     if status == Some("interrupted") {
-        return acp::StopReason::Cancelled;
+        return Ok(acp::StopReason::Cancelled);
     }
     let finish_reason = notification
         .params
@@ -374,13 +401,13 @@ fn turn_completed_stop_reason(notification: &JsonRpcNotification) -> acp::StopRe
         .and_then(|turn| turn.get("finishReason"))
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default();
-    match finish_reason {
+    Ok(match finish_reason {
         "length" | "max_tokens" => acp::StopReason::MaxTokens,
         "max_turn_requests" => acp::StopReason::MaxTurnRequests,
         "refusal" => acp::StopReason::Refusal,
         "cancelled" | "canceled" => acp::StopReason::Cancelled,
         _ => acp::StopReason::EndTurn,
-    }
+    })
 }
 
 fn notification_string(

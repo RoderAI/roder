@@ -153,6 +153,20 @@ pnpm pack --dry-run
 npm publish --access public --registry=https://registry.npmjs.org/
 ```
 
+The direct OpenClaw plugin is versioned as `roder-openclaw` and published as
+`@roderai/openclaw`. Its `roder-openclaw/v<version>` tag must resolve to the
+exact package source commit. `release.yml` invokes `openclaw-release.yml` when
+that package version changes, because tags created using `GITHUB_TOKEN` cannot
+trigger a second workflow. A manual tag push or workflow dispatch can also
+run the same publisher. The publisher runs the standalone tests while packing
+and uses npm trusted publishing with provenance; it has no npm token secret.
+
+Before the first automated publication, maintainers must create the npm package
+and configure its trusted publisher for repository `RoderAI/roder`, workflow
+`openclaw-release.yml`. Do not advertise a registry installation until that
+bootstrap is complete. Users can install a local tarball as described in the
+[plugin README](../packages/openclaw/README.md).
+
 For PyPI:
 
 ```sh

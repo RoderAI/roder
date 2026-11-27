@@ -1,0 +1,51 @@
+{
+  "name": "@roderai/openclaw",
+  "version": "0.1.0",
+  "description": "OpenClaw ACP runtime backend for Roder",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24.22.1 <25 || >=26.12.1"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "exports": {
+    ".": "./src/plugin.mjs",
+    "./runtime": "./src/runtime.mjs",
+    "./config": "./src/config.mjs",
+    "./plugin-factory": "./src/index.mjs"
+  },
+  "files": [
+    "src",
+    "openclaw.plugin.json",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:integration": "node --test test/integration/*.test.mjs",
+    "test:host": "node --test test/integration/host.test.mjs",
+    "test:gateway": "node --test test/integration/gateway.test.mjs",
+    "prepack": "npm test"
+  },
+  "peerDependencies": {
+    "openclaw": "2026.10.9"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": true
+    }
+  },
+  "openclaw": {
+    "extensions": [
+      "./src/plugin.mjs"
+    ],
+    "compat": {
+      "pluginApi": "2026.10.9"
+    },
+    "build": {
+      "openclawVersion": "2026.10.9"
+    }
+  }
+}

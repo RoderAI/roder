@@ -853,6 +853,12 @@ versioned_files = [
 ]
 changelog = "packages/edit-tools/CHANGELOG.md"
 
+[packages."roder-openclaw"]
+versioned_files = [
+    "packages/openclaw/package.json",
+]
+changelog = "packages/openclaw/CHANGELOG.md"
+
 # Versions are driven exclusively by changesets, never by commit messages.
 [changes]
 ignore_conventional_commits = true

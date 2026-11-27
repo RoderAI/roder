@@ -1,0 +1,80 @@
+name: OpenClaw plugin npm
+
+on:
+  push:
+    tags: ['roder-openclaw/v*']
+  workflow_call:
+    inputs:
+      release_sha:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Exact tagged release commit to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    if: github.repository == 'RoderAI/roder'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    concurrency:
+      group: roder-openclaw-npm-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.22.1'
+          registry-url: https://registry.npmjs.org/
+      - name: Verify release tag matches the package and exact source commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/openclaw/package.json').version")"
+          tag="roder-openclaw/v$version"
+          test "$(git rev-parse "$tag^{commit}")" = "$(git rev-parse HEAD)"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            test "$GITHUB_REF" = "refs/tags/$tag"
+          fi
+      - name: Use npm with trusted publishing support
+        run: npm install --global npm@11.20.0
+      - name: Test and pack the exact release source
+        working-directory: packages/openclaw
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/roder-openclaw-npm"
+          npm pack --pack-destination "$RUNNER_TEMP/roder-openclaw-npm"
+      - name: Publish with npm trusted publishing and provenance
+        shell: bash
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/openclaw/package.json').version")"
+          package="@roderai/openclaw@$version"
+          # Permit a tag-triggered run to follow an already successful reusable run.
+          if npm view "$package" version --registry=https://registry.npmjs.org/ \
+              > "$RUNNER_TEMP/roder-openclaw-visible.txt" \
+              2> "$RUNNER_TEMP/roder-openclaw-visible.log"; then
+            test "$(cat "$RUNNER_TEMP/roder-openclaw-visible.txt")" = "$version"
+            echo "$package is already published"
+            exit 0
+          fi
+          # Network/authentication failures must not be mistaken for an absent version.
+          grep -Eq 'E404|404 Not Found' "$RUNNER_TEMP/roder-openclaw-visible.log"
+          npm publish "$RUNNER_TEMP"/roder-openclaw-npm/*.tgz \
+            --access public --provenance --registry=https://registry.npmjs.org/

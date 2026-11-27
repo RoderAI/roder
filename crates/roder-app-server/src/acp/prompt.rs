@@ -84,11 +84,44 @@ impl<C: AppClient> AcpAdapter<C> {
                 continue;
             }
             if notification.method == "turn/completed" {
-                let stop_reason = turn_completed_stop_reason(&notification);
+                // Native terminal events precede the runtime task's teardown.
+                // Do not release the ACP session while turn/start could still
+                // steer a new prompt into the already-finished native turn.
+                self.wait_for_native_turn_release(&session.thread_id, &started.turn_id)
+                    .await?;
+                let stop_reason = turn_completed_stop_reason(&notification)?;
                 return serde_json::to_value(acp::PromptResponse::new(stop_reason))
                     .map_err(internal_error);
             }
         }
+    }
+
+    async fn wait_for_native_turn_release(
+        &self,
+        thread_id: &str,
+        turn_id: &str,
+    ) -> Result<(), JsonRpcError> {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async {
+            loop {
+                let result: roder_protocol::ThreadReadResult = self
+                    .call(
+                        "thread/read",
+                        serde_json::json!({"threadId": thread_id, "includeTurns": false}),
+                    )
+                    .await?;
+                // session/close can unload the thread while its prompt drains.
+                // An unloaded thread no longer owns an active native turn.
+                let Some(thread) = result.thread else {
+                    return Ok(());
+                };
+                if thread.status.active_turn_id.as_deref() != Some(turn_id) {
+                    return Ok(());
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|_| internal_error("native turn cleanup did not finish within 30 seconds"))?
     }
 
     async fn handle_approval_request<P>(

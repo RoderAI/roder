@@ -98,6 +98,20 @@ plus an optional `nextCursor`. Pass that cursor unchanged for the next page.
 The native page size is 50. Cwd filtering occurs within each page, so an empty
 filtered page can still have a next cursor. Omit cwd to list all workspaces.
 
+## Prompt failures
+
+A native failed turn (including provider failures) returns a JSON-RPC error
+with code `-32603` from `session/prompt`, not a successful `end_turn` response.
+The message contains the native failure; `data` includes `threadId`, `turnId`
+and the native `error` object. The session remains available for another prompt.
+Cancellation instead returns a successful prompt response with stop reason
+`cancelled`. Streamed updates received before a failure remain partial output,
+not evidence that the prompt succeeded.
+
+The adapter waits for native turn teardown before settling a prompt, so an
+immediate follow-up starts a new turn rather than steering the finished one.
+Cleanup exceeding 30 seconds returns `-32603` rather than claiming success.
+
 ## Paseo host instructions
 
 `session/new` recognizes `_meta._paseo.systemPrompt` as a string and persists it

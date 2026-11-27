@@ -1,0 +1,67 @@
+{
+  "id": "roder",
+  "name": "Roder ACP Runtime",
+  "description": "Execute Roder through its native ACP server as an OpenClaw runtime backend.",
+  "categories": ["agent-runtimes"],
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "command": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$", "default": "roder" },
+      "args": { "type": "array", "items": { "type": "string", "pattern": "^[^\\u0000]*$" }, "default": ["acp"] },
+      "cwd": {
+        "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$",
+        "description": "Absolute working directory; defaults to the gateway working directory."
+      },
+      "permissionMode": { "type": "string", "enum": ["deny-all", "approve-reads", "approve-all"], "default": "deny-all" },
+      "requestTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 300000, "default": 30000 },
+      "cancelTimeoutMs": { "type": "integer", "minimum": 100, "maximum": 60000, "default": 5000 },
+      "maxMessageBytes": { "type": "integer", "minimum": 1024, "maximum": 67108864, "default": 16777216 },
+      "mcpServers": {
+        "type": "array", "default": [],
+        "items": {
+          "oneOf": [
+            {
+              "type": "object", "additionalProperties": false, "required": ["name", "command"],
+              "properties": {
+                "type": { "const": "stdio" },
+                "name": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$" },
+                "command": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$" },
+                "args": { "type": "array", "items": { "type": "string", "pattern": "^[^\\u0000]*$" } },
+                "env": {
+                  "type": "array",
+                  "items": {
+                    "type": "object", "additionalProperties": false, "required": ["name", "value"],
+                    "properties": {
+                      "name": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$" },
+                      "value": { "type": "string", "pattern": "^[^\\u0000]*$" }
+                    }
+                  }
+                }
+              }
+            },
+            {
+              "type": "object", "additionalProperties": false, "required": ["type", "name", "url"],
+              "properties": {
+                "type": { "const": "http" },
+                "name": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$" },
+                "url": { "type": "string", "minLength": 1, "pattern": "^https?://[^\\s\\u0000]+$" },
+                "headers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object", "additionalProperties": false, "required": ["name", "value"],
+                    "properties": {
+                      "name": { "type": "string", "minLength": 1, "pattern": "^(?!.*\\u0000)[\\s\\S]*\\S[\\s\\S]*$" },
+                      "value": { "type": "string", "pattern": "^[^\\u0000]*$" }
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
