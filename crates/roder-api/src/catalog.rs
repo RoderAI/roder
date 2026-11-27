@@ -707,8 +707,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "haiku",
         "Claude Code Haiku",
         "Claude Code harness Haiku alias for fast lower-latency coding turns.",
-        200_000,
-        180_000,
+        1_000_000,
+        900_000,
         REASONING_NONE,
         &[],
     ),
@@ -2660,6 +2660,26 @@ mod tests {
         // transcript locally.
         assert!(direct.supports_compaction);
         assert_eq!(direct.auto_compact_token_limit, 900_000);
+    }
+
+    #[test]
+    fn claude_haiku_5_5_has_a_one_million_token_window() {
+        // Haiku 4.5 is 200K; Haiku 5.5 is 1M, and Claude Code's `haiku`
+        // alias resolves to it (the CLI reports `contextWindow: 1000000`).
+        for (provider, model) in [
+            (PROVIDER_ANTHROPIC, "claude-haiku-5-5"),
+            (PROVIDER_CLAUDE_CODE, "claude-haiku-5-5"),
+            (PROVIDER_CLAUDE_CODE, "haiku"),
+        ] {
+            let entry = lookup_model_for_provider(provider, model).unwrap();
+            assert_eq!(entry.context_window, 1_000_000, "{provider}/{model}");
+            assert_eq!(
+                entry.auto_compact_token_limit, 900_000,
+                "{provider}/{model}"
+            );
+        }
+        let haiku_45 = lookup_model("claude-haiku-4-5-20251001").unwrap();
+        assert_eq!(haiku_45.context_window, 200_000);
     }
 
     #[test]

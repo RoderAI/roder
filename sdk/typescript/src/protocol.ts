@@ -20,6 +20,12 @@ export interface TokenUsage {
   /** Subset of `prompt_tokens` written to the provider prompt cache. */
   cache_creation_prompt_tokens?: number;
   cache_hit_rate?: number | null;
+  /**
+   * Context-window occupancy after the step's latest model request, set when the
+   * other counts sum several requests (Claude Code's agent loop). Prefer it over
+   * `total_tokens` when sizing the context window.
+   */
+  context_tokens?: number;
 }
 
 export interface ThreadStatus {

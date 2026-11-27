@@ -442,6 +442,7 @@ mod tests {
                     cache_creation_prompt_tokens: 1,
                     cache_hit_rate: Some(0.9),
                     service_tier: None,
+                    context_tokens: None,
                 }),
                 timestamp: OffsetDateTime::UNIX_EPOCH,
             }),

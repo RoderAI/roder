@@ -554,6 +554,16 @@ pub struct TokenUsage {
      */
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub service_tier: Option<String>,
+    /**
+     * Tokens in the model context window after the step's most recent model
+     * request: that request's prompt plus its output. Set by providers that
+     * run several requests inside one step (an agent loop such as Claude
+     * Code), where the other counts sum every request. Consumers sizing the
+     * context window prefer it over `total_tokens`. When usage is aggregated
+     * with `add_assign`, the most recently reported value wins.
+     */
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_tokens: Option<u32>,
 }
 
 impl TokenUsage {
@@ -566,7 +576,22 @@ impl TokenUsage {
             cache_creation_prompt_tokens: 0,
             cache_hit_rate: cache_hit_rate(prompt_tokens, 0),
             service_tier: None,
+            context_tokens: None,
         }
+    }
+
+    pub fn with_context_tokens(mut self, context_tokens: Option<u32>) -> Self {
+        self.context_tokens = context_tokens;
+        self
+    }
+
+    /// Tokens occupying the context window after this step: the provider's
+    /// `context_tokens` when reported, otherwise `total_tokens`.
+    pub fn context_window_tokens(&self) -> u32 {
+        self.context_tokens.unwrap_or_else(|| {
+            self.total_tokens
+                .max(self.prompt_tokens.saturating_add(self.completion_tokens))
+        })
     }
 
     pub fn with_service_tier(mut self, service_tier: Option<String>) -> Self {
@@ -600,6 +625,9 @@ impl TokenUsage {
         self.cache_hit_rate = cache_hit_rate(self.prompt_tokens, self.cached_prompt_tokens);
         if usage.service_tier.is_some() {
             self.service_tier.clone_from(&usage.service_tier);
+        }
+        if usage.context_tokens.is_some() {
+            self.context_tokens = usage.context_tokens;
         }
     }
 
@@ -878,6 +906,24 @@ mod tests {
         );
         assert_eq!(finish_reason_from_stop_reason("refusal"), "refusal");
         assert_eq!(finish_reason_from_stop_reason("pause_turn"), "pause_turn");
+    }
+
+    #[test]
+    fn context_tokens_override_total_for_context_window_and_latest_wins() {
+        let single = TokenUsage::new(100, 20, 120);
+        assert_eq!(single.context_window_tokens(), 120);
+
+        let mut turn = TokenUsage::new(900, 50, 950).with_context_tokens(Some(480));
+        assert_eq!(turn.context_window_tokens(), 480);
+
+        turn.add_assign(&TokenUsage::new(10, 1, 11));
+        assert_eq!(turn.context_tokens, Some(480));
+        turn.add_assign(&TokenUsage::new(500, 5, 505).with_context_tokens(Some(505)));
+        assert_eq!(turn.context_tokens, Some(505));
+        assert_eq!(turn.total_tokens, 1_466);
+
+        let wire = serde_json::to_value(TokenUsage::new(1, 1, 2)).unwrap();
+        assert!(wire.get("context_tokens").is_none());
     }
 
     #[test]

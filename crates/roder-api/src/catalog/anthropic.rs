@@ -60,8 +60,8 @@ pub(super) const HAIKU_55: ModelCatalogEntry = anthropic_model(
     "claude-haiku-5-5",
     "Claude Haiku 5.5",
     "Fast Claude model for lower-latency tool workflows.",
-    200_000,
-    180_000,
+    1_000_000,
+    900_000,
     REASONING_NONE,
     &[],
     // Mirrors Haiku 4.5: the compaction edit is rejected for Haiku-class models.
@@ -82,8 +82,8 @@ pub(super) const CLAUDE_CODE_HAIKU_55: ModelCatalogEntry = claude_code_model(
     "claude-haiku-5-5",
     "Claude Code Haiku 5.5",
     "Claude Haiku 5.5 through the local Claude Code harness.",
-    200_000,
-    180_000,
+    1_000_000,
+    900_000,
     REASONING_NONE,
     &[],
 );
