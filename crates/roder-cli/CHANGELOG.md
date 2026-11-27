@@ -1,3 +1,14 @@
+## 0.4.17 (2026-11-27)
+
+### Fixes
+
+#### Report failed native turns as ACP prompt errors
+
+Return a JSON-RPC internal error with native failure details instead of a
+successful end-turn response when a provider or runtime turn fails.
+Wait for native turn teardown before settling an ACP prompt so an immediate
+follow-up cannot be steered into an already-finished turn.
+
 ## 0.4.16 (2026-11-27)
 
 ### Fixes
