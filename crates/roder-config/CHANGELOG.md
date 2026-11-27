@@ -1,3 +1,9 @@
+## 0.4.1 (2026-11-27)
+
+### Fixes
+
+- Fix every `cargo clippy --workspace --all-targets -D warnings` error. The fixes are behavior-preserving lint cleanups (collapsed `if let` chains, removed no-op conversions, derived `Default`s, test modules moved after the items they test). Targeted `#[allow]`s with reasons cover wire types and const table constructors.
+
 ## 0.4.0 (2026-11-27)
 
 ### Breaking Changes
