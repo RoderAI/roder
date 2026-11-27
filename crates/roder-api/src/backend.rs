@@ -140,6 +140,15 @@ pub trait AgentBackendSession: Send {
     fn model(&self) -> &str;
     fn reasoning(&self) -> &str;
     fn snapshot(&self) -> BackendThreadSnapshot;
+    /// Update the delegated runtime's context budget before its next turn.
+    /// Backends without configurable GPT context budgets can ignore this hook.
+    async fn set_context_budget(
+        &mut self,
+        _window: u32,
+        _compaction_threshold: u32,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
     async fn send(
         &mut self,
         text: String,

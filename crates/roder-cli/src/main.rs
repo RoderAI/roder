@@ -1445,6 +1445,16 @@ pub(crate) async fn build_runtime_with_config(
             default_provider: default_provider.clone(),
             default_model: default_model.clone(),
             reasoning: cfg.reasoning,
+            model_context_window: cfg.model_context_window,
+            model_auto_compact_token_limits: cfg
+                .model_profiles
+                .iter()
+                .filter_map(|(model, profile)| {
+                    profile
+                        .auto_compact_token_limit
+                        .map(|limit| (model.clone(), limit))
+                })
+                .collect(),
             auto_compact_token_limit: cfg.auto_compact_token_limit,
             custom_chat_providers,
             file_backed_dynamic_context: cfg

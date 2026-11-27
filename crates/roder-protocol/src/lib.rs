@@ -4050,6 +4050,8 @@ pub struct ModelSelectResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsGetResult {
+    #[serde(default)]
+    pub model_context_window: Option<u32>,
     pub web_search: WebSearchSettings,
     pub search_index: SearchIndexSettings,
     pub shell: ShellSettings,
@@ -4117,6 +4119,17 @@ pub struct SettingsSetFileBackedDynamicContextParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsSetFileBackedDynamicContextResult {
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetModelContextWindowParams {
+    pub model_context_window: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsSetModelContextWindowResult {
+    pub model_context_window: Option<u32>,
+    pub config_path: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

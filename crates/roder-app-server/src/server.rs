@@ -1,3 +1,5 @@
+#[path = "settings_context_window.rs"]
+mod settings_context_window;
 #[path = "thread_mode.rs"]
 mod thread_mode;
 use std::sync::Arc;
@@ -308,6 +310,12 @@ impl AppServer {
                 .await
             }
             "settings/get" => self.handle_settings_get().await,
+            "settings/set_model_context_window" => {
+                self.decode_and(req.params, |p| async move {
+                    self.handle_settings_set_model_context_window(p).await
+                })
+                .await
+            }
             "settings/set_web_search" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_settings_set_web_search(p).await
@@ -2166,14 +2174,27 @@ impl AppServer {
 
     async fn provider_descriptors(&self) -> Vec<ProviderDescriptor> {
         let mut providers = Vec::new();
+        let cfg = self.runtime.status().await;
         for engine in &self.runtime.registry().inference_engines {
             let id = engine.id();
             let metadata = engine.metadata();
             let (authenticated, auth_detail) = provider_auth_status(&id, &metadata).await;
-            let models = engine
+            let mut models = engine
                 .list_models(InferenceProviderContext { provider_id: &id })
                 .await
                 .unwrap_or_default();
+            for model in &mut models {
+                if matches!(id.as_str(), "openai" | "codex")
+                    && model.id.starts_with("gpt-")
+                    && let Some(window) = roder_api::catalog::effective_model_context_window(
+                        &id,
+                        &model.id,
+                        cfg.model_context_window,
+                    )
+                {
+                    model.context_window = Some(window);
+                }
+            }
             providers.push(ProviderDescriptor {
                 id,
                 name: metadata.name,
@@ -2489,6 +2510,7 @@ impl AppServer {
     async fn handle_settings_get(&self) -> Result<serde_json::Value, JsonRpcError> {
         let cfg = self.runtime.status().await;
         Ok(serde_json::to_value(SettingsGetResult {
+            model_context_window: cfg.model_context_window,
             web_search: web_search_settings(cfg.hosted_web_search.mode),
             search_index: SearchIndexSettings {
                 enabled: roder_search::search_index_enabled(),

@@ -5,6 +5,7 @@ pub mod bus;
 mod compaction;
 mod compaction_runtime;
 mod compaction_summary;
+mod context_window;
 pub mod conversation_forks;
 mod deadline_policy;
 pub mod dynamic_workflows;
@@ -53,6 +54,7 @@ mod workspace_tools;
 
 pub use bus::*;
 pub use compaction_runtime::ForceCompactOutcome;
+pub use context_window::model_context_budgets;
 pub use conversation_forks::{ForkThreadOutcome, ForkThreadRequest};
 pub use dynamic_workflows::*;
 pub use goals::*;

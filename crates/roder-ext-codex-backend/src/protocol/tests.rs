@@ -45,7 +45,7 @@ read line
 printf '%s\n' '{"id":1,"result":{"userAgent":"fake"}}'
 read line
 read line
-printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-test"}}}'
+printf '%s\n' '{"id":2,"result":{"thread":{"id":"thread-test"},"model":"gpt-6.2-sol","reasoningEffort":"low"}}'
 read line
 printf '%s\n' '{"id":3,"result":{"turn":{"id":"turn-test"}}}'
 printf '%s\n' '{"method":"turn/started","params":{"turn":{"id":"turn-test"}}}'
@@ -66,6 +66,8 @@ read line
         .await
         .unwrap();
     assert_eq!(session.thread_id(), "thread-test");
+    assert_eq!(session.model(), "gpt-6.2-sol");
+    assert_eq!(session.reasoning(), "low");
     assert_eq!(
         session.send("hi".into(), None, None, None).await.unwrap(),
         "turn-test"

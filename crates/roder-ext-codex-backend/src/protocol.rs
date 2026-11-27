@@ -61,16 +61,23 @@ impl AgentBackend for CodexBackend {
             .context("Codex thread response had no thread.id")?
             .to_owned();
         session.model = result
-            .pointer("/thread/model")
+            .get("model")
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_owned();
         session.reasoning = result
-            .pointer("/thread/reasoningEffort")
+            .get("reasoningEffort")
             .and_then(Value::as_str)
             .unwrap_or("medium")
             .to_owned();
         session.snapshot = mapping::snapshot_from_thread(&result["thread"]);
+        session.turn_id = session
+            .snapshot
+            .turns
+            .iter()
+            .rev()
+            .find(|turn| turn.status == "inProgress")
+            .map(|turn| turn.id.clone());
         Ok(Box::new(session))
     }
 
@@ -158,6 +165,7 @@ struct CodexSession {
     usage_baseline: Option<usage::UsageCounts>,
     approvals: HashMap<String, PendingApproval>,
     snapshot: BackendThreadSnapshot,
+    context_budget: Option<(u32, u32)>,
 }
 
 struct PendingApproval {
@@ -211,6 +219,34 @@ use mapping::{approval_description, string_at, tool_event};
 
 #[async_trait]
 impl AgentBackendSession for CodexSession {
+    async fn set_context_budget(&mut self, window: u32, threshold: u32) -> anyhow::Result<()> {
+        if self.context_budget == Some((window, threshold)) || self.turn_id.is_some() {
+            return Ok(());
+        }
+        // Codex ignores config overrides on a subscribed loaded thread.
+        // Unsubscribe while idle, then cold-resume the same stored history.
+        self.context_budget = None;
+        self.request("thread/unsubscribe", json!({"threadId": self.thread_id}))
+            .await?;
+        let resumed = self
+            .request(
+                "thread/resume",
+                json!({
+                    "threadId": self.thread_id,
+                    "config": {
+                        "model_context_window": window,
+                        "model_auto_compact_token_limit": threshold,
+                    },
+                }),
+            )
+            .await?;
+        anyhow::ensure!(
+            resumed.pointer("/thread/id").and_then(Value::as_str) == Some(self.thread_id.as_str()),
+            "Codex resumed a different thread while updating the context budget"
+        );
+        self.context_budget = Some((window, threshold));
+        Ok(())
+    }
     fn thread_id(&self) -> &str {
         &self.thread_id
     }
@@ -246,13 +282,20 @@ impl AgentBackendSession for CodexSession {
                 params["approvalPolicy"] = approval.into();
                 params["sandboxPolicy"] = json!({"type":sandbox});
             }
+            if let Some(model) = &model {
+                params["model"] = model.clone().into();
+            }
+            if let Some(reasoning) = &reasoning {
+                params["effort"] = reasoning.clone().into();
+            }
+            let result = self.request("turn/start", params).await?;
             if let Some(model) = model {
-                params["model"] = model.into();
+                self.model = model;
             }
             if let Some(reasoning) = reasoning {
-                params["effort"] = reasoning.into();
+                self.reasoning = reasoning;
             }
-            self.request("turn/start", params).await?
+            result
         };
         if self.turn_id.is_none() {
             self.turn_id = result
@@ -339,5 +382,7 @@ impl AgentBackendSession for CodexSession {
     }
 }
 
+#[cfg(all(test, unix))]
+mod context_budget_tests;
 #[cfg(test)]
 mod tests;

@@ -6,6 +6,7 @@ use crate::inference::{
 };
 
 mod anthropic;
+mod context_window;
 mod deepseek;
 mod hopper;
 pub mod image_models;
@@ -14,6 +15,7 @@ mod openrouter;
 mod synthetic;
 mod xiaomi_mimo;
 
+pub use context_window::effective_model_context_window;
 pub use deepseek::{DEEPSEEK_DEFAULT_BASE_URL, DEEPSEEK_DEFAULT_MODEL, DEEPSEEK_ENV_ALIASES};
 pub use hopper::{HOPPER_DEFAULT_BASE_URL, HOPPER_DEFAULT_MODEL, HOPPER_ENV_ALIASES};
 pub use image_models::{
@@ -543,6 +545,8 @@ const fn retired(mut model: ModelCatalogEntry) -> ModelCatalogEntry {
 }
 
 pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
+    openai_codex::GPT_62_ASTRA,
+    openai_codex::GPT_62_SOL,
     openai_codex::GPT_61_TERRA,
     openai_codex::GPT_6_ASTRA,
     retired(openai_codex::GPT_6_SOL),
@@ -555,8 +559,8 @@ pub const BUILT_IN_MODELS: &[ModelCatalogEntry] = &[
         "gpt-5.5",
         "GPT-5.5",
         "Frontier model for complex coding, research, and real-world work.",
-        1_050_000,
-        945_000,
+        272_000,
+        244_800,
         true,
         STANDARD_REASONING,
     )),
@@ -2058,6 +2062,8 @@ mod tests {
         assert_eq!(
             ids,
             vec![
+                "gpt-6.2-astra",
+                "gpt-6.2-sol",
                 "gpt-6.1-terra",
                 "gpt-6-astra",
                 "gpt-6.1-sol",
@@ -2196,8 +2202,8 @@ mod tests {
 
     #[test]
     fn provider_model_lists_match_gode_catalog() {
-        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 4);
-        assert_eq!(models_for_codex(false).len(), 4);
+        assert_eq!(models_for_provider(PROVIDER_OPENAI, false).len(), 6);
+        assert_eq!(models_for_codex(false).len(), 6);
         assert_eq!(models_for_provider(PROVIDER_ANTHROPIC, false).len(), 10);
         assert_eq!(models_for_provider(PROVIDER_CLAUDE_CODE, false).len(), 12);
         assert_eq!(models_for_provider(PROVIDER_GEMINI, false).len(), 7);
@@ -2238,7 +2244,14 @@ mod tests {
 
         assert_eq!(
             ids,
-            vec!["gpt-6.1-terra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"]
+            vec![
+                "gpt-6.2-astra",
+                "gpt-6.2-sol",
+                "gpt-6.1-terra",
+                "gpt-6-astra",
+                "gpt-6.1-sol",
+                "gpt-6-luna",
+            ]
         );
     }
 
@@ -2302,8 +2315,8 @@ mod tests {
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            1_050_000,
-            1_050_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-6-sol",
@@ -2318,13 +2331,13 @@ mod tests {
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            1_050_000,
-            1_050_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-6.1-terra",
             "GPT-6.1 Terra",
-            "Fast computer-use and coding model with a 1M context window. $1 / $5 per 1M input/output tokens.",
+            "Fast computer-use and coding model with a 500k default context window. $1 / $5 per 1M input/output tokens.",
             REASONING_MEDIUM,
             &[
                 REASONING_NONE,
@@ -2334,8 +2347,8 @@ mod tests {
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            1_000_000,
-            1_000_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-6.1-sol",
@@ -2350,8 +2363,8 @@ mod tests {
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            1_050_000,
-            1_050_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-6-luna",
@@ -2366,8 +2379,8 @@ mod tests {
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            1_050_000,
-            1_050_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-5.6-sol",
@@ -2382,8 +2395,8 @@ mod tests {
                 REASONING_MAX,
                 REASONING_ULTRA,
             ],
-            372_000,
-            372_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-5.6-terra",
@@ -2398,8 +2411,8 @@ mod tests {
                 REASONING_MAX,
                 REASONING_ULTRA,
             ],
-            372_000,
-            372_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-5.6-luna",
@@ -2413,8 +2426,8 @@ mod tests {
                 REASONING_XHIGH,
                 REASONING_MAX,
             ],
-            372_000,
-            372_000,
+            500_000,
+            872_000,
         );
         assert_model(
             "gpt-5.4",
@@ -2427,7 +2440,7 @@ mod tests {
                 REASONING_HIGH,
                 REASONING_XHIGH,
             ],
-            272_000,
+            500_000,
             1_000_000,
         );
     }
@@ -3115,9 +3128,9 @@ mod tests {
     #[test]
     fn openai_context_windows_match_current_catalog_values() {
         let gpt55 = lookup_model("gpt-5.5").unwrap();
-        assert_eq!(gpt55.context_window, 1_050_000);
-        assert_eq!(gpt55.max_context_window, 1_050_000);
-        assert_eq!(gpt55.auto_compact_token_limit, 945_000);
+        assert_eq!(gpt55.context_window, 272_000);
+        assert_eq!(gpt55.max_context_window, 272_000);
+        assert_eq!(gpt55.auto_compact_token_limit, 244_800);
 
         let mini = lookup_model("gpt-5.4-mini").unwrap();
         assert_eq!(mini.context_window, 400_000);

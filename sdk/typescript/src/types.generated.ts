@@ -1805,6 +1805,15 @@ export const appServerManifest = {
       "sideEffect": "localState"
     },
     {
+      "method": "settings/set_model_context_window",
+      "paramsType": "SettingsSetModelContextWindowParams",
+      "resultType": "SettingsSetModelContextWindowResult",
+      "stability": "stable",
+      "featureGroup": "settings",
+      "idempotency": "nonIdempotent",
+      "sideEffect": "localState"
+    },
+    {
       "method": "settings/set_search_index",
       "paramsType": "SettingsSetSearchIndexParams",
       "resultType": "SettingsSetSearchIndexResult",
@@ -3117,6 +3126,7 @@ export const appServerMethods = [
   "settings/get",
   "settings/set_default_mode",
   "settings/set_file_backed_dynamic_context",
+  "settings/set_model_context_window",
   "settings/set_search_index",
   "settings/set_shell",
   "settings/set_web_search",

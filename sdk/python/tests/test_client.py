@@ -27,6 +27,26 @@ async def test_client_calls_manifest_method_helpers() -> None:
 
 
 @pytest.mark.anyio
+async def test_client_exposes_context_window_settings_and_reset() -> None:
+    seen: list[dict] = []
+
+    async def handler(request: dict) -> dict:
+        seen.append(request)
+        return {
+            "jsonrpc": "2.0",
+            "id": request["id"],
+            "result": request["params"],
+        }
+
+    client = RoderRpcClient(InMemoryTransport(handler))
+    assert "settings/set_model_context_window" in APP_SERVER_METHODS
+    params = [{"model_context_window": 500000}, {"model_context_window": None}, {}]
+    for value in params:
+        assert await client.methods["settings/set_model_context_window"](value) == value
+    assert [request["params"] for request in seen] == params
+
+
+@pytest.mark.anyio
 async def test_client_preserves_json_rpc_errors() -> None:
     async def handler(request: dict) -> dict:
         return {

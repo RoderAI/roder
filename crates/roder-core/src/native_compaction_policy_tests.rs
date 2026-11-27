@@ -93,6 +93,62 @@ fn runtime(outcome: Outcome) -> (Runtime, Arc<Engine>) {
 }
 
 #[tokio::test]
+async fn live_context_window_override_changes_native_compaction_watermark() {
+    let (runtime, engine) = runtime(Outcome::Complete);
+    runtime.config.write().await.auto_compact_token_limit = None;
+    let transcript = vec![TranscriptItem::UserMessage(UserMessage::text(
+        "evidence ".repeat(1_000),
+    ))];
+    let untouched = runtime
+        .compact_transcript_if_needed(
+            &"thread".into(),
+            &"first".into(),
+            "openai",
+            "gpt-6.2-sol",
+            transcript.clone(),
+            CompactionOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(untouched, transcript);
+    assert!(engine.requests.lock().unwrap().is_empty());
+    runtime.set_model_context_window(Some(1_000)).await.unwrap();
+    let compacted = runtime
+        .compact_transcript_if_needed(
+            &"thread".into(),
+            &"second".into(),
+            "openai",
+            "gpt-6.2-sol",
+            transcript,
+            CompactionOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        compacted.as_slice(),
+        [TranscriptItem::ProviderMetadata(_)]
+    ));
+    assert_eq!(engine.requests.lock().unwrap().len(), 1);
+    runtime.set_model_context_window(None).await.unwrap();
+    let transcript = vec![TranscriptItem::UserMessage(UserMessage::text(
+        "evidence ".repeat(1_000),
+    ))];
+    let untouched = runtime
+        .compact_transcript_if_needed(
+            &"other-thread".into(),
+            &"third".into(),
+            "openai",
+            "gpt-6.2-sol",
+            transcript.clone(),
+            CompactionOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(untouched, transcript);
+    assert_eq!(engine.requests.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn openai_compacts_at_watermark_and_preserves_old_tool_outputs() {
     let (runtime, engine) = runtime(Outcome::Complete);
     let transcript = vec![

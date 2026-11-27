@@ -10,6 +10,44 @@ Roder treats context as a measured runtime resource. Context assembly emits trac
 - `context.compaction_recorded` records original versus compacted item counts and estimated tokens, including whether file-backed context artifacts were used.
 - `tool.output_truncated` records original tool output line/character counts, inline character count, and whether the output was moved to a context artifact.
 
+## OpenAI and Codex Context Windows
+
+The OpenAI and Codex model pickers include `gpt-6.2-sol` (GPT-6.2 Sol) and
+`gpt-6.2-astra` (GPT-6.2 Astra). Native GPT-6 and GPT-5.6 models default to a
+500,000-token context window and support a configured window up to 872,000
+tokens. These defaults match the local Codex model catalog; they are not a
+guarantee that an account has access to a particular model.
+
+To choose a different window, add this root-level setting to
+`~/.roder/config.toml`, before any TOML section headers:
+
+```toml
+model_context_window = 500000
+```
+
+The override applies only to GPT models on the native OpenAI and Codex
+providers. Other providers keep their own context-window behavior. The effective
+window is capped at the selected model's supported maximum, so a large value
+does not increase the limits of smaller-window models such as GPT-5.5
+(272,000 tokens). Remove the setting to restore the selected model's catalog
+default.
+
+In the TUI, press **Ctrl+P**, choose **Settings**, then select **GPT/Codex context
+window**. Enter a positive token count and press **Enter** to save. Press
+**Ctrl+R** to reset to the model default, or clear the input with **Ctrl+U** and
+press **Enter**. **Esc** returns without saving. The editor shows the current
+model's effective limit and explains the per-model cap.
+
+Changes apply on the next native inference request. For delegated Codex backend
+sessions, the new budget applies before the next new turn; steering an active
+delegated turn does not change that turn's budget.
+
+Automatic compaction follows the effective window using the existing 90%
+watermark: a 500,000-token window compacts at approximately 450,000 tokens, not
+at the model's maximum supported window. An explicit `auto_compact_token_limit`
+or model-profile compaction limit still takes precedence, capped at the
+effective context window.
+
 ## OpenAI Responses Compaction
 
 OpenAI Responses models use provider-owned compaction for automatic watermarks,

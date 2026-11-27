@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 pub mod agent_node;
 pub mod analytics;
+mod context_window;
 pub mod cua;
 pub mod dynamic_workflows;
 pub mod hosted;
@@ -16,6 +17,7 @@ pub mod packages;
 mod provider_capabilities_tests;
 pub mod workflow_import;
 
+pub use context_window::*;
 pub use dynamic_workflows::{DynamicWorkflowApprovalConfig, DynamicWorkflowsConfig};
 pub use marketplaces::*;
 pub use workflow_import::{WorkflowScanOptions, scan_workflow_imports};
@@ -30,6 +32,8 @@ pub struct Config {
     pub reasoning: Option<String>,
     pub runtime_profile: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    /// Optional GPT/Codex context window; absent uses the model catalog default.
+    pub model_context_window: Option<u32>,
     pub reliability: Option<ReliabilityConfig>,
     pub speed_policy: Option<SpeedPolicyConfig>,
     pub inference_router: Option<InferenceRouterConfig>,
@@ -2260,6 +2264,7 @@ mod tests {
             reasoning: Some("medium".to_string()),
             runtime_profile: None,
             auto_compact_token_limit: None,
+            model_context_window: None,
             reliability: None,
             speed_policy: None,
             inference_router: None,
