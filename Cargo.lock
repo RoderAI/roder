@@ -4401,7 +4401,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-jev"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5399,7 +5399,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.4.5"
+version = "0.4.6"
 dependencies = [
  "anyhow",
  "async-trait",
