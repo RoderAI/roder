@@ -13,7 +13,7 @@ They also no longer receive:
 
 - Roder's browser tools (`chrome_*`, `jev_*`, `browser_use_*`, `webwright.*`). Claude Code has its own browser through Claude-in-Chrome, and the system prompt's browser routing section is dropped with them.
 - The `zerolang_*`, `design_*`, `knowledge_*` and `memory_*` tools.
-- The Codex-style `exec_command`, `unified_exec`, `write_stdin` and `apply_patch`.
+- The Codex-style `exec_command`, `unified_exec` and `write_stdin`, and `apply_patch` when `edit` is also offered. In the `patch` edit mode `apply_patch` is the only editing tool, so it stays.
 - The `echo` and `media_generate_video` test tools.
 
 Every tool schema is sent with every request. This cuts Roder's tool list in a Claude Code session from 117 tools to 35, and the schema text from about 76K characters to about 22K.

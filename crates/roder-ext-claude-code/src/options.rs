@@ -78,12 +78,16 @@ pub fn build_options(
             .env_var("ANTHROPIC_AUTH_TOKEN", "");
     }
     let allowed_tool_names = allowed_claude_tool_names(request);
-    if !allowed_tool_names.is_empty() && !matches!(request.tool_choice, ToolChoice::None) {
-        let executor = tool_executor.ok_or_else(|| {
-            anyhow::anyhow!("Claude Code provider requires a Roder tool executor")
-        })?;
-        let server = roder_sdk_mcp_server(request, executor);
-        builder = builder.sdk_mcp_server("roder", server);
+    if !request.tools.is_empty() && !matches!(request.tool_choice, ToolChoice::None) {
+        // Register the Roder server only when some Roder tool survives the
+        // Claude Code filter.
+        if !allowed_tool_names.is_empty() {
+            let executor = tool_executor.ok_or_else(|| {
+                anyhow::anyhow!("Claude Code provider requires a Roder tool executor")
+            })?;
+            let server = roder_sdk_mcp_server(request, executor);
+            builder = builder.sdk_mcp_server("roder", server);
+        }
         // Disable every built-in Claude Code tool (Read/Bash/Edit/Glob/...).
         // Roder mediates all tool access through its own executor, so the
         // model must use the `mcp__roder__*` tools we advertise. Leaving the
@@ -209,15 +213,17 @@ fn claude_config_path() -> Option<std::path::PathBuf> {
 /// schema is sent on every request, so each extra tool costs tokens on every
 /// turn.
 ///
-/// - `exec_command`, `unified_exec` and `write_stdin` are Codex-style PTY shells,
-///   and `apply_patch` is the Codex patch format. Claude uses `Bash` and
-///   `Edit`/`MultiEdit`/`Write`.
+/// - `exec_command`, `unified_exec` and `write_stdin` are Codex-style PTY shells.
+///   Claude uses `Bash`.
 /// - `echo` and `media_generate_video` are test fixtures.
-const TOOLS_HIDDEN_FROM_CLAUDE: [&str; 6] = [
+///
+/// `apply_patch` (the Codex patch format) is handled separately: it is hidden
+/// only when `edit` is also offered, because in Roder's `patch` edit mode it is
+/// the only editing tool.
+const TOOLS_HIDDEN_FROM_CLAUDE: [&str; 5] = [
     "exec_command",
     "unified_exec",
     "write_stdin",
-    "apply_patch",
     "echo",
     "media_generate_video",
 ];
@@ -233,7 +239,7 @@ const TOOL_PREFIXES_HIDDEN_FROM_CLAUDE: [&str; 8] = [
     "zerolang_",
     "design_",
     "knowledge_",
-    "webwright",
+    "webwright.",
     "memory_",
 ];
 
@@ -248,10 +254,10 @@ fn exposed_to_claude(name: &str) -> bool {
 fn claude_tool_specs(
     request: &AgentInferenceRequest,
 ) -> impl Iterator<Item = &roder_api::tools::ToolSpec> {
-    request
-        .tools
-        .iter()
-        .filter(|tool| exposed_to_claude(&tool.name))
+    let has_edit = request.tools.iter().any(|tool| tool.name == "edit");
+    request.tools.iter().filter(move |tool| {
+        exposed_to_claude(&tool.name) && !(has_edit && tool.name == "apply_patch")
+    })
 }
 
 fn allowed_claude_tool_names(request: &AgentInferenceRequest) -> Vec<String> {
@@ -660,13 +666,44 @@ mod tests {
         assert!(options.strict_mcp_config);
     }
 
-    #[test]
-    fn offers_claude_code_one_copy_of_each_needed_tool() {
+    fn options_for_tools(names: &[&str]) -> ClaudeAgentOptions {
         let mut request = chrome_request();
         request.tool_choice = ToolChoice::Auto;
-        request.tools = [
+        request.tools = names
+            .iter()
+            .map(|name| ToolSpec {
+                name: name.to_string(),
+                description: format!("{name} tool"),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            })
+            .collect();
+        build_options(
+            &ClaudeCodeConfig::default(),
+            &request,
+            Some(Arc::new(FakeToolExecutor)),
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn roder_server_tool_names(options: &ClaudeAgentOptions) -> Vec<String> {
+        let mut names = options.sdk_mcp_servers["roder"]
+            .list_tools()
+            .into_iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn offers_claude_code_one_copy_of_each_needed_tool() {
+        let options = options_for_tools(&[
             "read_file",
+            "edit",
             "spawn_agent",
+            "webwright_helper",
             "exec_command",
             "unified_exec",
             "write_stdin",
@@ -681,47 +718,57 @@ mod tests {
             "knowledge_search",
             "webwright.run_script",
             "memory_query",
-        ]
-        .into_iter()
-        .map(|name| ToolSpec {
-            name: name.to_string(),
-            description: format!("{name} tool"),
-            parameters: serde_json::json!({"type": "object", "properties": {}}),
-        })
-        .collect();
-
-        let options = build_options(
-            &ClaudeCodeConfig::default(),
-            &request,
-            Some(Arc::new(FakeToolExecutor)),
-            None,
-            None,
-        )
-        .unwrap();
+        ]);
 
         assert_eq!(
             options.allowed_tools,
-            vec!["mcp__roder__Read", "mcp__roder__spawn_agent"]
+            vec![
+                "mcp__roder__Read",
+                "mcp__roder__Edit",
+                "mcp__roder__spawn_agent",
+                "mcp__roder__webwright_helper"
+            ]
         );
-        let mut names = options.sdk_mcp_servers["roder"]
-            .list_tools()
-            .into_iter()
-            .map(|tool| tool.name.clone())
-            .collect::<Vec<_>>();
-        names.sort();
-        assert_eq!(names, vec!["Read", "spawn_agent"]);
+        assert_eq!(
+            roder_server_tool_names(&options),
+            vec!["Edit", "Read", "spawn_agent", "webwright_helper"]
+        );
+    }
+
+    #[test]
+    fn keeps_apply_patch_when_it_is_the_only_editing_tool() {
+        // Roder's `patch` edit mode offers `apply_patch` without `edit`.
+        let options = options_for_tools(&["read_file", "apply_patch"]);
+        assert_eq!(
+            roder_server_tool_names(&options),
+            vec!["Read", "apply_patch"]
+        );
+    }
+
+    #[test]
+    fn built_in_tools_stay_disabled_when_every_roder_tool_is_hidden() {
+        let options = options_for_tools(&["chrome_click", "jev_browse"]);
+        assert!(options.tools_set);
+        assert!(options.tools.is_empty());
+        assert!(options.allowed_tools.is_empty());
+        assert!(options.sdk_mcp_servers.is_empty());
     }
 
     #[test]
     fn system_prompt_drops_browser_routing_for_hidden_browser_tools() {
         let mut request = chrome_request();
         request.instructions.system = Some("System.".to_string());
-        request.instructions.developer = Some(
-            "Developer.\n\n## Browser Tool Routing\n\nMore than one browser tool family is on \
-             this turn. Pick by task:\n\n- `jev_browse`: one bounded goal.\n\nAny of these can \
-             fail at call time (no key, extension not paired, no browser). Then try another \
-             family above. Never use one to get around a site's refusal of automated access."
-                .to_string(),
+        request.instructions.developer = Some("Developer.".to_string());
+        request.instructions = roder_api::browser_routing::apply_browser_routing(
+            request.instructions,
+            ["jev_browse", "chrome_click", "read_file"],
+        );
+        assert!(
+            request
+                .instructions
+                .developer
+                .as_deref()
+                .is_some_and(|text| text.contains("## Browser Tool Routing"))
         );
         assert_eq!(
             merged_system_prompt(&request).as_deref(),
