@@ -18,6 +18,7 @@ jobs:
       github.repository_owner == 'RoderAI' &&
       !contains(github.event.head_commit.message, 'chore: prepare release')
     permissions:
+      actions: write
       contents: write
       pull-requests: write
     steps:
@@ -42,3 +43,21 @@ jobs:
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # GitHub holds pull_request runs started by github-actions[bot] for
+      # maintainer approval, and they expire as failures. Runs dispatched with
+      # GITHUB_TOKEN start without approval and report on the same head commit.
+      - name: Run release PR checks
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if ! git ls-remote --exit-code --heads origin knope/release > /dev/null; then
+            echo "No release PR branch; nothing to check."
+            exit 0
+          fi
+          failed=0
+          for workflow in cli-npm-check.yml openclaw.yml; do
+            gh workflow run "$workflow" --ref knope/release || failed=1
+          done
+          exit "$failed"
