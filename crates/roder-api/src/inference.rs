@@ -586,7 +586,8 @@ impl TokenUsage {
     }
 
     /// Tokens occupying the context window after this step: the provider's
-    /// `context_tokens` when reported, otherwise `total_tokens`.
+    /// `context_tokens` when reported, otherwise `total_tokens` (or prompt
+    /// plus completion, if a provider reports a smaller total).
     pub fn context_window_tokens(&self) -> u32 {
         self.context_tokens.unwrap_or_else(|| {
             self.total_tokens
