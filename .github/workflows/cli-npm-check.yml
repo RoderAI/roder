@@ -1,7 +1,10 @@
 name: Roder CLI npm check
 
 # Packaging and launcher tests only. Publishing lives in cli-npm-release.yml.
+# prepare-release.yml dispatches this for the knope release PR, because GitHub
+# holds pull_request runs started by github-actions[bot] for approval.
 on:
+  workflow_dispatch:
   pull_request:
     paths:
       - 'crates/roder-cli/npm/**'
