@@ -1,5 +1,6 @@
 #![allow(dead_code, clippy::collapsible_if, clippy::too_many_arguments)]
 mod agent_activity;
+mod agent_backend;
 mod automations;
 mod chrome;
 mod commands;
@@ -127,6 +128,7 @@ use crate::runtime_io::{
     CrosstermInputSource, RecordingInputSource, SystemClock, TerminalSession, TuiClock,
     TuiInputRecorder, TuiInputSource,
 };
+pub use agent_backend::AgentBackendChoice;
 use composer::{
     ComposerKeyAction, composer_mode, composer_text, composer_textarea, handle_composer_key,
     shell_command_from_input, style_composer_for_current_mode,
@@ -831,6 +833,7 @@ impl ImageAttachment {
 enum ProviderPopupScreen {
     Main,
     Providers,
+    AgentBackends,
     ApiKey,
     Models,
     Reasoning,
@@ -1167,6 +1170,11 @@ enum ProviderMenuItem {
     PlanModeToggle(bool),
     Models,
     Providers,
+    AgentBackends,
+    AgentBackend {
+        choice: AgentBackendChoice,
+        active: bool,
+    },
     Settings,
     RoadmapMode,
     RunnerSettings,
@@ -1243,6 +1251,8 @@ impl ProviderMenuItem {
             }
             Self::Models => "Models".to_string(),
             Self::Providers => "Providers".to_string(),
+            Self::AgentBackends => "Agent backend (Roder, Codex, Antigravity)".to_string(),
+            Self::AgentBackend { choice, active } => choice.menu_label(*active),
             Self::Settings => "Settings".to_string(),
             Self::RoadmapMode => "Roadmaps".to_string(),
             Self::RunnerSettings => "Runners".to_string(),
@@ -1473,6 +1483,8 @@ where
     last_queued_prompt_buttons: Vec<QueuedPromptButton>,
     hovered_queued_prompt_button: Option<(usize, QueuedPromptAction)>,
     queued_prompts: PromptQueue,
+    agent_backend: AgentBackendChoice,
+    requested_agent_backend: Option<AgentBackendChoice>,
     last_user_prompt: Option<PendingPrompt>,
     command_catalog: Vec<CommandDescriptor>,
     slash_command_selection: usize,
@@ -1970,6 +1982,8 @@ where
             last_queued_prompt_buttons: Vec::new(),
             hovered_queued_prompt_button: None,
             queued_prompts: PromptQueue::default(),
+            agent_backend: AgentBackendChoice::default(),
+            requested_agent_backend: None,
             last_user_prompt: None,
             command_catalog,
             slash_command_selection: 0,
@@ -2056,6 +2070,9 @@ where
 
         let mut needs_redraw = true;
         loop {
+            if self.requested_agent_backend.is_some() {
+                break;
+            }
             let now = clock.now();
             // Capture animated/active state before the per-iteration mutations
             // so a transition that *ends* an animation (e.g. voice transcription
@@ -5456,6 +5473,9 @@ where
             ProviderPopupScreen::Spinner => {
                 " Working spinner (Enter select, Esc back) ".to_string()
             }
+            ProviderPopupScreen::AgentBackends => {
+                " Agent backend (Enter restarts Roder, Esc back) ".to_string()
+            }
             ProviderPopupScreen::WebSearch => {
                 " Web search provider (Enter select, Esc back) ".to_string()
             }
@@ -5532,6 +5552,7 @@ where
                         }
                         ProviderMenuItem::Models
                         | ProviderMenuItem::Providers
+                        | ProviderMenuItem::AgentBackends
                         | ProviderMenuItem::Settings
                         | ProviderMenuItem::RunnerSettings
                         | ProviderMenuItem::SpinnerSettings
@@ -6094,7 +6115,10 @@ where
             self.open_main_provider_menu();
             return;
         }
-        if self.provider_popup_screen == ProviderPopupScreen::Spinner {
+        if matches!(
+            self.provider_popup_screen,
+            ProviderPopupScreen::Spinner | ProviderPopupScreen::AgentBackends
+        ) {
             self.open_main_provider_menu();
             return;
         }
@@ -6212,6 +6236,12 @@ where
             }
             ProviderMenuItem::Providers => {
                 self.open_providers_submenu();
+            }
+            ProviderMenuItem::AgentBackends => {
+                self.open_agent_backend_submenu();
+            }
+            ProviderMenuItem::AgentBackend { choice, .. } => {
+                self.request_agent_backend_switch(choice);
             }
             ProviderMenuItem::Settings => {
                 self.open_settings_submenu();
@@ -9062,6 +9092,7 @@ fn main_provider_menu_items(
     vec![
         ProviderMenuItem::Models,
         ProviderMenuItem::PlanModeToggle(plan_mode_enabled),
+        ProviderMenuItem::AgentBackends,
         ProviderMenuItem::Providers,
         ProviderMenuItem::Settings,
         ProviderMenuItem::RoadmapMode,
@@ -10474,7 +10505,7 @@ mod tests {
         ThreadItemStatus, ThreadStatus, Turn,
     };
 
-    fn test_app() -> TuiApp {
+    pub(super) fn test_app() -> TuiApp {
         let server = Arc::new(AppServer::new(Arc::new(
             Runtime::fake().expect("fake runtime"),
         )));
@@ -10637,6 +10668,8 @@ mod tests {
             last_queued_prompt_buttons: Vec::new(),
             hovered_queued_prompt_button: None,
             queued_prompts: PromptQueue::default(),
+            agent_backend: AgentBackendChoice::default(),
+            requested_agent_backend: None,
             last_user_prompt: None,
             command_catalog: built_in_command_catalog(),
             slash_command_selection: 0,
@@ -13930,31 +13963,35 @@ mod tests {
             items.get(1),
             Some(ProviderMenuItem::PlanModeToggle(false))
         ));
-        assert!(matches!(items.get(2), Some(ProviderMenuItem::Providers)));
-        assert!(matches!(items.get(3), Some(ProviderMenuItem::Settings)));
-        assert!(matches!(items.get(4), Some(ProviderMenuItem::RoadmapMode)));
         assert!(matches!(
-            items.get(5),
+            items.get(2),
+            Some(ProviderMenuItem::AgentBackends)
+        ));
+        assert!(matches!(items.get(3), Some(ProviderMenuItem::Providers)));
+        assert!(matches!(items.get(4), Some(ProviderMenuItem::Settings)));
+        assert!(matches!(items.get(5), Some(ProviderMenuItem::RoadmapMode)));
+        assert!(matches!(
+            items.get(6),
             Some(ProviderMenuItem::RunnerSettings)
         ));
         assert!(matches!(
-            items.get(6),
+            items.get(7),
             Some(ProviderMenuItem::ResumeThreads)
         ));
         assert!(matches!(
-            items.get(7),
+            items.get(8),
             Some(ProviderMenuItem::WebSearchSettings)
         ));
         assert!(matches!(
-            items.get(8),
+            items.get(9),
             Some(ProviderMenuItem::SpinnerSettings)
         ));
         assert!(matches!(
-            items.get(9),
+            items.get(10),
             Some(ProviderMenuItem::ThemesSettings)
         ));
         assert!(matches!(
-            items.get(10),
+            items.get(11),
             Some(ProviderMenuItem::MarketplacesSettings)
         ));
 

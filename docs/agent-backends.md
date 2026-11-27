@@ -7,6 +7,15 @@ app-server maps its existing thread, turn, event, and approval API to the
 selected backend. Clients, including the existing Roder TUI, continue to use
 the Roder protocol.
 
+## Switching backends in the TUI
+
+Press Ctrl+P and choose **Agent backend** to switch between Roder, Codex, and
+Antigravity. A backend is bound when the app-server starts, so choosing a
+different one restarts Roder with `--backend <id>` and keeps your other flags,
+such as `--yolo` and `--config-dir`. The restart drops `--model` and `resume`
+because models and threads belong to a backend. Antigravity runs its guided
+setup on first use. A running turn must finish or be interrupted first.
+
 ## Codex
 
 Start a Codex-backed Roder session:
