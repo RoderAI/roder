@@ -1,6 +1,7 @@
 name: Roder CLI npm
 
-# Pull request checks live in cli-npm-check.yml. This file only publishes.
+# Release pipeline: test, pack, verify and publish one release commit.
+# Pull request checks live in cli-npm-check.yml.
 on:
   workflow_call:
     inputs:

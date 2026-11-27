@@ -56,5 +56,8 @@ jobs:
             echo "No release PR branch; nothing to check."
             exit 0
           fi
-          gh workflow run cli-npm-check.yml --ref knope/release
-          gh workflow run openclaw.yml --ref knope/release
+          failed=0
+          for workflow in cli-npm-check.yml openclaw.yml; do
+            gh workflow run "$workflow" --ref knope/release || failed=1
+          done
+          exit "$failed"
