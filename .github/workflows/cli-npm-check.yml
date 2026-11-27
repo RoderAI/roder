@@ -5,6 +5,8 @@ on:
   pull_request:
     paths:
       - 'crates/roder-cli/npm/**'
+      - 'crates/roder-cli/Cargo.toml'
+      - 'LICENCE'
       - 'scripts/release_cli_npm.py'
       - 'scripts/test_release_cli_npm.py'
       - '.github/workflows/cli-npm-check.yml'
