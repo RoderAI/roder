@@ -1,13 +1,9 @@
 name: Roder CLI npm
 
+# Pull request checks live in cli-npm-check.yml. This file declares jobs that
+# need `id-token: write`, and a pull_request run started by github-actions[bot]
+# (the knope release PR) cannot be granted that, so the run fails at startup.
 on:
-  pull_request:
-    paths:
-      - 'crates/roder-cli/npm/**'
-      - 'scripts/release_cli_npm.py'
-      - 'scripts/test_release_cli_npm.py'
-      - '.github/workflows/cli-npm-release.yml'
-      - '.github/workflows/release.yml'
   workflow_call:
     inputs:
       release_sha:

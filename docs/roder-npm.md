@@ -44,7 +44,7 @@ An integrity-checked no-op on an already-published version does not exercise OID
 mise exec -- python3 scripts/test_release_cli_npm.py
 mise exec -- python3 scripts/generate-knope-config.py --check
 mise exec -- python3 scripts/check-registry-readmes.py
-actionlint .github/workflows/cli-npm-release.yml .github/workflows/release.yml
+actionlint .github/workflows/cli-npm-check.yml .github/workflows/cli-npm-release.yml .github/workflows/release.yml
 ```
 
 The tests use fake binaries and mocked registry publication. They cover offline installation, argument and stdin transport, environment and working directory, exit codes, signal forwarding, archive validation, deterministic packing, and publication guards. They never publish to npm.
