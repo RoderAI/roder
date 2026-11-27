@@ -95,7 +95,6 @@ mod codex_v2;
 use crate::artifacts::{
     ContextArtifactStore as FilesystemContextArtifactStore, default_context_artifact_dir,
 };
-use crate::browser_routing::apply_browser_routing;
 use crate::bus::EventBus;
 use crate::dynamic_workflows::{
     DynamicWorkflowEffortProfile, RuntimeDynamicWorkflowConfig, WorkflowTriggerDecision,
@@ -124,6 +123,7 @@ use crate::teams::{TeamManager, TeamMemberStartRequest, TeamStartRequest, TeamSt
 use crate::thread_item_cache::{ThreadItemCache, ThreadItemCacheEntry};
 use crate::tool_result_images::ToolImages;
 use crate::verification_gate::VerificationGateState;
+use roder_api::browser_routing::apply_browser_routing;
 
 const MAX_TOOL_ROUNDS_PER_TURN: usize = 1024;
 /// Injected when `continue_on_failure_limit` turns a consecutive-tool-failure

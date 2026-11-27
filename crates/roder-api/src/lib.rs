@@ -1,6 +1,7 @@
 pub mod artifacts;
 pub mod automations;
 pub mod backend;
+pub mod browser_routing;
 pub mod capabilities;
 pub mod catalog;
 pub mod chrome;

@@ -242,7 +242,7 @@ async fn denied_roder_permission_surfaces_as_tool_error_to_the_sdk_loop() {
     let server = options.sdk_mcp_servers.get("roder").unwrap();
 
     let result = server
-        .call_tool("read_file", json!({ "path": "/etc/shadow" }))
+        .call_tool("Read", json!({ "file_path": "/etc/shadow" }))
         .await;
     assert!(
         !result.is_error,
@@ -335,7 +335,7 @@ async fn unmanaged_and_unadvertised_tools_stay_denied_by_can_use_tool() {
     // The advertised mapped tool is allowed.
     let result = callback
         .call(
-            "mcp__roder__read_file".to_string(),
+            "mcp__roder__Read".to_string(),
             serde_json::Map::new(),
             ToolPermissionContext::default(),
         )

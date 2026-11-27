@@ -15,7 +15,7 @@
 //! the tool set does. Core cannot see keys or pairing state, so the block
 //! never says a family works; it says any of them can fail at call time.
 
-use roder_api::inference::InstructionBundle;
+use crate::inference::InstructionBundle;
 
 const HEADING: &str = "## Browser Tool Routing";
 
@@ -110,7 +110,7 @@ fn block(tool_names: impl IntoIterator<Item = impl AsRef<str>>) -> Option<String
 
 /// Append the browser routing block to the developer instructions when two or
 /// more browser tool families are on the turn.
-pub(crate) fn apply_browser_routing(
+pub fn apply_browser_routing(
     mut instructions: InstructionBundle,
     tool_names: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> InstructionBundle {
@@ -132,9 +132,38 @@ pub(crate) fn apply_browser_routing(
     instructions
 }
 
+/// Remove the routing block from `text`, for a provider that hides every
+/// browser family the block names. Returns `text` unchanged when it has no
+/// block.
+pub fn strip_browser_routing(text: &str) -> String {
+    let Some(start) = text.find(HEADING) else {
+        return text.to_string();
+    };
+    let Some(footer) = text[start..].find(FOOTER) else {
+        return text.to_string();
+    };
+    let end = start + footer + FOOTER.len();
+    let before = text[..start].trim_end();
+    let after = text[end..].trim_start();
+    match (before.is_empty(), after.is_empty()) {
+        (true, _) => after.to_string(),
+        (false, true) => before.to_string(),
+        (false, false) => format!("{before}\n\n{after}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_removes_the_block_and_keeps_surrounding_text() {
+        let block = block(names(0b1111)).unwrap();
+        let text = format!("Before.\n\n{block}\n\nAfter.");
+        assert_eq!(strip_browser_routing(&text), "Before.\n\nAfter.");
+        assert_eq!(strip_browser_routing(&block), "");
+        assert_eq!(strip_browser_routing("No block."), "No block.");
+    }
 
     const JEV: &[&str] = &["jev_browse", "jev_tab_look", "jev_tab_click"];
     const CHROME: &[&str] = &["chrome_tabs_list", "chrome_click", "chrome_page_snapshot"];
