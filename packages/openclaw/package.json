@@ -1,6 +1,6 @@
 {
   "name": "@roderai/openclaw",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "OpenClaw ACP runtime backend for Roder",
   "type": "module",
   "license": "MIT",
