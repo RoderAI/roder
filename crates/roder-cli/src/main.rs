@@ -6,6 +6,7 @@ mod agent_node;
 mod antigravity_auth;
 mod antigravity_setup;
 mod automations;
+mod backend_relaunch;
 mod chrome;
 mod commands;
 mod discovery;
@@ -300,7 +301,8 @@ async fn run_cli() -> anyhow::Result<()> {
     }
 
     let tui_shutdown_drain_timeout = tui_shutdown_drain_timeout();
-    let drain_outcome = if let Some(path) = record_api_transcript {
+    let tui_backend = roder_tui::AgentBackendChoice::from_id(cli_backend.id()).unwrap_or_default();
+    let (drain_outcome, requested_backend) = if let Some(path) = record_api_transcript {
         let recorder = TranscriptRecorder::default();
         push_transcript_header(&recorder)?;
         let recording_client = RecordingAppClient::new(client, recorder.clone(), "tui");
@@ -310,7 +312,8 @@ async fn run_cli() -> anyhow::Result<()> {
             startup,
             app_server.clone(),
         )
-        .await?;
+        .await?
+        .with_agent_backend(tui_backend);
         tui.run_with_options(TuiRunOptions {
             transcript_recorder: Some(recorder.clone()),
             record_ui_frames,
@@ -320,13 +323,17 @@ async fn run_cli() -> anyhow::Result<()> {
         print_tui_exit_summary(&tui);
         write_transcript(&path, &recorder)?;
         println!("Transcript: {}", path.display());
-        outcome
+        (outcome, tui.requested_agent_backend())
     } else {
-        let mut tui = TuiApp::new_with_startup(client, default_model, startup).await?;
+        let mut tui = TuiApp::new_with_startup(client, default_model, startup)
+            .await?
+            .with_agent_backend(tui_backend);
         tui.run().await?;
         let outcome = app_server.drain_runtime(tui_shutdown_drain_timeout).await;
-        print_tui_exit_summary(&tui);
-        outcome
+        if tui.requested_agent_backend().is_none() {
+            print_tui_exit_summary(&tui);
+        }
+        (outcome, tui.requested_agent_backend())
     };
 
     if drain_outcome.status != RuntimeDrainStatus::Clean {
@@ -345,6 +352,13 @@ async fn run_cli() -> anyhow::Result<()> {
     use std::io::Write as _;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
+    if let Some(backend) = requested_backend {
+        // Ctrl+P > Agent backend: restart on the chosen runtime.
+        if let Err(err) = backend_relaunch::relaunch(backend.id()) {
+            eprintln!("could not restart with the {} backend: {err}", backend.id());
+            std::process::exit(1);
+        }
+    }
     std::process::exit(0);
 }
 
@@ -1116,6 +1130,16 @@ enum Backend {
     Antigravity,
 }
 
+impl Backend {
+    fn id(self) -> &'static str {
+        match self {
+            Backend::Roder => "roder",
+            Backend::Codex => "codex",
+            Backend::Antigravity => "antigravity",
+        }
+    }
+}
+
 fn startup_model(backend: Backend, backend_model: Option<String>, default_model: String) -> String {
     if backend == Backend::Roder {
         default_model
@@ -1126,11 +1150,7 @@ fn startup_model(backend: Backend, backend_model: Option<String>, default_model:
 
 fn require_native_backend(backend: Backend, command: &str) -> anyhow::Result<()> {
     if backend != Backend::Roder {
-        let id = match backend {
-            Backend::Codex => "codex",
-            Backend::Antigravity => "antigravity",
-            Backend::Roder => unreachable!(),
-        };
+        let id = backend.id();
         anyhow::bail!(
             "roder {command} does not support external agent backends; use `roder --backend {id}` or `roder app-server --backend {id}`"
         );
