@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use roder_api::events::{ThreadId, TurnId};
@@ -108,13 +108,13 @@ fn should_reconcile_tool(name: &str) -> bool {
 
 async fn current_files(
     provider: &Arc<dyn VcsProvider>,
-    root: &PathBuf,
+    root: &Path,
     base: Option<VcsBase>,
 ) -> Result<BTreeMap<String, FileFingerprint>, VcsError> {
     let files = provider
         .list_changes_against_base(
             VcsListChangesRequest {
-                workspace_root: root.clone(),
+                workspace_root: root.to_path_buf(),
             },
             base,
         )

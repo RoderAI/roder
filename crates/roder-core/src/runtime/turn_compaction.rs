@@ -86,10 +86,10 @@ impl TurnCompaction {
     fn stage(&mut self, item: &serde_json::Value) -> anyhow::Result<()> {
         if !crate::compaction::is_provider_compaction_item(item)
             || (item["type"] == "compaction"
-                && !item
+                && item
                     .get("encrypted_content")
                     .and_then(serde_json::Value::as_str)
-                    .is_some_and(|value| !value.is_empty()))
+                    .is_none_or(|value| value.is_empty()))
         {
             return Err(ProviderFailure::new(
                 ProviderFailureKind::Protocol,

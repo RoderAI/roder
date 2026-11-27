@@ -65,7 +65,7 @@ mod tests {
             },
         )
         .unwrap();
-        let skills = roder_config::build_skills_registry(workspace.to_path_buf(), None)
+        let skills = roder_config::build_skills_registry(workspace, None)
             .skills()
             .iter()
             .map(|skill| skill.descriptor.clone())

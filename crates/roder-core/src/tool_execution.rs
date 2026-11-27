@@ -1534,13 +1534,12 @@ mod tests {
         let mut found_tool_call = false;
         while let Ok(envelope) = events.try_recv() {
             if let roder_api::events::RoderEvent::TranscriptItemAppended(appended) = envelope.event
+                && let Some(TranscriptItem::ToolCall(tc)) = appended.item
+                && tc.id == "call_1"
+                && tc.name == "test_tool"
             {
-                if let Some(TranscriptItem::ToolCall(tc)) = appended.item {
-                    if tc.id == "call_1" && tc.name == "test_tool" {
-                        found_tool_call = true;
-                        break;
-                    }
-                }
+                found_tool_call = true;
+                break;
             }
         }
         assert!(

@@ -27,6 +27,8 @@ struct GitBase {
 
 const GIT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
+// reason: VcsError is roder-api's serde wire error type required by the VcsProvider trait; boxing it would change the shared API.
+#[allow(clippy::result_large_err)]
 impl GitRepo {
     pub(crate) fn open(workspace: &Path, provider_id: VcsProviderId) -> Result<Self, VcsError> {
         let root = git_at(
@@ -768,6 +770,8 @@ fn sync_operation(operation: VcsSyncOperation) -> VcsOperation {
     }
 }
 
+// reason: VcsError is roder-api's serde wire error type required by the VcsProvider trait; boxing it would change the shared API.
+#[allow(clippy::result_large_err)]
 fn normalized_relative_path(provider_id: &str, path: &Path) -> Result<String, VcsError> {
     if path.as_os_str().is_empty() || path.is_absolute() {
         return Err(VcsError::PathInvalid {
@@ -816,6 +820,8 @@ fn add_change_area(files: &mut BTreeMap<String, VcsChangedFile>, path: &str, are
     }
 }
 
+// reason: VcsError is roder-api's serde wire error type required by the VcsProvider trait; boxing it would change the shared API.
+#[allow(clippy::result_large_err)]
 fn git_at(
     cwd: &Path,
     args: &[&str],

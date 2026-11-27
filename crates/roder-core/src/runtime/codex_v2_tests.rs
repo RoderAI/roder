@@ -791,7 +791,7 @@ async fn codex_v2_nested_children_inherit_live_authority_with_one_direct_parent_
     let grandchild_turn_id = grandchild.data["turn_id"].as_str().unwrap();
     wait_for_inference_start(&mut started, &grandchild_thread_id.to_string()).await;
     let grandchild_metadata = runtime
-        .load_thread_metadata(&grandchild_thread_id.to_string())
+        .load_thread_metadata(grandchild_thread_id)
         .await
         .unwrap()
         .expect("grandchild metadata");

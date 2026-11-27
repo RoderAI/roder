@@ -16,6 +16,8 @@ use tokio::sync::RwLock;
 #[cfg(test)]
 mod interrupted_tests;
 
+// Event fan-out needs the per-turn mutable state plus shared runtime handles.
+#[allow(clippy::too_many_arguments)]
 pub(super) async fn emit_event(
     event: BackendEvent,
     thread_id: &str,

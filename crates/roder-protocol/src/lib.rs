@@ -250,6 +250,8 @@ impl From<roder_api::thread::ThreadItemStatus> for ThreadItemStatus {
     }
 }
 
+// reason: serde wire type; boxing variants would change the public shape
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum Item {
@@ -1956,6 +1958,8 @@ pub struct DesignPatchParams {
     pub operations: Vec<DesignPatchOperation>,
 }
 
+// reason: serde wire type; boxing variants would change the public shape
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "op")]
 pub enum DesignPatchOperation {

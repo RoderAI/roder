@@ -167,7 +167,7 @@ enum InlineCompletionKind {
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum InlineCompletionItem {
     File(FileCompletionItem),
-    Skill(SkillDescriptor),
+    Skill(Box<SkillDescriptor>),
 }
 
 impl InlineCompletionItem {
@@ -194,7 +194,7 @@ const IDLE_POLL_TIMEOUT: Duration = Duration::from_millis(250);
 
 const TOP_STATUS_ANIMATION_FPS: u64 = 6;
 const WORKING_SHEEN_LOOP_FRAMES: u64 = TOP_STATUS_ANIMATION_FPS;
-const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2 + 2) / 3;
+const WORKING_SHEEN_ACTIVE_FRAMES: u64 = (TOP_STATUS_ANIMATION_FPS * 2).div_ceil(3);
 const WORKING_SHEEN_WIDTH: usize = 3;
 const MAX_VISIBLE_SLASH_COMMANDS: usize = 18;
 /// Reminder prepended to swarm-mode prompts so the model reaches for the
@@ -2658,7 +2658,7 @@ where
                         self.record_tool_completed(
                             &hook_id,
                             ev.status != "success",
-                            ev.output.or_else(|| Some(ev.detail)),
+                            ev.output.or(Some(ev.detail)),
                         );
                     }
                     RoderEvent::PolicyDecisionRecorded(ev) => match ev.decision {
@@ -8366,7 +8366,7 @@ fn matching_skill_completions(skills: &[SkillDescriptor], term: &str) -> Vec<Inl
         })
         .take(MAX_VISIBLE_INLINE_COMPLETIONS)
         .cloned()
-        .map(InlineCompletionItem::Skill)
+        .map(|skill| InlineCompletionItem::Skill(Box::new(skill)))
         .collect()
 }
 
@@ -9290,29 +9290,27 @@ fn voice_model_menu_items(providers: &SpeechProvidersListResult) -> Vec<Provider
     items
 }
 
+/// (score, index, section header, scored matches) for one provider menu section.
+type ProviderMenuGroup = (
+    i32,
+    usize,
+    Option<ProviderMenuItem>,
+    Vec<(i32, usize, ProviderMenuItem)>,
+);
+
 fn filter_provider_menu_items(items: &[ProviderMenuItem], query: &str) -> Vec<ProviderMenuItem> {
     let query = normalize_provider_search_text(query);
     if query.is_empty() {
         return items.to_vec();
     }
 
-    let mut groups: Vec<(
-        i32,
-        usize,
-        Option<ProviderMenuItem>,
-        Vec<(i32, usize, ProviderMenuItem)>,
-    )> = Vec::new();
+    let mut groups: Vec<ProviderMenuGroup> = Vec::new();
     let mut ungrouped: Vec<(i32, usize, ProviderMenuItem)> = Vec::new();
     let mut current_section: Option<ProviderMenuItem> = None;
     let mut current_section_matches: Vec<(i32, usize, ProviderMenuItem)> = Vec::new();
 
     fn flush_section(
-        groups: &mut Vec<(
-            i32,
-            usize,
-            Option<ProviderMenuItem>,
-            Vec<(i32, usize, ProviderMenuItem)>,
-        )>,
+        groups: &mut Vec<ProviderMenuGroup>,
         current_section: &Option<ProviderMenuItem>,
         matches: &mut Vec<(i32, usize, ProviderMenuItem)>,
     ) {
@@ -12906,7 +12904,7 @@ mod tests {
     fn working_status_sheen_highlights_one_character_then_loops() {
         let theme = Theme::for_dark_background(true);
         assert_eq!(WORKING_SHEEN_LOOP_FRAMES, TOP_STATUS_ANIMATION_FPS);
-        assert!(WORKING_SHEEN_ACTIVE_FRAMES < TOP_STATUS_ANIMATION_FPS);
+        const { assert!(WORKING_SHEEN_ACTIVE_FRAMES < TOP_STATUS_ANIMATION_FPS) };
         assert_ne!(theme.working_sheen, Color::Indexed(231));
         let spans = working_status_spans("Working", 0, theme);
         assert_eq!(spans_text(&spans), "Working");

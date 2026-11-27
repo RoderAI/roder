@@ -197,7 +197,7 @@ pub(crate) async fn dispatch(
                 .await
             {
                 Ok(resolved) => Ok(serde_json::json!({"resolved":resolved})),
-                Err(error) => Err(error.into()),
+                Err(error) => Err(error),
             },
         },
         "turn/start" => {

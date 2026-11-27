@@ -351,13 +351,14 @@ async fn runtime_batches_adjacent_reads_without_crossing_mutations() {
         ["a", "b", "w", "w2", "c"]
     );
     assert!(results.iter().all(|result| !result.is_error), "{results:?}");
-    let log = state.log.lock().unwrap();
-    let index = |entry| log.iter().position(|value| value == entry).unwrap();
-    assert!(index("a:end") < index("w:start"));
-    assert!(index("b:end") < index("w:start"));
-    assert!(index("w:end") < index("w2:start"));
-    assert!(index("w2:end") < index("c:start"));
-    drop(log);
+    {
+        let log = state.log.lock().unwrap();
+        let index = |entry| log.iter().position(|value| value == entry).unwrap();
+        assert!(index("a:end") < index("w:start"));
+        assert!(index("b:end") < index("w:start"));
+        assert!(index("w:end") < index("w2:start"));
+        assert!(index("w2:end") < index("c:start"));
+    }
     let result = tokio::time::timeout(
         Duration::from_secs(2),
         runtime.route_tool_call(

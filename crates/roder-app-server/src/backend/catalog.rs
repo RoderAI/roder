@@ -146,10 +146,10 @@ impl AgentBackendBridge {
             .ok_or_else(|| anyhow::anyhow!("unknown {} model {model}", self.backend.id()))?;
         let reasoning = reasoning.unwrap_or_else(|| selected.default_reasoning.clone());
         *self.selected_model.write().await = Some((model.clone(), reasoning.clone()));
-        if let Some(thread_id) = thread_id {
-            if let Some(handle) = self.threads.read().await.get(&thread_id).cloned() {
-                handle.thread.write().await.model = model.clone();
-            }
+        if let Some(thread_id) = thread_id
+            && let Some(handle) = self.threads.read().await.get(&thread_id).cloned()
+        {
+            handle.thread.write().await.model = model.clone();
         }
         if method == "providers/select" {
             Ok(serde_json::to_value(ProviderSelectResult {

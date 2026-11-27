@@ -48,6 +48,8 @@ impl RoderExtension for GitExtension {
 #[derive(Debug, Default)]
 pub struct GitProvider;
 
+// reason: spawn_blocking closures return roder-api's VcsError (serde wire type fixed by the VcsProvider trait).
+#[allow(clippy::result_large_err)]
 #[async_trait::async_trait]
 impl VcsProvider for GitProvider {
     fn id(&self) -> VcsProviderId {

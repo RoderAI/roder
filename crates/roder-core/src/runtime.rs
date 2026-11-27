@@ -3382,8 +3382,7 @@ impl Runtime {
         let Some(active) = active else {
             return false;
         };
-        let has_pending = !active.steers.lock().await.is_empty();
-        has_pending
+        !active.steers.lock().await.is_empty()
     }
 
     async fn steer_turn_with_mailbox_ack(
@@ -5005,6 +5004,7 @@ impl Runtime {
     /// On provider context/prompt-length failures, force-compact (and if needed
     /// strip the last bulky item) then retry the current tool round instead of
     /// failing the turn. Bounded so a permanently oversized suffix still stops.
+    #[allow(clippy::too_many_arguments)] // reason: internal turn-orchestration helper threading per-turn state
     async fn try_recover_from_context_limit(
         &self,
         thread_id: &ThreadId,
@@ -10043,10 +10043,8 @@ mod tests {
                     continue;
                 }
                 match envelope.event {
-                    RoderEvent::InferenceStarted(event) => {
-                        if event.speed_policy.is_some() {
-                            saw_speed_policy_event = true;
-                        }
+                    RoderEvent::InferenceStarted(event) if event.speed_policy.is_some() => {
+                        saw_speed_policy_event = true;
                     }
                     RoderEvent::TurnCompleted(_) => break,
                     RoderEvent::TurnFailed(event) => panic!("turn failed: {}", event.error),

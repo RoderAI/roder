@@ -119,7 +119,7 @@ pub(super) fn validate_computer_request(
     let ids = computer_call_ids(&request.transcript);
     ensure_computer_profile(advertised || !ids.is_empty(), profile)?;
     anyhow::ensure!(
-        !(advertised || !ids.is_empty()) || request.model.provider == PROVIDER_OPENAI,
+        (!advertised && ids.is_empty()) || request.model.provider == PROVIDER_OPENAI,
         "native computer is supported by the OpenAI API provider; the signed-in Codex endpoint does not support this tool"
     );
     for item in &request.transcript {

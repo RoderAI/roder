@@ -229,7 +229,7 @@ async fn process_loss_restores_uncertainty_and_rejects_old_or_rebound_results() 
         ExternalToolCallOutcome::TimedOut,
         ExternalToolCallOutcome::Cancelled,
     ] {
-        let expected = serde_json::to_value(&outcome).unwrap();
+        let expected = serde_json::to_value(outcome).unwrap();
         let request_id = format!("terminal-{}", expected.as_str().unwrap());
         let is_error = !matches!(outcome, ExternalToolCallOutcome::Resolved);
         server

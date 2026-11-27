@@ -138,12 +138,11 @@ impl InferenceEngine for GeminiEngine {
             }
         });
 
-        let stream = futures::stream::unfold(rx, |mut rx| async move {
-            match rx.recv().await {
-                Some(val) => Some((val, rx)),
-                None => None,
-            }
-        });
+        let stream =
+            futures::stream::unfold(
+                rx,
+                |mut rx| async move { rx.recv().await.map(|val| (val, rx)) },
+            );
 
         Ok(Box::pin(stream))
     }
@@ -278,39 +277,39 @@ async fn handle_gemini_stream(
     if !buffer.is_empty() {
         let line = String::from_utf8_lossy(&buffer);
         let trimmed = line.trim();
-        if let Some(data) = trimmed.strip_prefix("data:") {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim()) {
-                if let Some(id) = value.get("responseId").and_then(Value::as_str) {
-                    last_response_id = Some(id.to_string());
-                }
-                if let Some(reason) = value
-                    .pointer("/candidates/0/finishReason")
-                    .and_then(Value::as_str)
-                {
-                    last_finish_reason = Some(reason.to_string());
-                }
-
-                let text = extract_candidate_text(&value);
-                let thinking = extract_candidate_thinking(&value);
-                if !thinking.is_empty() {
-                    let _ = tx.send(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
-                        text: thinking,
-                    })));
-                }
-                if !text.is_empty() {
-                    let _ = tx.send(Ok(InferenceEvent::MessageDelta(MessageDelta {
-                        text,
-                        phase: None,
-                    })));
-                }
-                for call in extract_tool_calls(&value) {
-                    let _ = tx.send(Ok(InferenceEvent::ToolCallCompleted(call)));
-                }
-                if let Some(usage) = extract_usage(&value) {
-                    let _ = tx.send(Ok(InferenceEvent::Usage(usage)));
-                }
-                let _ = tx.send(Ok(InferenceEvent::ProviderMetadata(value)));
+        if let Some(data) = trimmed.strip_prefix("data:")
+            && let Ok(value) = serde_json::from_str::<serde_json::Value>(data.trim())
+        {
+            if let Some(id) = value.get("responseId").and_then(Value::as_str) {
+                last_response_id = Some(id.to_string());
             }
+            if let Some(reason) = value
+                .pointer("/candidates/0/finishReason")
+                .and_then(Value::as_str)
+            {
+                last_finish_reason = Some(reason.to_string());
+            }
+
+            let text = extract_candidate_text(&value);
+            let thinking = extract_candidate_thinking(&value);
+            if !thinking.is_empty() {
+                let _ = tx.send(Ok(InferenceEvent::ReasoningDelta(ReasoningDelta {
+                    text: thinking,
+                })));
+            }
+            if !text.is_empty() {
+                let _ = tx.send(Ok(InferenceEvent::MessageDelta(MessageDelta {
+                    text,
+                    phase: None,
+                })));
+            }
+            for call in extract_tool_calls(&value) {
+                let _ = tx.send(Ok(InferenceEvent::ToolCallCompleted(call)));
+            }
+            if let Some(usage) = extract_usage(&value) {
+                let _ = tx.send(Ok(InferenceEvent::Usage(usage)));
+            }
+            let _ = tx.send(Ok(InferenceEvent::ProviderMetadata(value)));
         }
     }
 

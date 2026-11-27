@@ -201,16 +201,12 @@ async fn stop_local_process(
     #[cfg(unix)]
     if let Some(pid) = child.id()
         && send_signal_to_process_group(pid, libc::SIGTERM)
+        && let Ok(status) = tokio::time::timeout(grace_timeout, child.wait()).await
     {
-        match tokio::time::timeout(grace_timeout, child.wait()).await {
-            Ok(status) => {
-                return Ok((
-                    status.context("wait for SIGTERM-stopped process task")?,
-                    "stop requested (SIGTERM)".to_string(),
-                ));
-            }
-            Err(_) => {}
-        }
+        return Ok((
+            status.context("wait for SIGTERM-stopped process task")?,
+            "stop requested (SIGTERM)".to_string(),
+        ));
     }
 
     let status = tokio::time::timeout(kill_timeout, async {

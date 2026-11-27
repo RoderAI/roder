@@ -54,6 +54,18 @@ fn native_tool_supported(name: &str, provider: &str, images: ToolImages) -> bool
     (name != roder_api::computer::COMPUTER_TOOL_NAME || provider == "openai") && images.offers(name)
 }
 
+pub(super) fn validate_external_tool_names(
+    tools: &[roder_api::tools::ToolSpec],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !tools
+            .iter()
+            .any(|tool| tool.name == roder_api::computer::COMPUTER_TOOL_NAME),
+        "computer is reserved for the native browser binding; rename the external function tool"
+    );
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -93,16 +105,4 @@ mod tests {
             ToolImages::Withheld
         ));
     }
-}
-
-pub(super) fn validate_external_tool_names(
-    tools: &[roder_api::tools::ToolSpec],
-) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !tools
-            .iter()
-            .any(|tool| tool.name == roder_api::computer::COMPUTER_TOOL_NAME),
-        "computer is reserved for the native browser binding; rename the external function tool"
-    );
-    Ok(())
 }

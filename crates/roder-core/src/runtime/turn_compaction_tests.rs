@@ -451,9 +451,7 @@ async fn successful_ordinary_compaction_preserves_exactly_one_eager_call_result_
             .position(|event| event.kind == "turn.completed")
             .unwrap();
         assert!(compaction < terminal);
-        let requests = engine.requests.lock().unwrap();
-        assert_success_suffix(&requests[1].transcript);
-        drop(requests);
+        assert_success_suffix(&engine.requests.lock().unwrap()[1].transcript);
         drop(live);
         let cold = runtime(dir.path(), engine.clone(), ran, executions.clone());
         run(&cold, dir.path(), &thread, None).await;

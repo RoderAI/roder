@@ -213,6 +213,7 @@ pub enum ThreadItemStatus {
     Failed,
 }
 
+#[allow(clippy::large_enum_variant)] // wire-shaped; items are moved, not copied
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ThreadItem {

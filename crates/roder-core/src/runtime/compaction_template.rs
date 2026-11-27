@@ -1,73 +1,5 @@
 use super::*;
 
-#[cfg(test)]
-mod permission_tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn cached_goal_compaction_uses_current_permissions() {
-        let runtime = Runtime::fake().unwrap();
-        let id = "goal-compaction-permissions".to_string();
-        let template = runtime
-            .compaction_request_template(
-                &id,
-                &"turn".into(),
-                roder_api::catalog::PROVIDER_MOCK,
-                "mock-model",
-            )
-            .await
-            .unwrap();
-        runtime
-            .compaction_templates
-            .write()
-            .await
-            .insert(id.clone(), template);
-        runtime
-            .thread_goal_set(
-                &id,
-                roder_api::goals::ThreadGoalPatch {
-                    objective: Some("Finish the authorized task".into()),
-                    ..Default::default()
-                },
-            )
-            .await
-            .unwrap();
-        for (mode, expected) in [
-            (PolicyMode::Bypass, "Full Access"),
-            (PolicyMode::Default, "Default mode"),
-        ] {
-            runtime.set_policy_mode(mode, None).await.unwrap();
-            let template = runtime
-                .compaction_request_template(
-                    &id,
-                    &"turn".into(),
-                    roder_api::catalog::PROVIDER_MOCK,
-                    "mock-model",
-                )
-                .await
-                .unwrap();
-            assert!(
-                template
-                    .instructions
-                    .developer
-                    .as_ref()
-                    .unwrap()
-                    .contains(&format!("Goal permissions: {expected}"))
-            );
-            if mode == PolicyMode::Default {
-                assert!(
-                    !template
-                        .instructions
-                        .developer
-                        .as_ref()
-                        .unwrap()
-                        .contains("Goal permissions: Full Access")
-                );
-            }
-        }
-    }
-}
-
 impl Runtime {
     pub(crate) async fn compaction_request_template(
         &self,
@@ -143,5 +75,73 @@ impl Runtime {
             receiver.mark_changed();
         }
         Some(receiver)
+    }
+}
+
+#[cfg(test)]
+mod permission_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cached_goal_compaction_uses_current_permissions() {
+        let runtime = Runtime::fake().unwrap();
+        let id = "goal-compaction-permissions".to_string();
+        let template = runtime
+            .compaction_request_template(
+                &id,
+                &"turn".into(),
+                roder_api::catalog::PROVIDER_MOCK,
+                "mock-model",
+            )
+            .await
+            .unwrap();
+        runtime
+            .compaction_templates
+            .write()
+            .await
+            .insert(id.clone(), template);
+        runtime
+            .thread_goal_set(
+                &id,
+                roder_api::goals::ThreadGoalPatch {
+                    objective: Some("Finish the authorized task".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        for (mode, expected) in [
+            (PolicyMode::Bypass, "Full Access"),
+            (PolicyMode::Default, "Default mode"),
+        ] {
+            runtime.set_policy_mode(mode, None).await.unwrap();
+            let template = runtime
+                .compaction_request_template(
+                    &id,
+                    &"turn".into(),
+                    roder_api::catalog::PROVIDER_MOCK,
+                    "mock-model",
+                )
+                .await
+                .unwrap();
+            assert!(
+                template
+                    .instructions
+                    .developer
+                    .as_ref()
+                    .unwrap()
+                    .contains(&format!("Goal permissions: {expected}"))
+            );
+            if mode == PolicyMode::Default {
+                assert!(
+                    !template
+                        .instructions
+                        .developer
+                        .as_ref()
+                        .unwrap()
+                        .contains("Goal permissions: Full Access")
+                );
+            }
+        }
     }
 }

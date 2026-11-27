@@ -130,15 +130,14 @@ impl<C: AppClient> TuiApp<C> {
 
     pub(super) fn observe_prompt_admission(&mut self, event: &RoderEvent) {
         match event {
-            RoderEvent::TurnStarted(event) => {
+            RoderEvent::TurnStarted(event)
                 if self
                     .prompt_admission
                     .accepted
                     .get(&event.thread_id)
-                    .is_some_and(|receipt| receipt.turn_id == event.turn_id)
-                {
-                    self.prompt_admission.accepted.remove(&event.thread_id);
-                }
+                    .is_some_and(|receipt| receipt.turn_id == event.turn_id) =>
+            {
+                self.prompt_admission.accepted.remove(&event.thread_id);
             }
             RoderEvent::TurnCompleted(event) => {
                 self.prompt_admission

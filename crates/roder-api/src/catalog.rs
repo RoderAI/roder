@@ -1554,6 +1554,7 @@ const fn gemini_model(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // const catalog-table constructor
 const fn xai_model(
     provider: &'static str,
     id: &'static str,

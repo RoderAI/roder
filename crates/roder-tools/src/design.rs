@@ -858,10 +858,10 @@ fn resolve_batch_get_aliases(document: &DesignDocument, mut args: BatchGetArgs) 
 fn resolve_operation_aliases(document: &DesignDocument, mut operation: Value) -> Value {
     if let Some(object) = operation.as_object_mut() {
         for key in ["nodeId", "parentId"] {
-            if let Some(value) = object.get(key).and_then(Value::as_str).map(str::to_string) {
-                if let Some(resolved) = resolve_node_alias(document, &value) {
-                    object.insert(key.to_string(), Value::String(resolved));
-                }
+            if let Some(value) = object.get(key).and_then(Value::as_str).map(str::to_string)
+                && let Some(resolved) = resolve_node_alias(document, &value)
+            {
+                object.insert(key.to_string(), Value::String(resolved));
             }
         }
     }
@@ -893,10 +893,10 @@ fn push_node(
 }
 
 fn pattern_matches(node: &Value, pattern: &SearchPattern) -> bool {
-    if let Some(expected_type) = &pattern.node_type {
-        if node.get("type").and_then(Value::as_str) != Some(expected_type.as_str()) {
-            return false;
-        }
+    if let Some(expected_type) = &pattern.node_type
+        && node.get("type").and_then(Value::as_str) != Some(expected_type.as_str())
+    {
+        return false;
     }
     if let Some(name) = &pattern.name {
         let actual = node.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -1131,6 +1131,8 @@ fn render_node_svg(
     }
 }
 
+// reason: flat SVG rect attribute list; a params struct would add noise for one private helper
+#[allow(clippy::too_many_arguments)]
 fn render_placeholder_rect(
     x: f64,
     y: f64,
@@ -1543,10 +1545,10 @@ fn delete_node(document: &mut DesignDocument, id: &str, recursive: bool) -> anyh
         delete_node(document, &child_id, true)?;
     }
     if let Some(parent_id) = node.get("parentId").and_then(Value::as_str) {
-        if let Some(parent) = document.nodes.get_mut(parent_id) {
-            if let Some(children) = parent.get_mut("childIds").and_then(Value::as_array_mut) {
-                children.retain(|child| child.as_str() != Some(id));
-            }
+        if let Some(parent) = document.nodes.get_mut(parent_id)
+            && let Some(children) = parent.get_mut("childIds").and_then(Value::as_array_mut)
+        {
+            children.retain(|child| child.as_str() != Some(id));
         }
     } else {
         document.root_ids.retain(|root_id| root_id != id);

@@ -28,6 +28,7 @@ impl Runtime {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)] // reason: internal turn-orchestration helper threading per-turn state
     pub(crate) async fn compact_transcript_with_threshold(
         &self,
         thread_id: &ThreadId,
