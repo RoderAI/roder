@@ -3695,7 +3695,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.4.15"
+version = "0.4.16"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -4128,7 +4128,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "async-stream",
