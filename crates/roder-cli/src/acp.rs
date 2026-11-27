@@ -18,6 +18,7 @@ use crate::{build_runtime_with_config, parse_cli_options};
 
 pub(crate) async fn run_acp_cli(args: &[String]) -> anyhow::Result<()> {
     let cli_options = parse_cli_options(args)?;
+    crate::require_native_backend(cli_options.backend, "acp")?;
     let config = acp_config(roder_config::load_config()?);
     let use_codex_auth = uses_codex(&config);
     let (runtime, _) = build_runtime_with_config(cli_options, config).await?;

@@ -226,6 +226,16 @@ pub(crate) fn parse_exec_cli(args: &[String]) -> anyhow::Result<ExecCli> {
 
     while i < args.len() {
         match args[i].as_str() {
+            "--backend" => {
+                let value = args.get(i + 1).ok_or_else(|| {
+                    anyhow::anyhow!("--backend requires roder, codex, or antigravity")
+                })?;
+                cli_options.backend = crate::parse_backend(value)?;
+                i += 1;
+            }
+            arg if arg.starts_with("--backend=") => {
+                cli_options.backend = crate::parse_backend(&arg["--backend=".len()..])?;
+            }
             "--json" => json = true,
             "--output-last-message" => {
                 let Some(path) = args.get(i + 1) else {
@@ -292,6 +302,7 @@ pub(crate) fn parse_exec_cli(args: &[String]) -> anyhow::Result<ExecCli> {
         i += 1;
     }
 
+    crate::require_native_backend(cli_options.backend, "exec")?;
     Ok(ExecCli {
         prompt: if prompt_parts.is_empty() {
             None

@@ -52,7 +52,7 @@ pub(super) async fn run_session(
                     let result = session.approve(&id, approved).await;
                     let _ = runtime.emit(RoderEvent::ApprovalResolved(ApprovalResolved {
                         thread_id: thread_id.clone(), turn_id: turn_id.clone(), approval_id: id.clone(),
-                        tool_id: id, tool_name: "Codex tool".into(), approved,
+                        tool_id: id, tool_name: "Agent tool".into(), approved,
                         timestamp: OffsetDateTime::now_utc(),
                     })).await;
                     let _ = reply.send(result);

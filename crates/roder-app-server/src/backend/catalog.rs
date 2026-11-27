@@ -8,6 +8,14 @@ use roder_protocol::{
     ProvidersListResult,
 };
 
+fn backend_name(id: &str) -> &str {
+    match id {
+        "codex" => "Codex",
+        "antigravity" => "Antigravity",
+        other => other,
+    }
+}
+
 impl AgentBackendBridge {
     async fn catalog(
         &self,
@@ -69,8 +77,8 @@ impl AgentBackendBridge {
             routing_options: vec![],
             providers: vec![ProviderDescriptor {
                 id: provider,
-                name: "Codex".into(),
-                description: Some("Codex app-server agent backend".into()),
+                name: backend_name(self.backend.id()).into(),
+                description: Some(format!("{} agent backend", backend_name(self.backend.id()))),
                 auth_type: ProviderAuthType::None,
                 auth_label: None,
                 authenticated: true,
@@ -134,7 +142,7 @@ impl AgentBackendBridge {
         let selected = models
             .iter()
             .find(|candidate| candidate.id == model)
-            .ok_or_else(|| anyhow::anyhow!("unknown Codex model {model}"))?;
+            .ok_or_else(|| anyhow::anyhow!("unknown {} model {model}", self.backend.id()))?;
         let reasoning = reasoning.unwrap_or_else(|| selected.default_reasoning.clone());
         *self.selected_model.write().await = Some((model.clone(), reasoning.clone()));
         if let Some(thread_id) = thread_id {
@@ -164,5 +172,86 @@ impl AgentBackendBridge {
                 model_switch_summary: None,
             })?)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use roder_api::backend::{BackendModel, BackendThreadSummary};
+    use roder_api::extension::ExtensionRegistryBuilder;
+    use roder_core::{RuntimeConfig, fake_provider::FakeInferenceEngine};
+    use std::path::PathBuf;
+
+    struct CatalogBackend;
+
+    #[async_trait::async_trait]
+    impl AgentBackend for CatalogBackend {
+        fn id(&self) -> &'static str {
+            "antigravity"
+        }
+
+        async fn connect(&self, _: BackendStart) -> anyhow::Result<Box<dyn AgentBackendSession>> {
+            anyhow::bail!("catalog-only test backend")
+        }
+
+        async fn list_threads(
+            &self,
+            _: PathBuf,
+            _: Option<usize>,
+        ) -> anyhow::Result<Vec<BackendThreadSummary>> {
+            Ok(vec![])
+        }
+
+        async fn list_models(&self, _: PathBuf) -> anyhow::Result<Vec<BackendModel>> {
+            Ok(vec![BackendModel {
+                id: "account-model".into(),
+                name: "Account model".into(),
+                is_default: true,
+                default_reasoning: "high".into(),
+                reasoning_efforts: vec!["high".into()],
+            }])
+        }
+    }
+
+    fn bridge() -> AgentBackendBridge {
+        let mut builder = ExtensionRegistryBuilder::new();
+        builder.inference_engine(Arc::new(FakeInferenceEngine));
+        let runtime = Runtime::new(builder.build().unwrap(), RuntimeConfig::default()).unwrap();
+        AgentBackendBridge::new(Arc::new(CatalogBackend), Arc::new(runtime))
+    }
+
+    #[test]
+    fn backend_names_follow_the_selected_runtime() {
+        assert_eq!(backend_name("codex"), "Codex");
+        assert_eq!(backend_name("antigravity"), "Antigravity");
+        assert_eq!(backend_name("custom"), "custom");
+    }
+
+    #[tokio::test]
+    async fn backend_catalog_uses_selected_provider_and_account_models() {
+        let bridge = bridge();
+        let providers = bridge.providers().await.unwrap();
+        assert_eq!(providers["active_provider"], "antigravity");
+        assert_eq!(providers["providers"][0]["name"], "Antigravity");
+        assert_eq!(
+            providers["providers"][0]["models"][0]["id"],
+            "account-model"
+        );
+        let models = bridge.models().await.unwrap();
+        assert_eq!(models["models"][0]["modelProvider"], "antigravity");
+        assert_eq!(models["models"][0]["id"], "account-model");
+    }
+
+    #[tokio::test]
+    async fn unavailable_backend_model_names_the_selected_provider() {
+        let error = bridge()
+            .select_model(
+                "providers/select",
+                json!({"provider": "antigravity", "model": "unavailable"}),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "unknown antigravity model unavailable");
     }
 }

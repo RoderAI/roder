@@ -14,6 +14,7 @@ readme = "README.md"
 
 [workspace.dependencies]
 roder-ext-codex-backend = { path = "crates/roder-ext-codex-backend", version = "0.3.0" }
+roder-ext-antigravity-backend = { path = "crates/roder-ext-antigravity-backend", version = "0.1.0" }
 anyhow = "1.0.104"
 agent-client-protocol-schema = "0.13.8"
 async-trait = "0.1.92"
@@ -29,6 +30,7 @@ croner = "4.0.2"
 crossterm = "0.29.0"
 dirs = "7.0.0"
 futures = "0.3.34"
+flate2 = "1.1.10"
 h2 = "0.4.20"
 http = "1.5.0"
 iana-time-zone = "0.1.65"
