@@ -215,6 +215,11 @@ impl Runtime {
             self.goals.remember_turn_options(&req).await;
             let runtime = Arc::clone(self);
             let turn_req = req;
+            let followup_options = StartTurnRequest {
+                message: String::new(),
+                images: Vec::new(),
+                ..turn_req.clone()
+            };
             let thread_id_for_task = turn_req.thread_id.clone();
             let turn_id_for_task = turn_id.clone();
             runtime.initialize_turn_usage(&turn_id).await;
@@ -386,7 +391,8 @@ impl Runtime {
                     .teams
                     .release_mailbox_reservations_for_turn(&turn_id_for_task)
                     .await;
-                runtime.active_turns.write().await.remove(&turn_id_for_task);
+                let unconsumed_steers =
+                    runtime.take_unconsumed_turn_steers(&turn_id_for_task).await;
                 runtime.turn_usage.lock().await.remove(&turn_id_for_task);
                 if let Some(drain) = runtime.turn_drains.write().await.remove(&turn_id_for_task) {
                     drain.completed.store(true, Ordering::Release);
@@ -411,7 +417,13 @@ impl Runtime {
                     });
                 }
                 runtime.active_turns_changed.notify_waiters();
-                if completed {
+                // User input the turn never consumed becomes the next turn, which
+                // takes precedence over an automatic goal continuation.
+                let replayed = runtime
+                    .replay_unconsumed_turn_steers(followup_options, unconsumed_steers)
+                    .await
+                    .unwrap_or(false);
+                if completed && !replayed {
                     let _ = runtime
                         .continue_active_goal_after_turn(thread_id_for_task)
                         .await;

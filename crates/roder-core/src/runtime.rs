@@ -21,6 +21,8 @@ mod thread_policy;
 mod thread_unload;
 #[path = "runtime/tool_approvals.rs"]
 mod tool_approvals;
+#[path = "runtime/turn_followup.rs"]
+mod turn_followup;
 #[path = "runtime/turn_start.rs"]
 mod turn_start;
 #[path = "runtime/usage_accounting.rs"]
@@ -3459,7 +3461,10 @@ impl Runtime {
             return Ok(());
         }
 
-        let Some(active) = self.active_turns.read().await.get(&turn_id).cloned() else {
+        // Hold the map guard while pushing: teardown drains steers under the
+        // write lock, so a steer can never land in an already-removed handle.
+        let active_turns = self.active_turns.read().await;
+        let Some(active) = active_turns.get(&turn_id) else {
             anyhow::bail!("no active turn to steer");
         };
         anyhow::ensure!(
@@ -3476,6 +3481,7 @@ impl Runtime {
                 .steer_changed
                 .send_modify(|generation| *generation = generation.wrapping_add(1));
         }
+        drop(active_turns);
         self.emit(RoderEvent::TurnSteered(TurnSteered {
             thread_id,
             turn_id,
