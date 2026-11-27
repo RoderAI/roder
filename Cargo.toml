@@ -99,7 +99,7 @@ roder-supergrok-auth = { path = "crates/roder-supergrok-auth", version = "0.2.0"
 roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.3.1" }
 roder-ext-cua = { path = "crates/roder-ext-cua", version = "0.2.1" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.3.3" }
-roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.6.1" }
+roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.6.2" }
 roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.1" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.3.0" }
 roder-ext-deepseek = { path = "crates/roder-ext-deepseek", version = "0.3.2" }
@@ -174,7 +174,7 @@ roder-skills = { path = "crates/roder-skills", version = "0.3.0" }
 roder-theme = { path = "crates/roder-theme", version = "0.1.0" }
 roder-tasks = { path = "crates/roder-tasks", version = "0.3.0" }
 roder-tools = { path = "crates/roder-tools", version = "0.3.3" }
-roder-tui = { path = "crates/roder-tui", version = "0.4.5" }
+roder-tui = { path = "crates/roder-tui", version = "0.4.6" }
 roder-web-search = { path = "crates/roder-web-search", version = "0.1.0" }
 
 [profile.dev]

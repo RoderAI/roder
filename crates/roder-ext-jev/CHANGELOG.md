@@ -1,3 +1,12 @@
+## 0.6.2 (2026-11-27)
+
+### Fixes
+
+#### Remove unused `today` re-export from the Jev text helper
+
+Import `today` directly in the text helper tests instead of re-exporting it,
+fixing an `unused_imports` warning in release builds.
+
 ## 0.6.1 (2026-11-27)
 
 ### Fixes
