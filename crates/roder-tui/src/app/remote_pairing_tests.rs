@@ -1,5 +1,6 @@
 use super::*;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 struct PairingFile {
     path: PathBuf,
@@ -7,12 +8,14 @@ struct PairingFile {
 
 impl PairingFile {
     fn new() -> Self {
-        let unique = std::time::SystemTime::now()
+        static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+        let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let unique = NEXT_DIR.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir().join(format!(
-            "roder-remote-pairing-{}-{unique}",
+            "roder-remote-pairing-{}-{timestamp}-{unique}",
             std::process::id()
         ));
         std::fs::create_dir(&dir).unwrap();
