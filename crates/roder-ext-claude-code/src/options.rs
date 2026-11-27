@@ -20,7 +20,14 @@ pub fn build_options(
 ) -> anyhow::Result<ClaudeAgentOptions> {
     let mut builder = ClaudeAgentOptions::builder()
         .model(request.model.model.clone())
-        .include_partial_messages(true);
+        .include_partial_messages(true)
+        // Only load the MCP servers Roder passes in. Without this the CLI also
+        // loads the user's own MCP servers and claude.ai connectors. Roder's
+        // `can_use_tool` callback denies those tools, but their schemas still
+        // go into every request: about 160K tokens for a one-line prompt with
+        // a set of connectors. Claude-in-Chrome is wired by the CLI itself and
+        // still connects under strict mode.
+        .strict_mcp_config(true);
     // Resume the persisted CLI session so the `claude` process keeps the prior
     // conversation server-side and applies its own auto-compaction. When set,
     // the provider only sends the new transcript tail as the prompt instead of
@@ -598,6 +605,8 @@ mod tests {
         // Roder MCP tools instead of bare built-ins (which would be denied).
         assert!(options.tools_set);
         assert!(options.tools.is_empty());
+        // Only the Roder MCP server is loaded, not the user's own servers.
+        assert!(options.strict_mcp_config);
 
         request.tool_choice = ToolChoice::None;
         let options =
@@ -606,6 +615,7 @@ mod tests {
         assert!(options.allowed_tools.is_empty());
         // With no Roder tools advertised we leave the built-in tool set alone.
         assert!(!options.tools_set);
+        assert!(options.strict_mcp_config);
     }
 
     fn chrome_request() -> AgentInferenceRequest {
