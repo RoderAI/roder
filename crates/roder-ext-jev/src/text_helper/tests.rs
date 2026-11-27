@@ -1,6 +1,6 @@
 use chrono::{Datelike, NaiveDate};
 
-use super::context::iso_format;
+use super::context::{iso_format, today};
 use super::*;
 use crate::http::tests::{MockServer, Reply, fast_policy};
 
