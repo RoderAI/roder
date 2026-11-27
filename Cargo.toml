@@ -100,7 +100,7 @@ roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.3.2" }
 roder-ext-cua = { path = "crates/roder-ext-cua", version = "0.2.1" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.3.5" }
 roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.6.3" }
-roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.3" }
+roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.4" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.3.1" }
 roder-ext-deepseek = { path = "crates/roder-ext-deepseek", version = "0.3.2" }
 roder-ext-hopper = { path = "crates/roder-ext-hopper", version = "0.1.2" }
