@@ -77,15 +77,27 @@ struct PrefixScan {
 
 fn scan_prefix(text: &str) -> PrefixScan {
     let mut in_string = false;
-    let mut escaped = false;
+    // Byte index of the backslash that starts the escape currently being read.
+    let mut escape_start: Option<usize> = None;
+    let mut unicode_digits: Option<u8> = None;
     let mut open = Vec::new();
     let mut last_top_level_comma = None;
     for (index, ch) in text.char_indices() {
         if in_string {
-            if escaped {
-                escaped = false;
+            if let Some(digits) = unicode_digits {
+                let digits = digits + 1;
+                unicode_digits = (digits < 4).then_some(digits);
+                if unicode_digits.is_none() {
+                    escape_start = None;
+                }
+            } else if escape_start.is_some() {
+                if ch == 'u' {
+                    unicode_digits = Some(0);
+                } else {
+                    escape_start = None;
+                }
             } else if ch == '\\' {
-                escaped = true;
+                escape_start = Some(index);
             } else if ch == '"' {
                 in_string = false;
             }
@@ -101,7 +113,8 @@ fn scan_prefix(text: &str) -> PrefixScan {
             _ => {}
         }
     }
-    let end = if escaped { text.len() - 1 } else { text.len() };
+    // Drop an escape (`\` or a partial `\uXX`) that the stream cut off.
+    let end = escape_start.unwrap_or(text.len());
     PrefixScan {
         end,
         in_string,
@@ -231,6 +244,15 @@ mod tests {
         // Escaped backslash followed by a dangling escape.
         assert_eq!(format_tool_arguments(r#"{"command":"a\\\"#), r"a\");
         assert_eq!(format_tool_arguments(r#"{"command":"a\\"#), r"a\");
+    }
+
+    #[test]
+    fn streaming_drops_partial_unicode_escape() {
+        assert_eq!(format_tool_arguments(r#"{"command":"caf\u00"#), "caf");
+        assert_eq!(
+            format_tool_arguments(r#"{"command":"caf\u00e9"#),
+            "caf\u{e9}"
+        );
     }
 
     #[test]
