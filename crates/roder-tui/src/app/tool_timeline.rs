@@ -646,9 +646,10 @@ impl TimelineState {
             roder_protocol::ThreadItemStatus::Completed => ToolTimelineStatus::Completed,
             roder_protocol::ThreadItemStatus::Failed => ToolTimelineStatus::Failed,
         };
-        // History items carry no timing; pin terminal ones so they don't count up.
+        // History items carry no real timing; pin them so the row doesn't count up
+        // from load time. A later live update re-opens the clock if still running.
         let started_at = local_now();
-        let finished_at = (status != ToolTimelineStatus::Running).then_some(started_at);
+        let finished_at = Some(started_at);
         self.prepend_item(TimelineItemKind::Tool(ToolTimelineTool {
             tool_id,
             entry,

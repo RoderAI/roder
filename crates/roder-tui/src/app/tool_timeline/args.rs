@@ -43,19 +43,71 @@ fn parse_object_lenient(text: &str) -> Option<Map<String, Value>> {
     if !text.starts_with('{') {
         return None;
     }
-    let mut repaired = text.trim_end().to_string();
-    // A dangling escape would swallow the closing quote we add.
-    if repaired.ends_with('\\') && !repaired.ends_with("\\\\") {
-        repaired.pop();
+    let scan = scan_prefix(text);
+    // Close the prefix as-is, then fall back to dropping the trailing partial member
+    // so complete fields still show while a later value is half-received.
+    let mut candidates = Vec::with_capacity(2);
+    let mut closed = text[..scan.end].to_string();
+    if scan.in_string {
+        closed.push('"');
     }
-    for suffix in ["}", "\"}", "]}", "\"]}", "}}", "\"}}"] {
-        if let Ok(Value::Object(map)) =
-            serde_json::from_str::<Value>(&format!("{repaired}{suffix}"))
-        {
-            return Some(map);
+    closed.extend(scan.open.iter().rev().map(|open| match open {
+        '[' => ']',
+        _ => '}',
+    }));
+    candidates.push(closed);
+    if let Some(comma) = scan.last_top_level_comma {
+        candidates.push(format!("{}}}", &text[..comma]));
+    }
+    candidates.into_iter().find_map(
+        |candidate| match serde_json::from_str::<Value>(&candidate) {
+            Ok(Value::Object(map)) => Some(map),
+            _ => None,
+        },
+    )
+}
+
+struct PrefixScan {
+    /// Byte length to keep; excludes a dangling escape backslash.
+    end: usize,
+    in_string: bool,
+    open: Vec<char>,
+    last_top_level_comma: Option<usize>,
+}
+
+fn scan_prefix(text: &str) -> PrefixScan {
+    let mut in_string = false;
+    let mut escaped = false;
+    let mut open = Vec::new();
+    let mut last_top_level_comma = None;
+    for (index, ch) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' | '[' => open.push(ch),
+            '}' | ']' => {
+                open.pop();
+            }
+            ',' if open.len() == 1 => last_top_level_comma = Some(index),
+            _ => {}
         }
     }
-    None
+    let end = if escaped { text.len() - 1 } else { text.len() };
+    PrefixScan {
+        end,
+        in_string,
+        open,
+        last_top_level_comma,
+    }
 }
 
 fn summarize_object(map: &Map<String, Value>) -> String {
@@ -112,22 +164,27 @@ fn summarize_patch(patch: &str) -> Option<String> {
     if !patch.contains("*** Begin Patch") {
         return None;
     }
-    let ops: Vec<String> = patch
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            [
-                ("*** Update File: ", "update"),
-                ("*** Add File: ", "add"),
-                ("*** Delete File: ", "delete"),
-            ]
-            .iter()
-            .find_map(|(marker, verb)| {
-                line.strip_prefix(marker)
-                    .map(|path| format!("{verb} {}", path.trim()))
-            })
-        })
-        .collect();
+    let mut ops: Vec<String> = Vec::new();
+    for line in patch.lines().map(str::trim) {
+        if let Some(dest) = line.strip_prefix("*** Move to: ") {
+            if let Some(last) = ops.last_mut() {
+                last.push_str(&format!(" -> {}", dest.trim()));
+            }
+            continue;
+        }
+        if let Some(op) = [
+            ("*** Update File: ", "update"),
+            ("*** Add File: ", "add"),
+            ("*** Delete File: ", "delete"),
+        ]
+        .iter()
+        .find_map(|(marker, verb)| {
+            line.strip_prefix(marker)
+                .map(|path| format!("{verb} {}", path.trim()))
+        }) {
+            ops.push(op);
+        }
+    }
     Some(if ops.is_empty() {
         "patch".to_string()
     } else {
@@ -155,6 +212,34 @@ mod tests {
         );
         assert_eq!(format_tool_arguments(r#"{"comm"#), "");
         assert_eq!(format_tool_arguments(r#"{"command":"a\"#), "a");
+    }
+
+    #[test]
+    fn streaming_keeps_complete_fields_before_partial_value() {
+        assert_eq!(
+            format_tool_arguments(r#"{"command":"ls","timeout_seconds":"#),
+            "ls"
+        );
+        assert_eq!(
+            format_tool_arguments(r#"{"command":"ls","timeout_seconds":1"#),
+            "ls  timeout_seconds=1"
+        );
+    }
+
+    #[test]
+    fn streaming_handles_backslash_runs() {
+        // Escaped backslash followed by a dangling escape.
+        assert_eq!(format_tool_arguments(r#"{"command":"a\\\"#), r"a\");
+        assert_eq!(format_tool_arguments(r#"{"command":"a\\"#), r"a\");
+    }
+
+    #[test]
+    fn patch_move_shows_destination() {
+        let args = serde_json::json!({
+            "patch": "*** Begin Patch\n*** Update File: a.rs\n*** Move to: b.rs\n@@\n-x\n+y\n*** End Patch"
+        })
+        .to_string();
+        assert_eq!(format_tool_arguments(&args), "update a.rs -> b.rs");
     }
 
     #[test]

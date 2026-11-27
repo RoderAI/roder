@@ -1573,6 +1573,9 @@ fn running_tool_row_counts_up_until_completion() {
     assert_eq!(tool.finished_at, None);
     let now = tool.started_at + time::Duration::seconds(12);
     assert_eq!(tool.elapsed(now), time::Duration::seconds(12));
+    tool.started_at -= time::Duration::seconds(30);
+    let row = rendered_lines(&mut timeline)[0].trim_end().to_string();
+    assert!(row.ends_with(" 30s") || row.ends_with(" 31s"), "{row}");
 
     timeline.record_tool_completed("call_1", false, None);
     let TimelineItemKind::Tool(tool) = &timeline.items[0].kind else {
