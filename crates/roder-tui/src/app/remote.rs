@@ -26,6 +26,8 @@ pub struct RemotePanelController {
     server: Option<RemoteServerController>,
     token: Option<RemoteToken>,
     connected_clients: usize,
+    #[cfg(test)]
+    pairing_path: Option<std::path::PathBuf>,
 }
 
 impl RemotePanelController {
@@ -45,7 +47,15 @@ impl RemotePanelController {
             server: None,
             token: None,
             connected_clients: 0,
+            #[cfg(test)]
+            pairing_path: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn with_pairing_path(mut self, path: std::path::PathBuf) -> Self {
+        self.pairing_path = Some(path);
+        self
     }
 
     pub fn is_running(&self) -> bool {
@@ -65,21 +75,46 @@ impl RemotePanelController {
     /// itself, so minting a fresh token and taking a fresh OS-assigned port on
     /// every start would silently break that pairing and force the user through
     /// `/pair` again after each restart. Both are persisted and reused; if the
-    /// remembered port is taken (another Roder already has it) we fall back to
-    /// an ephemeral port and remember the new one.
+    /// remembered port is taken (another Roder already has it), a secondary
+    /// listener uses an ephemeral port without replacing the stored pairing.
     pub async fn start(&mut self) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if let Some(path) = self.pairing_path.clone() {
+            return self
+                .start_with_pairing(pairing::load_or_create_at(&path)?, |port| {
+                    pairing::remember_port_at(&path, port)
+                })
+                .await;
+        }
         let stored = pairing::load_or_create()?;
+        self.start_with_pairing(stored, pairing::remember_port)
+            .await
+    }
+
+    async fn start_with_pairing(
+        &mut self,
+        stored: pairing::PersistedPairing,
+        remember_port: impl FnOnce(u16) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         let token = pairing::token_of(&stored)?;
         if stored.port != 0 && self.listen_is_default() {
             let pinned = format!("ws://127.0.0.1:{}", stored.port);
             let previous = std::mem::replace(&mut self.listen, pinned);
             match self.start_with_token(token.clone()).await {
-                Ok(()) => return self.remember_bound_port(),
-                Err(_) => self.listen = previous,
+                Ok(()) => return self.remember_bound_port_with(remember_port),
+                Err(error) => {
+                    self.listen = previous;
+                    if !pairing_port_is_occupied(&error) {
+                        return Err(error);
+                    }
+                    // The extension still reconnects to the primary instance.
+                    // Never promote a secondary instance's temporary endpoint.
+                    return self.start_with_token(token).await;
+                }
             }
         }
         self.start_with_token(token).await?;
-        self.remember_bound_port()
+        self.remember_bound_port_with(remember_port)
     }
 
     /// True when the listen address is the default "any port" form, i.e. the
@@ -90,21 +125,40 @@ impl RemotePanelController {
 
     /// Persist the port the listener actually bound so the next run reuses it.
     fn remember_bound_port(&self) -> anyhow::Result<()> {
+        #[cfg(test)]
+        if let Some(path) = self.pairing_path.as_ref() {
+            return self.remember_bound_port_with(|port| pairing::remember_port_at(path, port));
+        }
+        self.remember_bound_port_with(pairing::remember_port)
+    }
+
+    fn remember_bound_port_with(
+        &self,
+        remember_port: impl FnOnce(u16) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         if !self.listen_is_default() && !self.listen.starts_with("ws://127.0.0.1:") {
             return Ok(());
         }
         if let Some(server) = self.server.as_ref() {
-            pairing::remember_port(server.handle().listen_addr.port())?;
+            remember_port(server.handle().listen_addr.port())?;
         }
         Ok(())
     }
 
     /// Mint a new token, invalidating every paired browser, and restart on it.
     pub async fn rotate_pairing(&mut self) -> anyhow::Result<()> {
-        let rotated = pairing::rotate()?;
+        let rotated = self.rotate_stored_pairing()?;
         let token = pairing::token_of(&rotated)?;
         self.start_with_token(token).await?;
         self.remember_bound_port()
+    }
+
+    fn rotate_stored_pairing(&self) -> anyhow::Result<pairing::PersistedPairing> {
+        #[cfg(test)]
+        if let Some(path) = self.pairing_path.as_ref() {
+            return pairing::rotate_at(path);
+        }
+        pairing::rotate()
     }
 
     pub async fn start_with_token(&mut self, token: RemoteToken) -> anyhow::Result<()> {
@@ -163,6 +217,12 @@ impl RemotePanelController {
             _ => {}
         }
     }
+}
+
+fn pairing_port_is_occupied(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<std::io::Error>()
+        .is_some_and(|error| error.kind() == std::io::ErrorKind::AddrInUse)
 }
 
 impl RemotePanelSnapshot {
@@ -253,6 +313,10 @@ fn remote_url_rank(url: &str) -> u8 {
         1
     }
 }
+
+#[cfg(test)]
+#[path = "remote_pairing_tests.rs"]
+mod pairing_tests;
 
 #[cfg(test)]
 mod tests {

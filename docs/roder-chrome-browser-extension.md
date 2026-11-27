@@ -362,13 +362,23 @@ separate enable step.
   ctrl+p command palette as "Chrome browser plugin") for pairing status and
   mode controls.
 - From the CLI: `roder chrome status`; `roder chrome enable|disable` remain
-  available for manual override.
-- Check state: `roder chrome status` (or the `/chrome` panel) shows whether an
-  extension is connected, the active tab, and the current mode.
+  available for inspecting a fresh in-process app-server. These commands do
+  not attach to another running TUI and cannot enable or diagnose that
+  session's bridge.
+- Check the current session: use its `/chrome` panel to see whether an extension
+  is connected, the active tab, and the current mode.
 
 If a `chrome_*` tool reports "Chrome tools are not enabled", they were disabled
-manually with `roder chrome disable` or the equivalent app-server call. If it
+in that session's panel or through the equivalent app-server call. If it
 reports "No Chrome extension is connected", pairing is incomplete.
+
+When no extension is paired, the tools can use Roder Desktop's CDP browser.
+An empty `tabs` list with `backend: "desktop-cdp"` means that this connection is
+reachable but no browser page is open; it does not mean that the tools failed
+to load. Open the Browser pane in Desktop before using `chrome_navigate` or
+snapshots. CDP backends that implement `Target.createTarget` can also bootstrap
+a page through `chrome_tab_open`. Electron builds that reject target creation
+return an explicit limitation instead of a misleading stale-tab error.
 
 ## Parity matrix vs Claude-in-Chrome
 
@@ -411,7 +421,7 @@ mode** and the **per-origin site permission**.
 
 ### Pairing persists
 
-Pair once and every later Roder run reconnects on its own. The bearer token and
+Pair once and later primary Roder runs reconnect on their saved endpoint. The bearer token and
 the loopback port the listener bound are stored in
 `<config-dir>/remote-pairing.json` (owner-only, never logged), and a Roder that
 finds that file brings the listener back up on the same endpoint at startup —
@@ -422,9 +432,13 @@ themselves.
 
 `/remote regenerate` (alias `/remote unpair`) mints a new token, which
 invalidates every paired browser and is the way to revoke access. If the
-remembered port is already taken — a second Roder is running — the listener
-falls back to an ephemeral port, remembers that one, and the browser needs one
-more trip through `/pair`.
+remembered port is already taken — a second Roder is running — the secondary
+listener uses an ephemeral port without replacing the saved endpoint or token.
+The extension remains paired with the primary listener; it does not silently
+switch to the secondary instance. Other startup failures are surfaced instead
+of silently replacing the endpoint. Explicitly pinning a loopback listener
+with `--listen` remains an intentional change to the saved endpoint; the
+temporary-port protection applies to automatic fallback.
 
 ### Tab group
 

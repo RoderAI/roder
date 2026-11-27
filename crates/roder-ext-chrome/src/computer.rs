@@ -217,7 +217,7 @@ impl DirectBinding for ComputerCdpBinding {
             if let Some(reason) = scope.outside(&self.initial_url) {
                 return Err(reason);
             }
-            let target_id = create_target(&self.endpoint, &self.initial_url)
+            let target_id = create_target(&self.endpoint, &self.initial_url, false)
                 .await
                 .map_err(|e| format!("create computer tab: {e:#}"))?;
             *state = Some(BoundTab {
@@ -235,7 +235,11 @@ impl DirectBinding for ComputerCdpBinding {
     }
 }
 
-async fn create_target(endpoint: &str, url: &str) -> anyhow::Result<String> {
+pub(crate) async fn create_target(
+    endpoint: &str,
+    url: &str,
+    background: bool,
+) -> anyhow::Result<String> {
     use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
     let result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
@@ -243,7 +247,7 @@ async fn create_target(endpoint: &str, url: &str) -> anyhow::Result<String> {
         let (mut socket, _) = tokio_tungstenite::connect_async(endpoint).await?;
         socket
             .send(Message::Text(
-                json!({"id":1,"method":"Target.createTarget","params":{"url":url}})
+                json!({"id":1,"method":"Target.createTarget","params":{"url":url,"background":background}})
                     .to_string()
                     .into(),
             ))

@@ -364,7 +364,7 @@ impl ToolExecutor for ChromeDispatchTool {
         if !status.enabled {
             return Ok(error_result(
                 &call,
-                "Chrome tools are not enabled. Re-enable them from the /chrome panel or with roder chrome enable.",
+                "Chrome tools are not enabled in this Roder session. Re-enable them from this session's /chrome panel.",
             ));
         }
         let desktop = !status.connected;
