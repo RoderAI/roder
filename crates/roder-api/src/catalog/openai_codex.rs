@@ -104,14 +104,34 @@ const GPT_6_SOL_LUNA_REASONING: &[ReasoningOption] = &[
     },
 ];
 
+pub(super) const GPT_62_ASTRA: ModelCatalogEntry = openai_codex_model(
+    "gpt-6.2-astra",
+    "GPT-6.2 Astra",
+    "OpenAI's most capable model for complex reasoning and coding.",
+    REASONING_LOW,
+    GPT_56_REASONING,
+    500_000,
+    872_000,
+);
+
+pub(super) const GPT_62_SOL: ModelCatalogEntry = openai_codex_model(
+    "gpt-6.2-sol",
+    "GPT-6.2 Sol",
+    "Everyday coding and agentic work balancing intelligence and cost.",
+    REASONING_LOW,
+    GPT_56_REASONING,
+    500_000,
+    872_000,
+);
+
 pub(super) const GPT_6_ASTRA: ModelCatalogEntry = openai_codex_model(
     "gpt-6-astra",
     "GPT-6-Astra",
     "OpenAI's most capable model, built for the hardest end-to-end work.",
     REASONING_HIGH,
     GPT_6_REASONING,
-    1_050_000,
-    1_050_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_6_SOL: ModelCatalogEntry = openai_codex_model(
@@ -120,8 +140,8 @@ pub(super) const GPT_6_SOL: ModelCatalogEntry = openai_codex_model(
     "Agentic coding model balancing intelligence and cost.",
     REASONING_MEDIUM,
     GPT_6_SOL_LUNA_REASONING,
-    1_050_000,
-    1_050_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_61_SOL: ModelCatalogEntry = openai_codex_model(
@@ -130,18 +150,18 @@ pub(super) const GPT_61_SOL: ModelCatalogEntry = openai_codex_model(
     "Agentic coding model balancing intelligence and cost.",
     REASONING_MEDIUM,
     GPT_6_SOL_LUNA_REASONING,
-    1_050_000,
-    1_050_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_61_TERRA: ModelCatalogEntry = openai_codex_model(
     "gpt-6.1-terra",
     "GPT-6.1 Terra",
-    "Fast computer-use and coding model with a 1M context window. $1 / $5 per 1M input/output tokens.",
+    "Fast computer-use and coding model with a 500k default context window. $1 / $5 per 1M input/output tokens.",
     REASONING_MEDIUM,
     GPT_6_SOL_LUNA_REASONING,
-    1_000_000,
-    1_000_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_6_LUNA: ModelCatalogEntry = openai_codex_model(
@@ -150,8 +170,8 @@ pub(super) const GPT_6_LUNA: ModelCatalogEntry = openai_codex_model(
     "Efficient model for focused, high-volume tasks.",
     REASONING_MEDIUM,
     GPT_6_SOL_LUNA_REASONING,
-    1_050_000,
-    1_050_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_56_SOL: ModelCatalogEntry = openai_codex_model(
@@ -160,8 +180,8 @@ pub(super) const GPT_56_SOL: ModelCatalogEntry = openai_codex_model(
     "Latest frontier agentic coding model.",
     REASONING_LOW,
     GPT_56_REASONING,
-    372_000,
-    372_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_56_TERRA: ModelCatalogEntry = openai_codex_model(
@@ -170,8 +190,8 @@ pub(super) const GPT_56_TERRA: ModelCatalogEntry = openai_codex_model(
     "Balanced agentic coding model for everyday work.",
     REASONING_MEDIUM,
     GPT_56_REASONING,
-    372_000,
-    372_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_56_LUNA: ModelCatalogEntry = openai_codex_model(
@@ -180,8 +200,8 @@ pub(super) const GPT_56_LUNA: ModelCatalogEntry = openai_codex_model(
     "Fast and affordable agentic coding model.",
     REASONING_MEDIUM,
     GPT_56_LUNA_REASONING,
-    372_000,
-    372_000,
+    500_000,
+    872_000,
 );
 
 pub(super) const GPT_54: ModelCatalogEntry = openai_codex_model(
@@ -190,7 +210,7 @@ pub(super) const GPT_54: ModelCatalogEntry = openai_codex_model(
     "Strong model for everyday coding.",
     REASONING_MEDIUM,
     STANDARD_REASONING,
-    272_000,
+    500_000,
     1_000_000,
 );
 
@@ -219,5 +239,54 @@ const fn openai_codex_model(
         supports_structured: false,
         edit_tool: Some(EDIT_TOOL_PATCH),
         hidden: false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{PROVIDER_CODEX, lookup_model_for_provider, models_for_codex, models_for_provider};
+
+    #[test]
+    fn gpt_62_models_are_selectable_with_reasoning_and_context_metadata() {
+        for (id, name, default_reasoning) in [
+            ("gpt-6.2-astra", "GPT-6.2 Astra", REASONING_LOW),
+            ("gpt-6.2-sol", "GPT-6.2 Sol", REASONING_LOW),
+        ] {
+            for provider in [PROVIDER_OPENAI, PROVIDER_CODEX] {
+                let model = lookup_model_for_provider(provider, id).unwrap();
+                assert_eq!(model.display_name, name);
+                assert_eq!(model.default_reasoning, default_reasoning);
+                assert_eq!(model.context_window, 500_000);
+                assert_eq!(model.max_context_window, 872_000);
+                assert_eq!(model.auto_compact_token_limit, 450_000);
+                assert_eq!(
+                    model
+                        .supported_reasoning
+                        .iter()
+                        .map(|option| option.effort)
+                        .collect::<Vec<_>>(),
+                    [
+                        REASONING_LOW,
+                        REASONING_MEDIUM,
+                        REASONING_HIGH,
+                        REASONING_XHIGH,
+                        REASONING_MAX,
+                        REASONING_ULTRA,
+                    ]
+                );
+                assert!(model.supports_tools);
+                assert!(model.supports_images);
+                assert!(model.supports_compaction);
+                assert!(!model.supports_structured);
+                assert!(!model.hidden);
+            }
+            assert!(
+                models_for_provider(PROVIDER_OPENAI, false)
+                    .iter()
+                    .any(|model| model.id == id)
+            );
+            assert!(models_for_codex(false).iter().any(|model| model.id == id));
+        }
     }
 }

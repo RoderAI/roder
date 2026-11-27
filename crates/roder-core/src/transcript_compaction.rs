@@ -43,6 +43,11 @@ impl Runtime {
         let requires_native_compaction = engine.requires_native_compaction();
         let images = ToolImages::for_engine(engine.as_ref(), model);
         let mut compaction_model = model_entry_for_compaction(provider, model).cloned();
+        let budgets = crate::context_window::model_context_budgets(&cfg, provider, model);
+        if let (Some(entry), Some((window, threshold))) = (&mut compaction_model, budgets) {
+            entry.context_window = window;
+            entry.auto_compact_token_limit = threshold;
+        }
         if threshold_override.is_some()
             && let Some(entry) = &mut compaction_model
         {
@@ -56,7 +61,10 @@ impl Runtime {
             entry.supports_compaction = false;
         }
         let model_entry = compaction_model.as_ref();
-        let threshold = threshold_override.or(cfg.auto_compact_token_limit);
+        let threshold = threshold_override
+            .or_else(|| budgets.map(|(_, threshold)| threshold))
+            .or(cfg.auto_compact_token_limit)
+            .map(|threshold| budgets.map_or(threshold, |(window, _)| threshold.min(window)));
         if let Some(reason) =
             compaction_skip_reason(&transcript, model_entry, threshold, &options, images)
         {

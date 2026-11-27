@@ -26,7 +26,19 @@ pub(super) async fn run_session(
         tokio::select! {
             Some(command) = commands.recv() => match command {
                 Command::Send(text, mode, model, reasoning, reply) => {
-                    let result = session.send(text.clone(), mode, model, reasoning).await;
+                    let cfg = runtime.status().await;
+                    let selected_model = model.as_deref().unwrap_or_else(|| session.model());
+                    let provider = thread.read().await.model_provider.clone();
+                    let budget = roder_core::model_context_budgets(&cfg, &provider, selected_model);
+                    let configured = if let Some((window, threshold)) = budget {
+                        session.set_context_budget(window, threshold).await
+                    } else {
+                        Ok(())
+                    };
+                    let result = match configured {
+                        Ok(()) => session.send(text.clone(), mode, model, reasoning).await,
+                        Err(error) => Err(error),
+                    };
                     if let Ok(id) = &result {
                         turn_id = id.clone();
                         let mut thread = thread.write().await;

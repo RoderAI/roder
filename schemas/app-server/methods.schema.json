@@ -231,6 +231,7 @@
               "settings/set_file_backed_dynamic_context",
               "settings/set_search_index",
               "settings/set_shell",
+              "settings/set_model_context_window",
               "settings/set_web_search",
               "skills/list",
               "skills/read",

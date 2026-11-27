@@ -64,6 +64,7 @@ impl AgentBackendBridge {
 
     pub(super) async fn providers(&self) -> anyhow::Result<Value> {
         let (models, active_model, active_reasoning) = self.catalog().await?;
+        let cfg = self.runtime.status().await;
         let provider = self.backend.id().to_owned();
         Ok(serde_json::to_value(ProvidersListResult {
             active_provider: provider.clone(),
@@ -89,11 +90,11 @@ impl AgentBackendBridge {
                 models: models
                     .into_iter()
                     .map(|model| {
-                        let context_window = roder_api::catalog::lookup_model_for_provider(
+                        let context_window = roder_api::catalog::effective_model_context_window(
                             self.backend.id(),
                             &model.id,
-                        )
-                        .map(|entry| entry.context_window);
+                            cfg.model_context_window,
+                        );
                         ModelDescriptor {
                             id: model.id,
                             name: model.name,

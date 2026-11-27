@@ -3861,7 +3861,14 @@ async fn providers_list_exposes_current_codex_subscription_roster_and_ultra_sele
             .iter()
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["gpt-6.1-terra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna",]
+        vec![
+            "gpt-6.2-astra",
+            "gpt-6.2-sol",
+            "gpt-6.1-terra",
+            "gpt-6-astra",
+            "gpt-6.1-sol",
+            "gpt-6-luna",
+        ]
     );
 
     let terra = codex
@@ -11732,6 +11739,9 @@ mod computer_external_tools;
 
 #[path = "e2e/host_system_instructions.rs"]
 mod host_system_instructions;
+
+#[path = "e2e/context_window_settings.rs"]
+mod context_window_settings;
 
 #[path = "e2e/goals.rs"]
 mod goal_tests;

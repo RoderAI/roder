@@ -636,6 +636,12 @@ const METHOD_SPECS: &[AppServerMethodSpecSeed] = &[
     ),
     method_spec!("settings/set_shell", "settings", LocalState, NonIdempotent),
     method_spec!(
+        "settings/set_model_context_window",
+        "settings",
+        LocalState,
+        NonIdempotent
+    ),
+    method_spec!(
         "settings/set_web_search",
         "settings",
         LocalState,

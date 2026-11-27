@@ -211,6 +211,11 @@ fn build_runtime_config() -> anyhow::Result<RuntimeConfig> {
         default_provider: provider,
         default_model: model,
         reasoning: cfg.reasoning,
+        model_context_window: cfg.model_context_window,
+        auto_compact_token_limit: cfg.auto_compact_token_limit,
+        model_auto_compact_token_limits: cfg.model_profiles.iter().filter_map(|(model, profile)| {
+            profile.auto_compact_token_limit.map(|limit| (model.clone(), limit))
+        }).collect(),
         workspace: std::env::current_dir()
             .ok()
             .map(|path| path.display().to_string()),

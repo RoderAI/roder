@@ -5,6 +5,7 @@ mod chrome;
 mod commands;
 mod compact;
 mod composer;
+mod context_settings;
 mod dialog;
 mod forks;
 mod goals;
@@ -830,6 +831,7 @@ enum ProviderPopupScreen {
     Models,
     Reasoning,
     Settings,
+    ContextWindow,
     Runners,
     Spinner,
     WebSearch,
@@ -1168,6 +1170,7 @@ enum ProviderMenuItem {
     WebSearchSettings,
     VoiceModelSettings,
     ShellSettings(String),
+    ContextWindowSettings(Option<u32>),
     SearchIndexToggle(bool),
     FileBackedDynamicContextToggle(bool),
     MessageFoldingToggle(bool),
@@ -1243,6 +1246,7 @@ impl ProviderMenuItem {
             Self::WebSearchSettings => "Web search provider".to_string(),
             Self::VoiceModelSettings => "Voice model".to_string(),
             Self::ShellSettings(shell) => format!("Shell command shell: {shell}"),
+            Self::ContextWindowSettings(value) => context_settings::setting_label(*value),
             Self::SearchIndexToggle(enabled) => format!(
                 "Instant regex search: {}",
                 if *enabled { "on" } else { "off" }
@@ -1391,6 +1395,7 @@ where
     provider: String,
     model: String,
     model_context_window: Option<u32>,
+    context_settings: context_settings::ContextSettings,
     context_counter_hovered: bool,
     last_frame_width: u16,
     selectable_lines: Vec<SelectableLine>,
@@ -1824,7 +1829,16 @@ where
         } else {
             requested_model
         };
-        let model_context_window = context_window_for_provider_model(&provider, &selected_model);
+        let context_settings = context_settings::ContextSettings::new(
+            settings_state
+                .as_ref()
+                .and_then(|settings| settings.model_context_window),
+        );
+        let model_context_window = context_settings.effective_window(
+            &provider,
+            &selected_model,
+            context_window_for_provider_model(&provider, &selected_model),
+        );
 
         let command_catalog = thread_resume::commands_list(&client)
             .await
@@ -1874,6 +1888,7 @@ where
             provider,
             model: selected_model,
             model_context_window,
+            context_settings,
             context_counter_hovered: false,
             last_frame_width: 0,
             selectable_lines: Vec::new(),
@@ -2207,6 +2222,10 @@ where
                         {
                             self.resolve_pending_plan_exit(false).await;
                         } else if self.show_provider_popup {
+                            if self.provider_popup_screen == ProviderPopupScreen::ContextWindow {
+                                self.handle_context_settings_key(key).await;
+                                continue;
+                            }
                             match key.code {
                                 KeyCode::Esc => self.close_or_back_provider_popup(),
                                 KeyCode::Char('o')
@@ -4403,6 +4422,10 @@ where
             return;
         }
         if self.show_provider_popup {
+            if self.provider_popup_screen == ProviderPopupScreen::ContextWindow {
+                self.context_settings.paste(&text);
+                return;
+            }
             self.provider_menu_filter
                 .push_str(&text.replace(['\r', '\n'], " "));
             if self.provider_popup_screen != ProviderPopupScreen::ApiKey {
@@ -5424,6 +5447,7 @@ where
                 " Reasoning effort (Enter select, Esc back) ".to_string()
             }
             ProviderPopupScreen::Settings => " Settings (Enter select, Esc back) ".to_string(),
+            ProviderPopupScreen::ContextWindow => " GPT/Codex context window ".to_string(),
             ProviderPopupScreen::Runners => " Runners (Enter select, Esc back) ".to_string(),
             ProviderPopupScreen::Spinner => {
                 " Working spinner (Enter select, Esc back) ".to_string()
@@ -5446,6 +5470,10 @@ where
     }
 
     fn render_provider_popup(&mut self, f: &mut Frame<'_>, area: Rect) {
+        if self.provider_popup_screen == ProviderPopupScreen::ContextWindow {
+            self.render_context_settings(f, area);
+            return;
+        }
         let menu_area = centered_rect(area, area.width.min(72), area.height.min(16));
         let visible_items = self.filtered_provider_menu_items();
         let items: Vec<ListItem> = if self.provider_popup_screen == ProviderPopupScreen::ApiKey {
@@ -5506,6 +5534,7 @@ where
                         | ProviderMenuItem::WebSearchSettings
                         | ProviderMenuItem::VoiceModelSettings
                         | ProviderMenuItem::ShellSettings(_)
+                        | ProviderMenuItem::ContextWindowSettings(_)
                         | ProviderMenuItem::ThemesSettings
                         | ProviderMenuItem::MarketplacesSettings
                         | ProviderMenuItem::PluginBrowser
@@ -6034,6 +6063,10 @@ where
     }
 
     fn close_or_back_provider_popup(&mut self) {
+        if self.provider_popup_screen == ProviderPopupScreen::ContextWindow {
+            self.open_settings_submenu();
+            return;
+        }
         if !self.provider_menu_filter.is_empty() {
             self.provider_menu_filter.clear();
             self.clamp_provider_menu_selection();
@@ -6198,6 +6231,10 @@ where
             ProviderMenuItem::ShellSettings(_) => {
                 self.open_shell_submenu();
             }
+            ProviderMenuItem::ContextWindowSettings(_) => {
+                self.context_settings.begin_edit();
+                self.provider_popup_screen = ProviderPopupScreen::ContextWindow;
+            }
             ProviderMenuItem::ThemesSettings => {
                 self.open_themes_submenu();
             }
@@ -6333,6 +6370,10 @@ where
             self.search_index_enabled,
             &self.command_shell,
             self.file_backed_dynamic_context,
+        );
+        self.provider_menu_items.insert(
+            self.provider_menu_items.len().saturating_sub(1),
+            ProviderMenuItem::ContextWindowSettings(self.context_settings.saved),
         );
         let selected = self
             .provider_menu_items
@@ -10538,6 +10579,7 @@ mod tests {
             provider: "mock".to_string(),
             model: "mock".to_string(),
             model_context_window: None,
+            context_settings: context_settings::ContextSettings::default(),
             context_counter_hovered: false,
             last_frame_width: 100,
             selectable_lines: Vec::new(),

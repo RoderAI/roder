@@ -165,6 +165,9 @@ pub struct RuntimeConfig {
     pub default_model: String,
     pub reasoning: Option<String>,
     pub auto_compact_token_limit: Option<u32>,
+    pub model_context_window: Option<u32>,
+    /// Explicit per-model compaction limits, before catalog profiles are merged.
+    pub model_auto_compact_token_limits: HashMap<String, u32>,
     /// Provider-scoped limits for custom Chat Completions engines.
     pub custom_chat_providers: HashMap<String, CustomChatProviderBudget>,
     pub file_backed_dynamic_context: bool,
@@ -218,6 +221,8 @@ impl Default for RuntimeConfig {
             default_model: "mock".to_string(),
             reasoning: None,
             auto_compact_token_limit: None,
+            model_context_window: None,
+            model_auto_compact_token_limits: HashMap::new(),
             custom_chat_providers: HashMap::new(),
             file_backed_dynamic_context: true,
             hosted_web_search: HostedWebSearchConfig::cached(),
@@ -554,7 +559,7 @@ type RunnerToolExecutionLockRegistry =
 pub struct Runtime {
     pub bus: EventBus,
     pub registry: ExtensionRegistry,
-    config: RwLock<RuntimeConfig>,
+    pub(crate) config: RwLock<RuntimeConfig>,
     pub(crate) execution_lease: Option<Arc<crate::execution_lease::RuntimeExecutionLease>>,
     pending_plan_exit: RwLock<Option<PendingPlanExit>>,
     pub(crate) pending_tool_approvals: Mutex<HashMap<String, PendingToolApproval>>,
@@ -700,6 +705,10 @@ impl RunnerSessionSlot {
 
 impl Runtime {
     pub fn new(registry: ExtensionRegistry, config: RuntimeConfig) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            config.model_context_window != Some(0),
+            "model_context_window must be positive"
+        );
         if registry.inference_engines.is_empty() {
             anyhow::bail!("at least one inference engine must be registered");
         }
@@ -3985,9 +3994,20 @@ impl Runtime {
                 reasoning: request_reasoning,
                 output: OutputConfig::default(),
                 runtime: RuntimeHints {
-                    auto_compact_token_limit: (provider != roder_api::catalog::PROVIDER_CODEX)
-                        .then(|| server_side_compaction_threshold(&cfg, &model))
-                        .flatten(),
+                    auto_compact_token_limit: if provider == roder_api::catalog::PROVIDER_OPENAI {
+                        let live_cfg = self.status().await;
+                        if let Some((_, threshold)) = crate::context_window::model_context_budgets(
+                            &live_cfg, &provider, &model,
+                        ) {
+                            (threshold > 0).then_some(threshold)
+                        } else {
+                            server_side_compaction_threshold(&live_cfg, &model)
+                        }
+                    } else if provider != roder_api::catalog::PROVIDER_CODEX {
+                        server_side_compaction_threshold(&cfg, &model)
+                    } else {
+                        None
+                    },
                     profile: runtime_profile,
                     parallel_tool_calls: Some(parallel_tool_calls),
                     prompt_cache_key: Some(req.thread_id.clone()),
@@ -6299,7 +6319,7 @@ mod tests {
     fn server_side_compaction_uses_catalog_ninety_percent_default() {
         assert_eq!(
             server_side_compaction_threshold(&RuntimeConfig::default(), "gpt-5.5"),
-            Some(945_000)
+            Some(244_800)
         );
         assert_eq!(
             server_side_compaction_threshold(&RuntimeConfig::default(), "gpt-5.3-codex-spark"),
@@ -6971,7 +6991,7 @@ mod tests {
         );
         assert_eq!(
             request.runtime.auto_compact_token_limit,
-            Some(945_000),
+            Some(244_800),
             "gpt-5.5 should keep server-side auto compaction configured"
         );
 

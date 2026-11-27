@@ -46,6 +46,30 @@ test("client preserves JSON-RPC errors with method and request id", async () => 
   );
 });
 
+test("client exposes context-window settings and preserves reset params", async () => {
+  const seen: JsonRpcRequest[] = [];
+  const client = new RoderRpcClient(
+    new InMemoryTransport((request) => {
+      seen.push(request);
+      return {
+        jsonrpc: "2.0",
+        id: request.id,
+        result: request.params,
+      };
+    }),
+  );
+
+  assert.ok(appServerMethods.includes("settings/set_model_context_window"));
+  for (const params of [{ model_context_window: 500000 }, { model_context_window: null }, {}]) {
+    assert.deepEqual(await client.methods["settings/set_model_context_window"](params), params);
+  }
+  assert.deepEqual(seen.map((request) => request.params), [
+    { model_context_window: 500000 },
+    { model_context_window: null },
+    {},
+  ]);
+});
+
 test("client aborts pending requests", async () => {
   const controller = new AbortController();
   controller.abort();

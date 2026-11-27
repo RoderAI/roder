@@ -104,7 +104,8 @@ Provider auth is provider-specific:
 
 Config persistence is opt-in on the `AppServer` instance. When enabled,
 `providers/select`, Manual `model/select`, `settings/set_web_search`,
-`settings/set_shell`, `settings/set_default_mode`, and
+`settings/set_shell`, `settings/set_default_mode`,
+`settings/set_model_context_window`, and
 `settings/set_file_backed_dynamic_context` write the selected defaults to
 `~/.roder/config.toml`. Auto `model/select` is process-local selection state
 backed by configured routing; it does not persist a fake provider or model id.
@@ -192,11 +193,12 @@ Core:
 | `model/select` | Select Manual provider/model or Auto routing mode. |
 | `inference/routing/metrics` | Read adaptive inference routing decisions, estimated savings, and regret counters for a turn. |
 | `inference/routing/status` | Read the latest adaptive inference routing decision status for a thread or turn. |
-| `settings/get` | Read hosted web search mode, search-index status, shell command shell, default policy mode, and file-backed context status. |
+| `settings/get` | Read hosted web search mode, search-index status, shell command shell, default policy mode, model context-window override, and file-backed context status. |
 | `settings/set_web_search` | Set hosted web search mode. |
 | `settings/set_search_index` | Enable or disable the persistent regex search index. |
 | `settings/set_shell` | Set the shell used by the `shell` tool and default `exec_command` calls. |
 | `settings/set_default_mode` | Set default policy mode. |
+| `settings/set_model_context_window` | Set or reset the native OpenAI/Codex GPT context-window override. |
 | `settings/set_file_backed_dynamic_context` | Enable or disable file-backed dynamic context. |
 | `auth/codex/login` | Start Codex OAuth login. |
 | `auth/codex/status` | Read Codex OAuth status. |
@@ -1035,7 +1037,8 @@ Response:
   "default_mode": "default",
   "agent_swarm_mode": false,
   "ultra_mode": false,
-  "file_backed_dynamic_context": true
+  "file_backed_dynamic_context": true,
+  "model_context_window": 500000
 }
 ```
 
@@ -1057,6 +1060,11 @@ Notes:
   per-thread overrides (see [`docs/ultra-mode.md`](../ultra-mode.md)).
 - `file_backed_dynamic_context` controls whether long tool output, command
   output, and compaction source material are written to context artifacts.
+- `model_context_window` is an optional positive integer token override for
+  catalogued GPT models on native OpenAI and Codex providers. It is the configured
+  value, not the effective per-model window; the latter is capped at the selected
+  model's supported maximum. When unset, the field is `null` and the model's
+  catalog default applies.
 
 ### `settings/set_web_search`
 
@@ -1168,6 +1176,63 @@ Behavior:
 
 - Calls runtime policy-mode update with reason `settings default mode`.
 - Persists a config value only when user-config persistence is enabled.
+
+### `settings/set_model_context_window`
+
+Purpose: Set the working context window for native OpenAI/Codex GPT models, or
+reset to each model's catalog default.
+
+Request:
+
+```json
+{
+  "model_context_window": 500000
+}
+```
+
+Response:
+
+```json
+{
+  "model_context_window": 500000,
+  "config_path": "/home/user/.roder/config.toml"
+}
+```
+
+Behavior:
+
+- Accepts a positive integer token count. Send
+  `{ "model_context_window": null }` or `{}` to clear the override.
+  A successful reset returns `model_context_window: null`.
+- Applies process-wide on the next native inference request. Delegated Codex
+  backend sessions apply the budget before the next new turn, not when steering
+  an already active delegated turn. It is not a per-thread or per-turn override.
+- Persists the root `model_context_window` config key when user-config
+  persistence is enabled. Clearing the override removes that key.
+  Persistence completes before runtime state changes, so a failed write leaves
+  the live setting unchanged.
+- `config_path` identifies the user config file even when persistence is
+  disabled; it does not confirm that a write occurred.
+- Emits no setting-change notification. Refresh `settings/get` and model
+  metadata after a successful change.
+- Caps the effective window at the selected model's supported maximum.
+  Native GPT-6 and GPT-5.6 models default to 500,000 tokens and support up to
+  872,000; smaller-window models such as GPT-5.5 remain capped at their supported
+  maxima (272,000 for GPT-5.5). Non-GPT models and other providers are unaffected.
+- Automatic compaction follows the effective window at the existing 90%
+  watermark (approximately 450,000 tokens for a 500,000-token window).
+  Explicit global or model-profile compaction limits take precedence, but
+  cannot exceed the effective context window.
+
+Errors:
+
+- Zero returns JSON-RPC code `-32602` with
+  `model_context_window must be positive`.
+- A config-write failure returns JSON-RPC code `-32000` without applying the
+  new runtime value.
+
+See [context-window configuration](../roder-context-and-entrypoints.md#openai-and-codex-context-windows)
+for the config-file and TUI controls.
 
 ### `settings/set_file_backed_dynamic_context`
 
@@ -6398,7 +6463,8 @@ Native session listings can therefore still include that conversation.
   corruption can still make a thread unreadable according to that store's
   normal validation rules.
 - `providers/select`, `settings/set_web_search`, `settings/set_shell`,
-  `settings/set_default_mode`, and `settings/set_file_backed_dynamic_context`
+  `settings/set_default_mode`, `settings/set_model_context_window`, and
+  `settings/set_file_backed_dynamic_context`
   persist only when the app-server instance enables user-config persistence.
 - Workflow import decisions are persisted under `~/.roder/workflow-imports.json`
   unless `RODER_WORKFLOW_IMPORTS_PATH` is set.

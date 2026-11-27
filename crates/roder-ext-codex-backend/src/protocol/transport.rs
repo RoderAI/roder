@@ -58,6 +58,7 @@ impl CodexBackend {
             usage_baseline: None,
             approvals: HashMap::new(),
             snapshot: BackendThreadSnapshot::default(),
+            context_budget: None,
         };
         session
             .request(
