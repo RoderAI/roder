@@ -1,3 +1,26 @@
+## 0.7.5 (2026-11-27)
+
+### Fixes
+
+#### Configure GPT and Codex context windows from TUI Settings
+
+Use 500k-token default working context windows for GPT models that support
+them. Add a persisted `model_context_window` preference with a numeric TUI
+editor and reset-to-default action. Clamp each model's effective window to
+its supported maximum and apply the same budget to context counters and
+runtime compaction.
+
+Rust integrators must rebuild against the updated Config, RuntimeConfig,
+and settings response structs, which add the optional context-window
+preference. Release their compatible reverse dependencies together.
+
+#### Add GPT-6.2 Astra and Sol to model selection
+
+Offer `gpt-6.2-astra` and `gpt-6.2-sol` in the OpenAI and Codex model
+pickers with 500k-token default context windows, an 872k maximum matching
+the local Codex catalog, and low through ultra reasoning. Keep existing
+models and provider model defaults unchanged.
+
 ## 0.7.4 (2026-11-27)
 
 ### Fixes

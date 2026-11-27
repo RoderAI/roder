@@ -3691,7 +3691,7 @@ dependencies = [
 
 [[package]]
 name = "roder"
-version = "0.4.12"
+version = "0.4.13"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3741,7 +3741,7 @@ dependencies = [
 
 [[package]]
 name = "roder-api"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3767,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "roder-app-server"
-version = "0.7.4"
+version = "0.7.5"
 dependencies = [
  "agent-client-protocol-schema",
  "anyhow",
@@ -3893,7 +3893,7 @@ dependencies = [
 
 [[package]]
 name = "roder-config"
-version = "0.3.1"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "dirs 7.0.0",
@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "roder-configure"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -3938,7 +3938,7 @@ dependencies = [
 
 [[package]]
 name = "roder-core"
-version = "0.4.5"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3972,7 +3972,7 @@ dependencies = [
 
 [[package]]
 name = "roder-dist-hosted"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "anyhow",
  "futures",
@@ -4029,7 +4029,7 @@ dependencies = [
 
 [[package]]
 name = "roder-evals"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -4050,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-anthropic"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4124,7 +4124,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-claude-code"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4141,7 +4141,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-codex-backend"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-cua"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4194,7 +4194,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-deepseek"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4372,7 +4372,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-hopper"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4401,7 +4401,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-jev"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4634,7 +4634,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-opencode"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4710,7 +4710,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-poolside"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -4728,7 +4728,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-postgres-session"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4876,7 +4876,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-runner-sprites"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -4935,7 +4935,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-synthetic"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5078,7 +5078,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-webwright"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5107,7 +5107,7 @@ dependencies = [
 
 [[package]]
 name = "roder-ext-xiaomi-mimo"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5155,7 +5155,7 @@ dependencies = [
 
 [[package]]
 name = "roder-extension-host"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5267,7 +5267,7 @@ dependencies = [
 
 [[package]]
 name = "roder-protocol"
-version = "0.4.2"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "roder-api",
@@ -5399,7 +5399,7 @@ dependencies = [
 
 [[package]]
 name = "roder-tui"
-version = "0.4.4"
+version = "0.4.5"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -1,3 +1,19 @@
+## 0.7.4 (2026-11-27)
+
+### Fixes
+
+#### Configure GPT and Codex context windows from TUI Settings
+
+Use 500k-token default working context windows for GPT models that support
+them. Add a persisted `model_context_window` preference with a numeric TUI
+editor and reset-to-default action. Clamp each model's effective window to
+its supported maximum and apply the same budget to context counters and
+runtime compaction.
+
+Rust integrators must rebuild against the updated Config, RuntimeConfig,
+and settings response structs, which add the optional context-window
+preference. Release their compatible reverse dependencies together.
+
 ## 0.7.3 (2026-11-04)
 
 ### Features

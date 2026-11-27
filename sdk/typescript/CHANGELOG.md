@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.4 (2026-11-27)
+
+### Fixes
+
+#### Expose configurable GPT context windows in SDK method helpers
+
+Regenerate the app-server method catalog so TypeScript and Python clients can
+set a native GPT context-window override or reset it to the model default.
+
 ## 0.2.3 (2026-11-26)
 
 ### Features
