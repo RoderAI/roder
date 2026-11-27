@@ -28,7 +28,8 @@ pub async fn execute(kind: &str, call: &ToolCall) -> Option<ToolResult> {
         return None;
     }
     match kind {
-        "tab/open" | "tab/navigate" => Some(direct(call, kind).await),
+        "tab/open" => Some(open_tab(call).await),
+        "tab/navigate" => Some(direct(call, kind).await),
         "tabs/list" => Some(tabs_list(call).await),
         "page/snapshot" => Some(direct(call, kind).await),
         "page/screenshot" => Some(direct(call, kind).await),
@@ -36,8 +37,7 @@ pub async fn execute(kind: &str, call: &ToolCall) -> Option<ToolResult> {
         "page/click" | "page/type" | "page/scroll" | "page/keypress" | "page/select" => {
             Some(direct(call, kind).await)
         }
-        "page/getText" | "page/highlight" => unsupported(call, kind).await,
-        _ => None,
+        _ => unsupported(call, kind).await,
     }
 }
 
@@ -52,9 +52,14 @@ async fn unsupported(call: &ToolCall, kind: &str) -> Option<ToolResult> {
              has it. chrome_page_snapshot returns the page text, with the elements and their refs.",
             call.name
         ),
-        _ => format!(
+        "page/highlight" => format!(
             "{} is not supported on the Roder Desktop browser; only the paired Chrome extension \
-             has it. Act on the element directly (chrome_click, chrome_type, chrome_select).",
+              has it. Act on the element directly (chrome_click, chrome_type, chrome_select).",
+            call.name
+        ),
+        _ => format!(
+            "{} is not supported by the Desktop CDP fallback. Pair the Chrome extension \
+             with this Roder instance from /chrome to use it.",
             call.name
         ),
     };
@@ -64,7 +69,16 @@ async fn unsupported(call: &ToolCall, kind: &str) -> Option<ToolResult> {
 async fn tabs_list(call: &ToolCall) -> ToolResult {
     match targets().await {
         Ok(targets) => {
-            let data = crate::desktop_tabs::list(&call.thread_id, &targets);
+            let mut data = crate::desktop_tabs::list(&call.thread_id, &targets);
+            data["backend"] = json!("desktop-cdp");
+            data["extensionConnected"] = json!(false);
+            if targets.is_empty() {
+                data["notice"] = json!(
+                    "The Desktop CDP connection is reachable, but no browser page is open. \
+                     Open the Browser pane in Roder Desktop or pair the Chrome extension \
+                     with this Roder instance from /chrome."
+                );
+            }
             ToolResult {
                 id: call.id.clone(),
                 name: call.name.clone(),
@@ -81,8 +95,80 @@ async fn tabs_list(call: &ToolCall) -> ToolResult {
     }
 }
 
+async fn open_tab(call: &ToolCall) -> ToolResult {
+    open_tab_at(call, &desktop_endpoint()).await
+}
+
+async fn open_tab_at(call: &ToolCall, endpoint: &str) -> ToolResult {
+    let url = match open_url(&call.arguments) {
+        Ok(url) => url,
+        Err(error) => return error_result(call, error),
+    };
+    let scope = match DesktopScope::from_env() {
+        Ok(scope) => scope,
+        Err(error) => return error_result(call, error.to_string()),
+    };
+    if let Some(reason) = scope.outside(url.as_str()) {
+        return error_result(call, reason);
+    }
+    let active = call
+        .arguments
+        .get("active")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    // A new target must not depend on an already-open Desktop page. Start blank
+    // and navigate through the ordinary guarded/observed path.
+    let target_id = match crate::computer::create_target(endpoint, "about:blank", !active).await {
+        Ok(target) => target,
+        Err(error) => {
+            return error_result(
+                call,
+                format!(
+                    "Could not create a Desktop browser tab: {error:#}. \
+                     Some Electron versions do not support CDP tab creation; open the \
+                     Browser pane in Roder Desktop and use chrome_navigate, or pair the Chrome extension \
+                     with this Roder instance from /chrome."
+                ),
+            );
+        }
+    };
+    let id = crate::desktop_tabs::bind(&call.thread_id, &target_id);
+    let tab = DirectTab::Target {
+        endpoint: endpoint.to_string(),
+        target_id,
+    };
+    let mut result = direct_with_tab(call, "tab/navigate", Some(tab)).await;
+    result.data["tabId"] = json!(id);
+    let note = crate::session::UNTRUSTED_NOTE;
+    let observation = result
+        .text
+        .strip_prefix(note)
+        .unwrap_or(&result.text)
+        .trim_start_matches('\n');
+    result.text = format!("{note}\nOpened Desktop tab (tabId: {id}).\n{observation}");
+    result
+}
+
+fn open_url(arguments: &Value) -> Result<reqwest::Url, &'static str> {
+    arguments
+        .get("url")
+        .and_then(Value::as_str)
+        .and_then(|raw| reqwest::Url::parse(raw.trim()).ok())
+        .filter(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        })
+        .ok_or("chrome_tab_open requires an http(s) URL with a host and no embedded credentials")
+}
+
 /// Execute the canonical direct tools: real input, stable refs, and observed state.
 async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
+    direct_with_tab(call, kind, None).await
+}
+
+async fn direct_with_tab(call: &ToolCall, kind: &str, tab: Option<DirectTab>) -> ToolResult {
     // `chrome_select` is {ref | selector, value}; the direct select takes
     // {ref, option}. A call that names no target is refused before any tab
     // is touched.
@@ -93,9 +179,12 @@ async fn direct(call: &ToolCall, kind: &str) -> ToolResult {
         },
         _ => None,
     };
-    let tab = match desktop_tab(call).await {
-        Ok(tab) => tab,
-        Err(error) => return error_result(call, error),
+    let tab = match tab {
+        Some(tab) => tab,
+        None => match desktop_tab(call).await {
+            Ok(tab) => tab,
+            Err(error) => return error_result(call, error),
+        },
     };
     let scope = match DesktopScope::from_env() {
         Ok(scope) => scope,
@@ -213,8 +302,7 @@ async fn desktop_tab(call: &ToolCall) -> Result<DirectTab, String> {
 }
 
 async fn targets() -> Result<Vec<CdpTarget>, String> {
-    let port = std::env::var("RODER_DESKTOP_CDP_PORT").unwrap_or_else(|_| "9334".to_string());
-    let url = format!("http://127.0.0.1:{port}/json");
+    let url = format!("{}/json", desktop_endpoint());
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
@@ -242,6 +330,99 @@ async fn targets() -> Result<Vec<CdpTarget>, String> {
             && !target.url.starts_with("chrome-extension://")
     });
     Ok(listed)
+}
+
+fn desktop_endpoint() -> String {
+    let port = std::env::var("RODER_DESKTOP_CDP_PORT").unwrap_or_else(|_| "9334".to_string());
+    format!("http://127.0.0.1:{port}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tab_open_requires_a_real_web_url_before_creating_a_target() {
+        for url in [
+            "about:blank",
+            "file:///tmp/test",
+            "javascript:alert(1)",
+            "back",
+            "https://user:password@example.com",
+        ] {
+            assert!(open_url(&json!({"url":url})).is_err());
+        }
+        assert!(open_url(&json!({})).is_err());
+        assert_eq!(
+            open_url(&json!({"url":" https://example.com "}))
+                .unwrap()
+                .as_str(),
+            "https://example.com/"
+        );
+    }
+
+    #[tokio::test]
+    async fn electron_creation_refusal_explains_the_browser_pane_instead_of_a_stale_tab() {
+        use futures::{SinkExt, StreamExt};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::Message;
+
+        let http = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let websocket = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", http.local_addr().unwrap());
+        let browser_socket = format!("ws://{}", websocket.local_addr().unwrap());
+        let http_task = tokio::spawn(async move {
+            let (mut stream, _) = http.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            let size = stream.read(&mut buffer).await.unwrap();
+            assert!(String::from_utf8_lossy(&buffer[..size]).starts_with("GET /json/version "));
+            let body = json!({"webSocketDebuggerUrl":browser_socket}).to_string();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let websocket_task = tokio::spawn(async move {
+            let (stream, _) = websocket.accept().await.unwrap();
+            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            let request: Value =
+                serde_json::from_str(socket.next().await.unwrap().unwrap().to_text().unwrap())
+                    .unwrap();
+            assert_eq!(request["method"], "Target.createTarget");
+            assert_eq!(request["params"]["url"], "about:blank");
+            assert_eq!(request["params"]["background"], true);
+            socket
+                .send(Message::Text(
+                    json!({"id":1,"error":{"code":-32000,"message":"Not supported"}})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .unwrap();
+        });
+        let call = ToolCall {
+            id: "open-test".into(),
+            name: "chrome_tab_open".into(),
+            thread_id: "empty-desktop-test".into(),
+            turn_id: "test-turn".into(),
+            raw_arguments: String::new(),
+            arguments: json!({"url":"https://example.com","active":false}),
+        };
+        let result = open_tab_at(&call, &endpoint).await;
+        assert!(result.is_error);
+        assert!(result.text.contains("Browser pane"));
+        assert!(result.text.contains("chrome_navigate"));
+        assert!(!result.text.contains("no longer available"));
+        http_task.await.unwrap();
+        websocket_task.await.unwrap();
+    }
 }
 
 fn error_result(call: &ToolCall, message: impl Into<String>) -> ToolResult {

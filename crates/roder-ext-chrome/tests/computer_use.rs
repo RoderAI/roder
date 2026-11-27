@@ -66,12 +66,12 @@ impl Browser {
                 "--remote-debugging-port=0",
                 "--no-first-run",
                 "--no-default-browser-check",
+                "--no-startup-window",
                 "--disable-background-networking",
                 "--force-device-scale-factor=2",
                 "--window-size=800,600",
             ])
             .arg(format!("--user-data-dir={}", profile.display()))
-            .arg("about:blank")
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -238,8 +238,31 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     ChromeToolContributor::with_controller(Arc::new(Desktop))
         .contribute(&mut registry)
         .unwrap();
+    let empty = call(&registry, "chrome_tabs_list", json!({})).await;
+    assert!(!empty.is_error, "{}", empty.text);
+    assert_eq!(empty.data["tabs"], json!([]));
+    assert_eq!(empty.data["backend"], "desktop-cdp");
+    assert!(empty.text.contains("no browser page is open"));
+    let extension_only = call(&registry, "chrome_console_read", json!({"limit":10})).await;
+    assert!(extension_only.is_error);
+    assert!(
+        extension_only
+            .text
+            .contains("not supported by the Desktop CDP fallback")
+    );
+    assert!(
+        !extension_only
+            .text
+            .contains("No Chrome extension or Roder Desktop")
+    );
     let loaded = call(&registry, "chrome_tab_open", json!({"url":url})).await;
     assert!(!loaded.is_error, "{}", loaded.text);
+    assert!(loaded.data["tabId"].is_u64());
+    assert!(
+        loaded.text.contains("Opened Desktop tab"),
+        "{}",
+        loaded.text
+    );
     assert!(
         loaded.text.contains("Primitive fixture"),
         "Navigation must return observed page state"
@@ -404,5 +427,25 @@ async fn evaluates_real_input_observations_and_hidpi_coordinates() {
     semantic_observations(&registry, &url).await;
     semantic_secrets(&registry, &browser, &url).await;
     viewport_text(&registry, &browser, &url).await;
+    let before = call(&registry, "chrome_tabs_list", json!({})).await;
+    let before = before.data["tabs"].as_array().unwrap().clone();
+    let opened = call(
+        &registry,
+        "chrome_tab_open",
+        json!({"url":url,"active":false}),
+    )
+    .await;
+    assert!(!opened.is_error, "{}", opened.text);
+    assert!(before.iter().all(|tab| tab["id"] != opened.data["tabId"]));
+    let after = call(&registry, "chrome_tabs_list", json!({})).await;
+    let after = after.data["tabs"].as_array().unwrap();
+    assert_eq!(after.len(), before.len() + 1);
+    for old in before {
+        let retained = after.iter().find(|tab| tab["id"] == old["id"]).unwrap();
+        assert_eq!(
+            retained["url"], old["url"],
+            "Opening must not navigate an existing tab"
+        );
+    }
     site.abort();
 }

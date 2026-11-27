@@ -11034,6 +11034,17 @@ mod tests {
     #[tokio::test]
     async fn remote_slash_command_starts_stops_and_displays_qr() {
         let mut app = test_app();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let pairing_dir = std::env::temp_dir().join(format!(
+            "roder-remote-slash-pairing-{}-{unique}",
+            std::process::id()
+        ));
+        app.remote_panel = app
+            .remote_panel
+            .with_pairing_path(pairing_dir.join("remote-pairing.json"));
 
         app.run_remote_slash_command("start").await;
         assert!(app.remote_panel.is_running());
@@ -11046,6 +11057,7 @@ mod tests {
         assert!(!app.remote_panel.is_running());
         let rendered = rendered_timeline_text(&mut app);
         assert!(rendered.contains("Remote app-server: stopped"));
+        std::fs::remove_dir_all(pairing_dir).unwrap();
     }
 
     fn rendered_timeline_text<C: AppClient>(app: &mut TuiApp<C>) -> String {
