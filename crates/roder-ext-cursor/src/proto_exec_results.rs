@@ -6,6 +6,8 @@ pub(super) fn wrap_exec_client(exec: Vec<u8>) -> Vec<u8> {
 }
 
 /// READ result: ExecClientMessage{ 1:seq, 7:{ 1:{ 1:path, 2:content, 3:total_lines, 4:file_size } } }
+// reason: flat protobuf encoder mirroring the wire message fields
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn encode_exec_read_result(
     seq: u64,
     field_no: u32,

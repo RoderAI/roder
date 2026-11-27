@@ -60,6 +60,8 @@ struct ProtoField {
 }
 
 /// Encode the canonical Cursor run request with native checkpoint/blob state.
+// reason: flat protobuf encoder mirroring the wire message fields
+#[allow(clippy::too_many_arguments)]
 pub fn encode_agent_client_message(
     prompt: &str,
     model_id: &str,
@@ -85,6 +87,8 @@ pub fn encode_agent_client_message(
     )])
 }
 
+// reason: flat protobuf encoder mirroring the wire message fields
+#[allow(clippy::too_many_arguments)]
 fn encode_agent_run_request(
     prompt: &str,
     model_id: &str,

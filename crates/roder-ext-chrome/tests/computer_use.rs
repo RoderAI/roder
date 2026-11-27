@@ -209,7 +209,7 @@ fn jpeg_size(url: &str) -> (u16, u16) {
         let marker = bytes[at + 1];
         at += 2;
         let len = u16::from_be_bytes([bytes[at], bytes[at + 1]]) as usize;
-        if matches!(marker, 0xc0 | 0xc1 | 0xc2) {
+        if matches!(marker, 0xc0..=0xc2) {
             return (
                 u16::from_be_bytes([bytes[at + 5], bytes[at + 6]]),
                 u16::from_be_bytes([bytes[at + 3], bytes[at + 4]]),

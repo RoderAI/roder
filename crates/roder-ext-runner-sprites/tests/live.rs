@@ -125,7 +125,7 @@ async fn live_sprites_repo_app_server_accepts_remote_control() -> anyhow::Result
     assert_eq!(command.stdout.trim(), "/home/sprite/roder-live-app/repo");
 
     let health_url = metadata_string(app_server, "health_url")?;
-    wait_for_health(&health_url).await?;
+    wait_for_health(health_url).await?;
     let connect_url = metadata_string(app_server, "connect_url")?;
     let token = std::env::var(DEFAULT_APP_SERVER_TOKEN_ENV)?;
     let mut request = connect_url.into_client_request()?;

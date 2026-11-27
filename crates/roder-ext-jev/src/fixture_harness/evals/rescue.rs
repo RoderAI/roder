@@ -96,18 +96,13 @@ async fn bounded_rescue_handback() {
                     && outcome.target_id == target
                     && !outcome.actions.is_empty()
                     && outcome.actions.iter().all(|a| !a.error)
+                    && let Some(page) = &outcome.last_page
+                    && engine.resume_after_rescue(page, &secrets).await.is_ok()
                 {
-                    if let Some(page) = &outcome.last_page
-                        && engine.resume_after_rescue(page, &secrets).await.is_ok()
-                    {
-                        resumed = true;
-                        final_native = engine
-                            .run(
-                                Duration::from_secs(task.timeout_s)
-                                    .saturating_sub(started.elapsed()),
-                            )
-                            .await;
-                    }
+                    resumed = true;
+                    final_native = engine
+                        .run(Duration::from_secs(task.timeout_s).saturating_sub(started.elapsed()))
+                        .await;
                 }
                 rescue = Some(outcome);
             }

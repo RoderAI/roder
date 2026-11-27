@@ -204,7 +204,7 @@ impl WorkspaceRegistry {
         {
             let state = self.state.read().await;
             if let Some(state) = state.as_ref() {
-                return Ok(seed_runtime_workspace(state.clone(), runtime_workspace)?);
+                return seed_runtime_workspace(state.clone(), runtime_workspace);
             }
         }
         let mut state = if self.path.exists() {

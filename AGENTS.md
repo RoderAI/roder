@@ -7,3 +7,5 @@ This is a brand new project moving quickly. Do not add backwards-compatibility s
 Versioning: every PR that changes a released package (any `crates/*` crate, `sdk/typescript`, `sdk/python`, `packages/edit-tools`) must add a changeset file in `.changeset/` naming the affected packages and bump types (`major`/`minor`/`patch`) — CI enforces this. New crates use an explicit `version = "0.1.0"` (not `version.workspace = true`) and require regenerating `knope.toml` via `python3 scripts/generate-knope-config.py`. See `docs/releases.md`.
 
 Formatting: `rustfmt.toml` is stable-only and identical to ComposalAI/vex's. Run `make fmt` before committing; `make fmt-check` must pass.
+
+Lints: `make clippy` (`cargo clippy --workspace --all-targets --no-deps -- -D warnings`) must pass. Fix lints rather than allowing them; a targeted `#[allow(clippy::...)]` needs a reason comment.

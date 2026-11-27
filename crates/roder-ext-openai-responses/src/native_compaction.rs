@@ -116,7 +116,7 @@ fn compaction_stream(
             match event? {
                 InferenceEvent::Compaction(progress) => {
                     if progress.status == "completed" && let Some(item) = progress.item.clone() {
-                        if !item.get("encrypted_content").and_then(Value::as_str).is_some_and(|value| !value.is_empty()) {
+                        if item.get("encrypted_content").and_then(Value::as_str).is_none_or(|value| value.is_empty()) {
                             Err(ProviderFailure::new(ProviderFailureKind::Protocol,"compaction boundary is missing encrypted content"))?;
                         }
                         if boundary.as_ref().is_some_and(|prior:&Value|prior.get("id") != item.get("id") || prior.get("encrypted_content") != item.get("encrypted_content")) {

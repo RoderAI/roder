@@ -263,11 +263,7 @@ impl InferenceEngine for FakeInferenceEngine {
             return Ok(tool_stream::completed(stream));
         }
         if should_summarize_compaction(&request) {
-            let summary = if prompt_contains(&request, "Review the state snapshot") {
-                "<state_snapshot>goal: continue work\nprogress: fake compaction summary\nnext_steps: proceed</state_snapshot>"
-            } else {
-                "<state_snapshot>goal: continue work\nprogress: fake compaction summary\nnext_steps: proceed</state_snapshot>"
-            };
+            let summary = "<state_snapshot>goal: continue work\nprogress: fake compaction summary\nnext_steps: proceed</state_snapshot>";
             let stream = stream::iter(vec![
                 Ok(InferenceEvent::MessageDelta(MessageDelta {
                     text: summary.to_string(),

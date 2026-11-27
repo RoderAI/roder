@@ -165,11 +165,13 @@ async fn run_stdio_acp(adapter: AcpAdapter<LocalAppClient>) -> anyhow::Result<()
     Ok(())
 }
 
+type PendingResponses =
+    Arc<StdMutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>>>;
+
 #[derive(Clone)]
 struct StdioAcpPeer {
     tx: mpsc::UnboundedSender<serde_json::Value>,
-    pending:
-        Arc<StdMutex<HashMap<String, oneshot::Sender<Result<serde_json::Value, JsonRpcError>>>>>,
+    pending: PendingResponses,
     next_id: Arc<AtomicU64>,
 }
 
@@ -298,9 +300,11 @@ mod tests {
 
     #[test]
     fn acp_preserves_configured_providers_and_models() {
-        let mut config = roder_config::Config::default();
-        config.provider = Some("anthropic".into());
-        config.model = Some("configured-model".into());
+        let config = roder_config::Config {
+            provider: Some("anthropic".into()),
+            model: Some("configured-model".into()),
+            ..Default::default()
+        };
         let config = acp_config(config);
         assert_eq!(config.provider.as_deref(), Some("anthropic"));
         assert_eq!(config.model.as_deref(), Some("configured-model"));
@@ -309,8 +313,10 @@ mod tests {
 
     #[test]
     fn acp_codex_provider_with_inline_model_exposes_login() {
-        let mut config = roder_config::Config::default();
-        config.provider = Some(" CODEX /configured-model".into());
+        let config = roder_config::Config {
+            provider: Some(" CODEX /configured-model".into()),
+            ..Default::default()
+        };
         assert!(uses_codex(&acp_config(config)));
     }
 }

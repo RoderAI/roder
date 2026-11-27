@@ -858,8 +858,10 @@ fn effective_max_concurrent(
     let ceiling = match lane {
         SubagentLane::Runner => default_cap,
         SubagentLane::Scout | SubagentLane::Editor | SubagentLane::Reviewer => dispatcher_cap
-            .max(default_cap)
-            .min(LANE_MAX_CONCURRENT_HARD_CEILING)
+            .clamp(
+                default_cap.min(LANE_MAX_CONCURRENT_HARD_CEILING),
+                LANE_MAX_CONCURRENT_HARD_CEILING,
+            )
             .max(1),
     };
     requested.min(ceiling)

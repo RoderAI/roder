@@ -21,7 +21,7 @@ struct BoundTool {
 }
 enum McpClient {
     Http(McpHttpClient),
-    Stdio(McpStdioClient),
+    Stdio(Box<McpStdioClient>),
 }
 
 impl SessionMcp {
@@ -111,7 +111,7 @@ impl SessionMcp {
                     })
                     .await
                     .map_err(internal_error)?;
-                    (server.name, McpClient::Stdio(client))
+                    (server.name, McpClient::Stdio(Box::new(client)))
                 }
                 _ => unreachable!("MCP transport validated before connection"),
             };

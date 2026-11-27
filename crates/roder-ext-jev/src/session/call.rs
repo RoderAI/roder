@@ -280,7 +280,7 @@ impl JevSessions {
             request.foreground,
         );
         value["session"] = view(state, &driven);
-        super::observation::publish(&mut value, state, &request, deadline).await;
+        super::observation::publish(&mut value, state, request, deadline).await;
         Ok(value)
     }
 }

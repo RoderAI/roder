@@ -11,7 +11,7 @@
 //! page cannot plant one under the name in advance; it is defined read-only.
 //! The mechanism follows fastbrowse's `SnapshotScript` (MIT).
 
-use std::hash::{BuildHasher, Hash, Hasher};
+use std::hash::BuildHasher;
 use std::sync::LazyLock;
 
 use serde_json::Value;
@@ -75,9 +75,12 @@ struct Scripts {
 }
 
 static SCRIPTS: LazyLock<Scripts> = LazyLock::new(|| {
-    let mut seed = std::collections::hash_map::RandomState::new().build_hasher();
-    (TRACK_JS, CONTEXT_JS, SNAPSHOT_JS).hash(&mut seed);
-    Scripts::new(&format!("__jev{:016x}", seed.finish()))
+    let seed = std::collections::hash_map::RandomState::new().hash_one((
+        TRACK_JS,
+        CONTEXT_JS,
+        SNAPSHOT_JS,
+    ));
+    Scripts::new(&format!("__jev{seed:016x}"))
 });
 
 impl Scripts {

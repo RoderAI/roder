@@ -353,7 +353,7 @@ impl AgentBackendBridge {
                 data.push(active);
             }
         }
-        data.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        data.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
         if let Some(limit) = params.limit {
             data.truncate(limit);
         }

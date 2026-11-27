@@ -41,6 +41,7 @@ impl Runtime {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)] // reason: internal turn-orchestration helper threading per-turn state
     pub(crate) async fn spawn_and_start_team_member_for_caller(
         self: &Arc<Self>,
         parent_thread_id: &ThreadId,
@@ -101,6 +102,7 @@ impl Runtime {
         }
     }
 
+    #[allow(clippy::too_many_arguments)] // reason: internal turn-orchestration helper threading per-turn state
     async fn spawn_team_member_for_caller_locked(
         &self,
         parent_thread_id: &ThreadId,

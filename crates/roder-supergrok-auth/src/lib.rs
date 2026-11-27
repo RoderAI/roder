@@ -294,7 +294,7 @@ async fn poll_device_token(
         let text = response.text().await?;
         if status.is_success() {
             let token_response = parse_token_response(&text)?;
-            return Ok(tokens_from_response(token_response)?);
+            return tokens_from_response(token_response);
         }
         let error: DeviceTokenErrorResponse = match serde_json::from_str(&text) {
             Ok(e) => e,

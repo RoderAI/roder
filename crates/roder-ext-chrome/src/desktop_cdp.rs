@@ -337,6 +337,17 @@ fn desktop_endpoint() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+fn error_result(call: &ToolCall, message: impl Into<String>) -> ToolResult {
+    let message = message.into();
+    ToolResult {
+        id: call.id.clone(),
+        name: call.name.clone(),
+        text: message.clone(),
+        data: json!({ "error": { "kind": "desktop-browser", "message": message } }),
+        is_error: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,16 +433,5 @@ mod tests {
         assert!(!result.text.contains("no longer available"));
         http_task.await.unwrap();
         websocket_task.await.unwrap();
-    }
-}
-
-fn error_result(call: &ToolCall, message: impl Into<String>) -> ToolResult {
-    let message = message.into();
-    ToolResult {
-        id: call.id.clone(),
-        name: call.name.clone(),
-        text: message.clone(),
-        data: json!({ "error": { "kind": "desktop-browser", "message": message } }),
-        is_error: true,
     }
 }

@@ -54,7 +54,7 @@ async fn semantic_dom_keeps_hierarchy_state_refs_and_scrubs_secrets() {
         .iter()
         .find(|a| a["label"] == "More")
         .unwrap();
-    assert!(dom.contains(&format!("{}", more["ref"].as_str().unwrap())));
+    assert!(dom.contains(more["ref"].as_str().unwrap()));
     let next = page.observe().await.unwrap();
     assert_eq!(next["dom_snapshot"], observation["dom_snapshot"]);
     page.evaluate("document.querySelector('button[aria-expanded]').setAttribute('aria-expanded','true'); true").await.unwrap();
@@ -123,7 +123,7 @@ async fn semantic_dom_maps_controls_inside_headings_and_styled_toggle_state() {
             .unwrap();
         let line = dom
             .lines()
-            .find(|line| line.contains(&format!("{}", action["ref"].as_str().unwrap())))
+            .find(|line| line.contains(action["ref"].as_str().unwrap()))
             .unwrap_or_else(|| panic!("Missing {label}: {dom}"));
         if matches!(label, "Notifications" | "Daily") {
             assert!(line.contains("[checked]"), "{line}");

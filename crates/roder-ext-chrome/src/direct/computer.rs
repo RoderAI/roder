@@ -329,6 +329,7 @@ impl DirectSession {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)] // reason: mirrors the CDP Input.dispatchMouseEvent fields one-to-one
     async fn computer_mouse(
         &mut self,
         kind: &str,

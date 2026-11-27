@@ -90,10 +90,10 @@ pub(super) fn acts(action: &Value) -> bool {
 /// with it off, nobody's): live, a light recovery pressed "Accept all" and
 /// a consult "No thanks" on pages the task said to leave the banner on.
 fn nameable(action: &Value, consent_page: bool) -> bool {
-    !matches!(
+    !(matches!(
         action["kind"].as_str(),
         Some("wait" | "read_document") | None
-    ) && !(consent_page && consent_choice(action["label"].as_str().unwrap_or_default()))
+    ) || consent_page && consent_choice(action["label"].as_str().unwrap_or_default()))
 }
 
 /// Whether a page's text speaks of cookies or consent.

@@ -165,7 +165,7 @@ impl Row {
             decision_model: result.decisions.iter().rev().find_map(|d| d.model.clone()),
             trace,
             recoveries: result.recoveries.clone(),
-            text_usage: serde_json::to_value(&result.usage.text).unwrap_or_default(),
+            text_usage: serde_json::to_value(result.usage.text).unwrap_or_default(),
             start_actions: episode.start_actions.clone(),
             ..Self::base(task, seed, text_model)
         };

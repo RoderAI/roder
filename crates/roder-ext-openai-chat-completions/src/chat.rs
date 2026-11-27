@@ -108,10 +108,10 @@ pub async fn stream_chat_completions(
         } else {
             body["thinking"] = json!({ "type": "disabled" });
         }
-    } else if request.reasoning.enabled {
-        if let Some(level) = request.reasoning.level.as_deref() {
-            body["reasoning_effort"] = json!(level);
-        }
+    } else if request.reasoning.enabled
+        && let Some(level) = request.reasoning.level.as_deref()
+    {
+        body["reasoning_effort"] = json!(level);
     }
     if !tools.is_empty() {
         body["tools"] = json!(tools);
@@ -424,10 +424,10 @@ fn chat_messages(request: &AgentInferenceRequest, tool_name_map: &ChatToolNameMa
                         Value::String(message.text.clone())
                     },
                 });
-                if let Some(reasoning) = pending_reasoning.take() {
-                    if !reasoning.is_empty() {
-                        assistant["reasoning_content"] = json!(reasoning);
-                    }
+                if let Some(reasoning) = pending_reasoning.take()
+                    && !reasoning.is_empty()
+                {
+                    assistant["reasoning_content"] = json!(reasoning);
                 }
                 messages.push(assistant);
             }

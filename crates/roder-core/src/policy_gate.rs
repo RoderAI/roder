@@ -163,12 +163,11 @@ fn looks_like_write(call: &ToolCall) -> bool {
         return true;
     }
 
-    if is_shell_tool(&call.name) {
-        if let Some(cmd) = extract_command_string(call) {
-            if command_writes_or_edits_files(&cmd) {
-                return true;
-            }
-        }
+    if is_shell_tool(&call.name)
+        && let Some(cmd) = extract_command_string(call)
+        && command_writes_or_edits_files(&cmd)
+    {
+        return true;
     }
 
     false

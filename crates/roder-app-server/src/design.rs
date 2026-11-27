@@ -577,10 +577,10 @@ fn resolve_batch_get_aliases(document: &RoderDesignDocument, params: &mut Design
             *node_id = resolved;
         }
     }
-    if let Some(parent_id) = &mut params.parent_id {
-        if let Some(resolved) = resolve_node_alias(document, parent_id) {
-            *parent_id = resolved;
-        }
+    if let Some(parent_id) = &mut params.parent_id
+        && let Some(resolved) = resolve_node_alias(document, parent_id)
+    {
+        *parent_id = resolved;
     }
 }
 
@@ -652,15 +652,15 @@ fn push_node(
 }
 
 fn pattern_matches(node: &RoderDesignNode, pattern: &DesignNodeSearchPattern) -> bool {
-    if let Some(expected_type) = &pattern.node_type {
-        if &node.node_type != expected_type {
-            return false;
-        }
+    if let Some(expected_type) = &pattern.node_type
+        && &node.node_type != expected_type
+    {
+        return false;
     }
-    if let Some(name) = &pattern.name {
-        if !node.name.to_lowercase().contains(&name.to_lowercase()) {
-            return false;
-        }
+    if let Some(name) = &pattern.name
+        && !node.name.to_lowercase().contains(&name.to_lowercase())
+    {
+        return false;
     }
     true
 }
@@ -755,7 +755,7 @@ fn reorder_node(
 }
 
 async fn export_directory(
-    source_path: &PathBuf,
+    source_path: &std::path::Path,
     output_dir: Option<&str>,
 ) -> Result<PathBuf, JsonRpcError> {
     let dir = output_dir.map(PathBuf::from).unwrap_or_else(|| {
@@ -1021,6 +1021,8 @@ fn render_node_svg(
     }
 }
 
+// Flat SVG attribute list mirrors the emitted <rect> element.
+#[allow(clippy::too_many_arguments)]
 fn render_placeholder_rect(
     x: f64,
     y: f64,
@@ -1174,10 +1176,10 @@ fn snapshot_layout(document: &RoderDesignDocument) -> Vec<DesignLayoutNode> {
             if node.width <= 0.0 || node.height <= 0.0 {
                 problems.push("non-positive size".to_string());
             }
-            if let Some(parent_id) = &node.parent_id {
-                if !document.nodes.contains_key(parent_id) {
-                    problems.push("missing parent".to_string());
-                }
+            if let Some(parent_id) = &node.parent_id
+                && !document.nodes.contains_key(parent_id)
+            {
+                problems.push("missing parent".to_string());
             }
             DesignLayoutNode {
                 id: node.id.clone(),

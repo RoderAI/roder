@@ -2,7 +2,7 @@ use roder_api::inference::TokenUsage;
 use roder_protocol::{Item, ThreadItemStatus};
 use serde::Serialize;
 
-#[derive(Debug, Clone, Serialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub(crate) struct ExecUsage {
     pub input_tokens: u64,
@@ -13,19 +13,6 @@ pub(crate) struct ExecUsage {
     pub reasoning_output_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_hit_rate: Option<f64>,
-}
-
-impl Default for ExecUsage {
-    fn default() -> Self {
-        Self {
-            input_tokens: 0,
-            cached_input_tokens: 0,
-            cache_creation_input_tokens: 0,
-            output_tokens: 0,
-            reasoning_output_tokens: 0,
-            cache_hit_rate: None,
-        }
-    }
 }
 
 impl From<Option<TokenUsage>> for ExecUsage {

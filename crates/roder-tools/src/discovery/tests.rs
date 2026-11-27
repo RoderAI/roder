@@ -61,6 +61,8 @@ fn discovery_tools_advertise_retrieval_metadata() {
 }
 
 #[tokio::test]
+// reason: std ENV_LOCK intentionally serializes env-mutating tests (shared with sync tests) for the whole test
+#[allow(clippy::await_holding_lock)]
 async fn discovery_tools_list_search_read_and_record_promotion() {
     let _guard = ENV_LOCK.lock().unwrap();
     let root = temp_dir("tools");
@@ -94,6 +96,8 @@ async fn discovery_tools_list_search_read_and_record_promotion() {
 }
 
 #[tokio::test]
+// reason: std ENV_LOCK intentionally serializes env-mutating tests (shared with sync tests) for the whole test
+#[allow(clippy::await_holding_lock)]
 async fn missing_catalog_returns_actionable_fallback_for_all_discovery_tools() {
     let _guard = ENV_LOCK.lock().unwrap();
     let root = temp_dir("missing-catalog").join("not-created");

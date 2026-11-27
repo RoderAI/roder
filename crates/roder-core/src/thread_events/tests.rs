@@ -46,15 +46,14 @@ impl InferenceEngine for Engine {
     }
 }
 
-fn harness(
-    blocked: bool,
-    call_tool: bool,
-) -> (
+type Harness = (
     Arc<Runtime>,
     mpsc::UnboundedReceiver<(String, AgentInferenceRequest)>,
     Arc<Semaphore>,
     tempfile::TempDir,
-) {
+);
+
+fn harness(blocked: bool, call_tool: bool) -> Harness {
     let dir = tempfile::tempdir().unwrap();
     let (tx, rx) = mpsc::unbounded_channel();
     let gate = Arc::new(Semaphore::new(0));

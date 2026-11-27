@@ -911,21 +911,21 @@ impl SpritesClient {
             .into());
         }
         for line in text.lines().filter(|line| !line.trim().is_empty()) {
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                if value.get("type").and_then(serde_json::Value::as_str) == Some("error") {
-                    bail!(
-                        "{} failed: {}",
-                        operation,
-                        redact_text(
-                            value
-                                .get("error")
-                                .or_else(|| value.get("message"))
-                                .and_then(serde_json::Value::as_str)
-                                .unwrap_or("unknown sprites error"),
-                            &self.config.token
-                        )
-                    );
-                }
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line)
+                && value.get("type").and_then(serde_json::Value::as_str) == Some("error")
+            {
+                bail!(
+                    "{} failed: {}",
+                    operation,
+                    redact_text(
+                        value
+                            .get("error")
+                            .or_else(|| value.get("message"))
+                            .and_then(serde_json::Value::as_str)
+                            .unwrap_or("unknown sprites error"),
+                        &self.config.token
+                    )
+                );
             }
         }
         Ok(text)
@@ -991,15 +991,14 @@ fn checkpoint_id_from_ndjson(body: &str) -> Option<String> {
                 return Some(id.to_string());
             }
         }
-        if value.get("type").and_then(serde_json::Value::as_str) == Some("complete") {
-            if let Some(data) = value.get("data").and_then(serde_json::Value::as_str) {
-                if let Some(id) = data.split_whitespace().find(|part| part.starts_with('v')) {
-                    return Some(
-                        id.trim_matches(|ch: char| !ch.is_alphanumeric())
-                            .to_string(),
-                    );
-                }
-            }
+        if value.get("type").and_then(serde_json::Value::as_str) == Some("complete")
+            && let Some(data) = value.get("data").and_then(serde_json::Value::as_str)
+            && let Some(id) = data.split_whitespace().find(|part| part.starts_with('v'))
+        {
+            return Some(
+                id.trim_matches(|ch: char| !ch.is_alphanumeric())
+                    .to_string(),
+            );
         }
     }
     None

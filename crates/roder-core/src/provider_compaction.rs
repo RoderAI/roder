@@ -111,19 +111,18 @@ impl Runtime {
                                 boundary = Some(item);
                             }
                         }
-                        InferenceEvent::Usage(usage) => {
+                        InferenceEvent::Usage(usage)
                             if !self
                                 .record_compaction_usage(thread_id, turn_id, &usage)
-                                .await?
-                            {
-                                self.record_thread_usage_metadata(thread_id, &usage).await?;
-                                self.record_goal_token_usage(
-                                    thread_id,
-                                    turn_id,
-                                    usage.total_tokens as i64,
-                                )
-                                .await?;
-                            }
+                                .await? =>
+                        {
+                            self.record_thread_usage_metadata(thread_id, &usage).await?;
+                            self.record_goal_token_usage(
+                                thread_id,
+                                turn_id,
+                                usage.total_tokens as i64,
+                            )
+                            .await?;
                         }
                         InferenceEvent::Completed(_) => {
                             completed = true;

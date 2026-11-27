@@ -3805,29 +3805,31 @@ mod tests {
 
     #[test]
     fn inference_router_config_round_trips_defined_comparison_fields() {
-        let mut config = Config::default();
-        config.inference_router = Some(InferenceRouterConfig {
-            enabled: true,
-            router: Some("local-adaptive".to_string()),
-            profile: Some("coding".to_string()),
-            baseline_provider: Some("codex".to_string()),
-            baseline_model: Some("gpt-5.5".to_string()),
-            extension: serde_json::json!({
-                "objective": "balanced",
-                "tiers": {
-                    "simple": {
-                        "provider": "codex",
-                        "model": "gpt-5.4-mini",
-                        "reasoning": "low"
+        let config = Config {
+            inference_router: Some(InferenceRouterConfig {
+                enabled: true,
+                router: Some("local-adaptive".to_string()),
+                profile: Some("coding".to_string()),
+                baseline_provider: Some("codex".to_string()),
+                baseline_model: Some("gpt-5.5".to_string()),
+                extension: serde_json::json!({
+                    "objective": "balanced",
+                    "tiers": {
+                        "simple": {
+                            "provider": "codex",
+                            "model": "gpt-5.4-mini",
+                            "reasoning": "low"
+                        }
+                    },
+                    "classifier_comparison": {
+                        "enabled": true,
+                        "prompt": "compare later",
+                        "label": "future-classifier"
                     }
-                },
-                "classifier_comparison": {
-                    "enabled": true,
-                    "prompt": "compare later",
-                    "label": "future-classifier"
-                }
+                }),
             }),
-        });
+            ..Config::default()
+        };
 
         let encoded = toml::to_string_pretty(&config).unwrap();
         let decoded: Config = toml::from_str(&encoded).unwrap();

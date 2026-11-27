@@ -504,56 +504,6 @@ mod tests {
         assert!(AnthropicEngine::new(None).tool_result_image_input("claude-sonnet-4-5"));
     }
 
-    struct KeySourceGuard {
-        _lock: std::sync::MutexGuard<'static, ()>,
-        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
-    }
-
-    /**
-     * Clears ambient key sources — the named env vars plus the user config
-     * dir, pinned to a fresh temp dir — so keyless-resolution tests stay
-     * deterministic on machines with real credentials; restores everything
-     * on drop. The lock serializes env mutation across these tests.
-     */
-    fn clear_key_sources(vars: &[&'static str]) -> KeySourceGuard {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        static SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-        let lock = LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let scratch = std::env::temp_dir().join(format!(
-            "roder-keyless-{}-{}",
-            std::process::id(),
-            SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-        ));
-        let mut saved = Vec::new();
-        for var in [
-            roder_config::RODER_CONFIG_DIR_ENV,
-            roder_config::RODER_DATA_DIR_ENV,
-        ] {
-            saved.push((var, std::env::var_os(var)));
-            unsafe { std::env::set_var(var, &scratch) };
-        }
-        for var in vars {
-            saved.push((var, std::env::var_os(var)));
-            unsafe { std::env::remove_var(var) };
-        }
-        KeySourceGuard { _lock: lock, saved }
-    }
-
-    impl Drop for KeySourceGuard {
-        fn drop(&mut self) {
-            for (var, value) in self.saved.drain(..) {
-                unsafe {
-                    match value {
-                        Some(value) => std::env::set_var(var, value),
-                        None => std::env::remove_var(var),
-                    }
-                }
-            }
-        }
-    }
-
     fn request() -> AgentInferenceRequest {
         AgentInferenceRequest {
             model: ModelSelection {

@@ -65,35 +65,33 @@ impl CodexSession {
                         .and_then(Value::as_str)
                         .map(|text| BackendEvent::Text(text.to_owned()));
                 }
-                if item.get("type").and_then(Value::as_str) == Some("fileChange") {
-                    if let Some(changes) = item.get("changes").and_then(Value::as_array) {
-                        for change in changes {
-                            if let Some(path) = change.get("path").and_then(Value::as_str) {
-                                self.derived.push_back(BackendEvent::FileChanged {
-                                    path: path.to_owned(),
-                                    change_type: change
-                                        .pointer("/kind/type")
-                                        .and_then(Value::as_str)
-                                        .unwrap_or("update")
-                                        .to_owned(),
-                                });
-                            }
+                if item.get("type").and_then(Value::as_str) == Some("fileChange")
+                    && let Some(changes) = item.get("changes").and_then(Value::as_array)
+                {
+                    for change in changes {
+                        if let Some(path) = change.get("path").and_then(Value::as_str) {
+                            self.derived.push_back(BackendEvent::FileChanged {
+                                path: path.to_owned(),
+                                change_type: change
+                                    .pointer("/kind/type")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or("update")
+                                    .to_owned(),
+                            });
                         }
                     }
                 }
                 if item.get("type").and_then(Value::as_str) == Some("commandExecution")
                     && !self.streamed_tool_output.remove(id)
-                {
-                    if let Some(text) = item
+                    && let Some(text) = item
                         .get("aggregatedOutput")
                         .and_then(Value::as_str)
                         .filter(|text| !text.is_empty())
-                    {
-                        self.derived.push_back(BackendEvent::ToolOutput {
-                            id: id.to_owned(),
-                            text: text.to_owned(),
-                        });
-                    }
+                {
+                    self.derived.push_back(BackendEvent::ToolOutput {
+                        id: id.to_owned(),
+                        text: text.to_owned(),
+                    });
                 }
                 let completed = tool_event(item, true);
                 if let Some(first) = self.derived.pop_front() {

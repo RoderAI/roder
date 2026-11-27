@@ -26,7 +26,7 @@ else
   ENSURE_SCCACHE = sh "$(CURDIR)/scripts/ensure-sccache-server.sh"
 endif
 
-.PHONY: fmt fmt-check build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock ensure-sccache
+.PHONY: fmt fmt-check clippy build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock ensure-sccache
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -122,6 +122,9 @@ fmt:
 
 fmt-check:
 	$(CARGO) fmt --check
+
+clippy:
+	$(CARGO) clippy --workspace --all-targets --no-deps -- -D warnings
 
 dev-deps:
 	$(CARGO) install cargo-nextest --locked

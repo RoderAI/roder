@@ -96,6 +96,7 @@ pub(crate) const DEEPSEEK_V4_PRO: ModelCatalogEntry = model(
     DEEPSEEK_REASONING,
 );
 
+#[allow(clippy::too_many_arguments)] // const catalog-table constructor
 const fn model(
     id: &'static str,
     display_name: &'static str,

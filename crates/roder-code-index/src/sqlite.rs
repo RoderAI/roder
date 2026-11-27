@@ -400,7 +400,7 @@ mod tests {
         assert!(
             chunks
                 .iter()
-                .all(|stored| stored.chunk.path != PathBuf::from("src/delete.rs"))
+                .all(|stored| stored.chunk.path != Path::new("src/delete.rs"))
         );
 
         let response = store

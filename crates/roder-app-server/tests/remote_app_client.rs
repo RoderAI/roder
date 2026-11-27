@@ -8,9 +8,8 @@ use std::time::Duration;
 
 use roder_api::events::RoderEvent;
 use roder_api::extension::ExtensionRegistryBuilder;
-use roder_api::thread::ThreadStoreFactory;
 use roder_app_server::agent_node::{AgentNodeOptions, serve_agent_node};
-use roder_app_server::client::{AppClient, AppEventReceiver};
+use roder_app_server::client::AppClient;
 use roder_app_server::{AppServer, AppServerFeatureConfig, RemoteAppClient, RemoteNodeConnection};
 use roder_core::fake_provider::FakeInferenceEngine;
 use roder_core::{Runtime, RuntimeConfig};

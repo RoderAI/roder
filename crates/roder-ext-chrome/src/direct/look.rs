@@ -132,11 +132,11 @@ fn scrub_strings(value: &mut Value, guard: &dyn DirectGuard) {
 // Called only after scrubbing complete records, including the private previous
 // snapshot. Keep the same excerpt limit on both sides of a diff.
 fn bound_text(value: &mut Value, limit: usize) {
-    if let Some(text) = value["text"].as_str() {
-        if text.chars().count() > limit {
-            value["text"] = json!(text.chars().take(limit).collect::<String>());
-            value["text_cut"] = json!(true);
-        }
+    if let Some(text) = value["text"].as_str()
+        && text.chars().count() > limit
+    {
+        value["text"] = json!(text.chars().take(limit).collect::<String>());
+        value["text_cut"] = json!(true);
     }
 }
 
@@ -162,27 +162,6 @@ pub(crate) fn facts(look: &Value) -> PageFacts {
 }
 
 pub(crate) use super::look_render::render;
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn secrets_are_scrubbed_from_current_and_removed_rows() {
-        struct Hides;
-        impl DirectGuard for Hides {
-            fn scrub(&self, text: &str) -> String {
-                text.replace("hunter22", "[secret]")
-            }
-        }
-        let mut look = json!({"url":"https://a.test/?p=hunter22", "snapshot": {
-            "rows":[{"label":"hunter22"}], "removed":[{"value":"hunter22"}]
-        }});
-        scrub_strings(&mut look, &Hides);
-        assert!(!look.to_string().contains("hunter22"));
-        assert_eq!(look["snapshot"]["removed"][0]["value"], "[secret]");
-    }
-}
 
 /// Read document text without moving the viewport or consuming the diff baseline.
 pub(crate) async fn document(
@@ -226,4 +205,25 @@ pub(crate) async fn document(
         data: json!({"page":page}),
         ..Default::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_are_scrubbed_from_current_and_removed_rows() {
+        struct Hides;
+        impl DirectGuard for Hides {
+            fn scrub(&self, text: &str) -> String {
+                text.replace("hunter22", "[secret]")
+            }
+        }
+        let mut look = json!({"url":"https://a.test/?p=hunter22", "snapshot": {
+            "rows":[{"label":"hunter22"}], "removed":[{"value":"hunter22"}]
+        }});
+        scrub_strings(&mut look, &Hides);
+        assert!(!look.to_string().contains("hunter22"));
+        assert_eq!(look["snapshot"]["removed"][0]["value"], "[secret]");
+    }
 }

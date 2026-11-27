@@ -368,10 +368,11 @@ impl DirectSession {
     async fn press(&mut self, chord: &Chord) -> anyhow::Result<()> {
         let mac = self.mac_page().await?;
         for mut event in chord.press_events() {
-            if event["type"] != "keyUp" && event["key"] == chord.events()[0]["key"] {
-                if let Some(command) = chord.editing_command(mac) {
-                    event["commands"] = json!([command]);
-                }
+            if event["type"] != "keyUp"
+                && event["key"] == chord.events()[0]["key"]
+                && let Some(command) = chord.editing_command(mac)
+            {
+                event["commands"] = json!([command]);
             }
             self.client.call("Input.dispatchKeyEvent", event).await?;
         }

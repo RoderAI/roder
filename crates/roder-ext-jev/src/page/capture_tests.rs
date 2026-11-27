@@ -77,8 +77,7 @@ async fn exercise(version: Value, capture: bool) -> Vec<Value> {
         }
     }
     server.abort();
-    let recorded = requests.lock().unwrap().clone();
-    recorded
+    requests.lock().unwrap().clone()
 }
 
 #[tokio::test]

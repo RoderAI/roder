@@ -2723,7 +2723,6 @@ struct ProviderKeys {
  * The enum stays function-scoped because `lib.rs` re-exports it at the crate
  * root and `include!`s this file.
  */
-
 fn provider_keys(cfg: &roder_config::Config) -> ProviderKeys {
     ProviderKeys {
         openai: std::env::var("OPENAI_API_KEY")

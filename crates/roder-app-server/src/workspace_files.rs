@@ -601,7 +601,7 @@ fn relative_path(root: &Path, path: &Path) -> anyhow::Result<Option<String>> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(err) => return Err(err.into()),
     };
-    if !absolute.starts_with(&root) {
+    if !absolute.starts_with(root) {
         return Ok(None);
     }
     Ok(Some(path_to_slash(
@@ -1009,7 +1009,7 @@ fn rank_path(query: &str, path: &str, name: &str) -> Option<(i64, Vec<usize>)> {
         positions.extend(term_positions);
         if name == term {
             score += 1000;
-        } else if segments.iter().any(|segment| *segment == term) {
+        } else if segments.contains(&term) {
             score += 800;
         } else if name.contains(term) {
             score += 650;

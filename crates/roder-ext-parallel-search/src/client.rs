@@ -97,15 +97,14 @@ pub struct ParallelExtractRequest {
 impl ParallelExtractRequest {
     pub fn from_tool_arguments(arguments: &Value) -> anyhow::Result<Self> {
         let mut urls = string_array_field(arguments, "urls");
-        if urls.is_empty() {
-            if let Some(url) = arguments
+        if urls.is_empty()
+            && let Some(url) = arguments
                 .get("url")
                 .and_then(Value::as_str)
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
-            {
-                urls.push(url.to_string());
-            }
+        {
+            urls.push(url.to_string());
         }
         urls = dedupe_nonempty(urls);
         if urls.is_empty() {

@@ -78,6 +78,8 @@ fn config_precedence_and_redaction() {
 }
 
 #[tokio::test]
+// ENV_LOCK must stay held for the whole test to serialize process env mutation.
+#[allow(clippy::await_holding_lock)]
 async fn fake_lifecycle_command_files_checkpoint_and_cleanup_match_contract() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_env();
@@ -148,6 +150,8 @@ async fn fake_lifecycle_command_files_checkpoint_and_cleanup_match_contract() {
 }
 
 #[tokio::test]
+// ENV_LOCK must stay held for the whole test to serialize process env mutation.
+#[allow(clippy::await_holding_lock)]
 async fn manifest_directory_materialization_forks_repo_tree() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_env();
@@ -244,6 +248,8 @@ fn resumed_state_preserves_cleanup_mode() {
 }
 
 #[tokio::test]
+// ENV_LOCK must stay held for the whole test to serialize process env mutation.
+#[allow(clippy::await_holding_lock)]
 async fn app_server_bootstrap_installs_binary_and_starts_service() {
     let _guard = ENV_LOCK.lock().unwrap();
     clear_env();

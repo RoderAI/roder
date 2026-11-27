@@ -326,7 +326,7 @@ mod tests {
                 .tree
                 .nodes
                 .iter()
-                .any(|node| node.path == PathBuf::from("src/lib.rs"))
+                .any(|node| node.path == Path::new("src/lib.rs"))
         );
     }
 

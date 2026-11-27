@@ -339,6 +339,33 @@ pub(super) fn failure_kind(code: Option<&str>, status: Option<u16>) -> ProviderF
     }
 }
 
+pub(super) fn sse_failure(data: &Value, kind: &str) -> ProviderFailure {
+    let error = data
+        .get("error")
+        .or_else(|| data.pointer("/response/error"))
+        .unwrap_or(data);
+    let code = error.get("code").and_then(Value::as_str);
+    let mut failure =
+        ProviderFailure::new(failure_kind(code, None), stream_error_message(data, kind));
+    failure.provider_code = code.map(String::from);
+    failure.response_id = data
+        .pointer("/response/id")
+        .or_else(|| data.get("response_id"))
+        .and_then(Value::as_str)
+        .map(String::from);
+    failure.retry_not_before = error
+        .get("retry_after")
+        .or_else(|| data.get("retry_after"))
+        .and_then(|value| {
+            let text = value
+                .as_str()
+                .map(String::from)
+                .unwrap_or_else(|| value.to_string());
+            retry_after_deadline(&text)
+        });
+    failure
+}
+
 #[cfg(test)]
 mod credit_limit_tests {
     use super::*;
@@ -453,31 +480,4 @@ mod credit_limit_tests {
             ProviderFailureKind::QuotaExceeded
         );
     }
-}
-
-pub(super) fn sse_failure(data: &Value, kind: &str) -> ProviderFailure {
-    let error = data
-        .get("error")
-        .or_else(|| data.pointer("/response/error"))
-        .unwrap_or(data);
-    let code = error.get("code").and_then(Value::as_str);
-    let mut failure =
-        ProviderFailure::new(failure_kind(code, None), stream_error_message(data, kind));
-    failure.provider_code = code.map(String::from);
-    failure.response_id = data
-        .pointer("/response/id")
-        .or_else(|| data.get("response_id"))
-        .and_then(Value::as_str)
-        .map(String::from);
-    failure.retry_not_before = error
-        .get("retry_after")
-        .or_else(|| data.get("retry_after"))
-        .and_then(|value| {
-            let text = value
-                .as_str()
-                .map(String::from)
-                .unwrap_or_else(|| value.to_string());
-            retry_after_deadline(&text)
-        });
-    failure
 }

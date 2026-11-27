@@ -41,7 +41,7 @@ pub fn decode_non_tty_stream(body: &[u8]) -> ExecOutput {
         match stream {
             1 | 2 => {
                 let start = index;
-                while index < body.len() && !matches!(body[index], 1 | 2 | 3 | 4) {
+                while index < body.len() && !matches!(body[index], 1..=4) {
                     index += 1;
                 }
                 if stream == 1 {
@@ -57,7 +57,7 @@ pub fn decode_non_tty_stream(body: &[u8]) -> ExecOutput {
             4 => {}
             _ => {
                 let start = index - 1;
-                while index < body.len() && !matches!(body[index], 1 | 2 | 3 | 4) {
+                while index < body.len() && !matches!(body[index], 1..=4) {
                     index += 1;
                 }
                 stdout.extend_from_slice(&body[start..index]);

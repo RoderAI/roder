@@ -137,13 +137,10 @@ fn merge_supplemental_projected_items(
     projected_items: Vec<ThreadItem>,
 ) {
     for item in projected_items {
-        match item {
-            ThreadItem::RoutingDecision { .. } => {
-                if !items.iter().any(|existing| existing.id() == item.id()) {
-                    items.push(item);
-                }
-            }
-            _ => {}
+        if matches!(item, ThreadItem::RoutingDecision { .. })
+            && !items.iter().any(|existing| existing.id() == item.id())
+        {
+            items.push(item);
         }
     }
 }

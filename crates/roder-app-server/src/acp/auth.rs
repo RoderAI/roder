@@ -14,18 +14,17 @@ pub trait AcpAuthentication: Send + Sync {
 
 impl<C: AppClient> AcpAdapter<C> {
     pub(super) async fn require_authentication(&self) -> Result<(), JsonRpcError> {
-        if let Some(auth) = &self.authentication {
-            if !auth
+        if let Some(auth) = &self.authentication
+            && !auth
                 .is_authenticated()
                 .await
                 .map_err(authentication_error)?
-            {
-                return Err(JsonRpcError {
-                    code: -32000,
-                    message: "Authentication required".into(),
-                    data: None,
-                });
-            }
+        {
+            return Err(JsonRpcError {
+                code: -32000,
+                message: "Authentication required".into(),
+                data: None,
+            });
         }
         Ok(())
     }

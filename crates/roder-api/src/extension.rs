@@ -915,7 +915,7 @@ fn service_label(service: &ProvidedService) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::sync::Arc;
 
     use crate::tui_status::{PaletteSourceDescriptor, StatusCell, StatusSegment, StatusStyle};
@@ -1315,7 +1315,7 @@ mod tests {
             request: VcsReadChangedContentRequest,
         ) -> Result<VcsChangedContentPage, VcsError> {
             Ok(VcsChangedContentPage {
-                path: PathBuf::from(request.path),
+                path: request.path,
                 content: Some(String::new()),
                 offset: request.offset,
                 total_lines: 0,
