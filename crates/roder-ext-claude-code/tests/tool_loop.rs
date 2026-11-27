@@ -163,9 +163,11 @@ async fn claude_read_alias_executes_through_roder_executor_with_repaired_args() 
 
     // Claude calls its native alias `Read` with `file_path`; the handler must
     // repair the argument name and execute canonical `read_file`.
-    let content = server
+    let result = server
         .call_tool("Read", json!({ "file_path": "README.md" }))
-        .expect("Read alias executes");
+        .await;
+    assert!(!result.is_error, "{}: {result:?}", "Read alias executes");
+    let content = result.content;
     let text = match &content[0] {
         claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
         other => panic!("expected text content, got {other:?}"),
@@ -196,12 +198,22 @@ async fn repeated_calls_of_same_tool_get_unique_ids() {
     .unwrap();
     let server = options.sdk_mcp_servers.get("roder").unwrap();
 
-    server
+    let result = server
         .call_tool("Read", json!({ "file_path": "README.md" }))
-        .expect("first Read alias executes");
-    server
+        .await;
+    assert!(
+        !result.is_error,
+        "{}: {result:?}",
+        "first Read alias executes"
+    );
+    let result = server
         .call_tool("Read", json!({ "file_path": "Cargo.toml" }))
-        .expect("second Read alias executes");
+        .await;
+    assert!(
+        !result.is_error,
+        "{}: {result:?}",
+        "second Read alias executes"
+    );
 
     let calls = executor.calls.lock().unwrap();
     assert_eq!(calls.len(), 2);
@@ -229,9 +241,15 @@ async fn denied_roder_permission_surfaces_as_tool_error_to_the_sdk_loop() {
     .unwrap();
     let server = options.sdk_mcp_servers.get("roder").unwrap();
 
-    let content = server
+    let result = server
         .call_tool("read_file", json!({ "path": "/etc/shadow" }))
-        .expect("denial is reported as tool content, not a transport error");
+        .await;
+    assert!(
+        !result.is_error,
+        "{}: {result:?}",
+        "denial is reported as tool content, not a transport error"
+    );
+    let content = result.content;
     let text = match &content[0] {
         claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
         other => panic!("expected text content, got {other:?}"),
@@ -255,9 +273,16 @@ async fn executor_failure_propagates_as_mcp_error() {
 
     // Bash alias arrives as a raw argv array; the input repair joins it into
     // the canonical `command` string before the executor rejects it.
-    let error = server
-        .call_tool("Bash", json!(["ls", "-la"]))
-        .expect_err("executor failure must propagate");
+    let result = server.call_tool("Bash", json!(["ls", "-la"])).await;
+    assert!(
+        result.is_error,
+        "{}: {result:?}",
+        "executor failure must propagate"
+    );
+    let error = match &result.content[0] {
+        claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
+        other => panic!("expected text content, got {other:?}"),
+    };
     assert!(error.contains("executor rejected shell"), "{error}");
 
     let calls = executor.calls.lock().unwrap();
@@ -381,9 +406,15 @@ async fn request_user_input_is_advertised_and_routes_through_executor() {
             ]
         }]
     });
-    let content = server
+    let result = server
         .call_tool("request_user_input", questions.clone())
-        .expect("request_user_input executes through the roder executor");
+        .await;
+    assert!(
+        !result.is_error,
+        "{}: {result:?}",
+        "request_user_input executes through the roder executor"
+    );
+    let content = result.content;
     let text = match &content[0] {
         claude_code_sdk_rust::mcp::MCPContent::Text { text } => text.clone(),
         other => panic!("expected text content, got {other:?}"),

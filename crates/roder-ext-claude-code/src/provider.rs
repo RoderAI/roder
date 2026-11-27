@@ -445,6 +445,10 @@ fn map_stream_events(
         // the end of the message.
         let mut echo_match_pos = 0usize;
         let mut completed = false;
+        // Set when the CLI started a new conversation mid-turn
+        // (`conversation_reset`): its history no longer matches the synced
+        // transcript prefix, so the turn must not be committed for reuse.
+        let mut conversation_reset = false;
         let mut last_session_id: Option<String> = None;
         let mut last_stop_reason: Option<String> = None;
         // Tool-use ids for `mcp__roder__*` tools. Those tools are executed
@@ -609,11 +613,26 @@ fn map_stream_events(
                     let session_id = (!response.session_id.trim().is_empty())
                         .then_some(response.session_id)
                         .or(last_session_id.take());
-                    commit_session(&continuity, session_id.as_deref(), &synced);
+                    if conversation_reset {
+                        clear_session(&continuity);
+                    } else {
+                        commit_session(&continuity, session_id.as_deref(), &synced);
+                    }
                     yield InferenceEvent::Completed(CompletionMetadata {
                         stop_reason: response.stop_reason.or(last_stop_reason.take()),
                         provider_response_id: session_id,
                     });
+                }
+                StreamEvent::ConversationReset(reset) => {
+                    conversation_reset = true;
+                    clear_session(&continuity);
+                    yield InferenceEvent::ProviderMetadata(json!({
+                        "provider": PROVIDER_CLAUDE_CODE,
+                        "conversationReset": {
+                            "newConversationId": reset.new_conversation_id,
+                            "sessionId": reset.session_id,
+                        },
+                    }));
                 }
                 StreamEvent::Error(message) => {
                     // The turn failed (possibly a stale/invalid resume). Drop the
@@ -638,7 +657,11 @@ fn map_stream_events(
         // died after its last assistant message). Close the turn with what
         // we saw so the runtime never hangs waiting for completion.
         if !completed && (last_session_id.is_some() || last_stop_reason.is_some()) {
-            commit_session(&continuity, last_session_id.as_deref(), &synced);
+            if conversation_reset {
+                clear_session(&continuity);
+            } else {
+                commit_session(&continuity, last_session_id.as_deref(), &synced);
+            }
             yield InferenceEvent::Completed(CompletionMetadata {
                 stop_reason: last_stop_reason,
                 provider_response_id: last_session_id,
@@ -1464,6 +1487,41 @@ mod tests {
         calls: Arc<StdMutex<Vec<RecordedCall>>>,
     }
 
+    /// Like `RecordingRunner`, but the CLI reports a `conversation_reset` on
+    /// its first turn.
+    struct ResettingRunner {
+        inner: RecordingRunner,
+        reset_once: StdMutex<bool>,
+    }
+
+    #[async_trait::async_trait]
+    impl ClaudeCodeRunner for ResettingRunner {
+        async fn stream(
+            &self,
+            options: ClaudeAgentOptions,
+            content: UserMessageInput,
+        ) -> anyhow::Result<mpsc::UnboundedReceiver<StreamEvent>> {
+            let upstream = self.inner.stream(options, content).await?;
+            let reset = std::mem::replace(&mut *self.reset_once.lock().unwrap(), false);
+            let (tx, rx) = mpsc::unbounded_channel();
+            if reset {
+                tx.send(StreamEvent::ConversationReset(
+                    claude_code_sdk_rust::ConversationResetMessage {
+                        new_conversation_id: "conv-2".to_string(),
+                        uuid: "u".to_string(),
+                        session_id: self.inner.session_id.clone(),
+                    },
+                ))
+                .unwrap();
+            }
+            let mut upstream = upstream;
+            while let Ok(event) = upstream.try_recv() {
+                tx.send(event).unwrap();
+            }
+            Ok(rx)
+        }
+    }
+
     #[async_trait::async_trait]
     impl ClaudeCodeRunner for RecordingRunner {
         async fn stream(
@@ -1504,6 +1562,28 @@ mod tests {
             metadata: json!({}),
             ..request()
         }
+    }
+
+    async fn collect_events(
+        engine: &ClaudeCodeEngine,
+        request: AgentInferenceRequest,
+    ) -> Vec<InferenceEvent> {
+        engine
+            .stream_turn(
+                InferenceTurnContext {
+                    thread_id: "thread",
+                    turn_id: "turn",
+                    tool_executor: None,
+                },
+                request,
+            )
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .map(|event| event.unwrap())
+            .collect()
     }
 
     async fn drain(engine: &ClaudeCodeEngine, request: AgentInferenceRequest) {
@@ -1617,6 +1697,62 @@ mod tests {
         let calls = calls.lock().unwrap();
         assert_eq!(calls[1].0, None, "compacted transcript must send fresh");
         assert!(calls[1].1.contains("summary of earlier turns"));
+    }
+
+    #[tokio::test]
+    async fn conversation_reset_turn_is_not_resumed() {
+        let calls = Arc::new(StdMutex::new(Vec::new()));
+        let engine = ClaudeCodeEngine::new_with_runner(
+            ClaudeCodeConfig::default(),
+            Arc::new(ResettingRunner {
+                inner: RecordingRunner {
+                    session_id: "session-1".to_string(),
+                    calls: Arc::clone(&calls),
+                },
+                reset_once: StdMutex::new(true),
+            }),
+        );
+
+        let events = collect_events(
+            &engine,
+            request_with_transcript(vec![TranscriptItem::UserMessage(UserMessage::text(
+                "first question",
+            ))]),
+        )
+        .await;
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                InferenceEvent::ProviderMetadata(value)
+                    if value["conversationReset"]["newConversationId"] == "conv-2"
+            )),
+            "{events:?}"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, InferenceEvent::Completed(_))),
+            "{events:?}"
+        );
+
+        // The CLI dropped its history mid-turn, so the next turn must replay
+        // the full transcript instead of resuming session-1.
+        drain(
+            &engine,
+            request_with_transcript(vec![
+                TranscriptItem::UserMessage(UserMessage::text("first question")),
+                TranscriptItem::AssistantMessage(AssistantMessage {
+                    text: "first answer".to_string(),
+                    phase: None,
+                }),
+                TranscriptItem::UserMessage(UserMessage::text("second question")),
+            ]),
+        )
+        .await;
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[1].0, None, "a reset session must not be resumed");
+        assert!(calls[1].1.contains("first answer"));
     }
 
     #[tokio::test]
