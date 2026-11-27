@@ -213,7 +213,9 @@ pub enum ThreadItemStatus {
     Failed,
 }
 
-#[allow(clippy::large_enum_variant)] // wire-shaped; items are moved, not copied
+// Boxing `RoutingDecision.decision` would change a public variant matched
+// across crates; accept the larger inline size for this wire enum.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ThreadItem {

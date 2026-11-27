@@ -8,4 +8,4 @@ Versioning: every PR that changes a released package (any `crates/*` crate, `sdk
 
 Formatting: `rustfmt.toml` is stable-only and identical to ComposalAI/vex's. Run `make fmt` before committing; `make fmt-check` must pass.
 
-Lints: `make clippy` (`cargo clippy --workspace --all-targets --no-deps -D warnings`) must pass. Fix lints rather than allowing them; a targeted `#[allow(clippy::...)]` needs a reason comment.
+Lints: `make clippy` (`cargo clippy --workspace --all-targets --no-deps -- -D warnings`) must pass. Fix lints rather than allowing them; a targeted `#[allow(clippy::...)]` needs a reason comment.
