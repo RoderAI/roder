@@ -713,21 +713,25 @@ dependencies = [
 
 [[package]]
 name = "claude-code-sdk-rust"
-version = "0.4.1"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "acd160dca3358c1074b5a1577652596a7ddd0ad205ba5ca4f91df8ab0d8318cd"
+checksum = "d6efbf52bdd30efb44f442476679a5d64e782238a9a9b3edcf47b37f4a5c3daa"
 dependencies = [
  "async-trait",
  "bytes",
  "chrono",
  "dirs 5.0.1",
  "futures",
+ "libc",
+ "regex",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tracing",
+ "unicode-general-category",
+ "unicode-normalization",
  "uuid",
  "which 6.0.3",
 ]
@@ -6801,6 +6805,12 @@ name = "unicode-bidi"
 version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c1cb5db39152898a79168971543b1cb5020dff7fe43c8dc468b0885f5e29df5"
+
+[[package]]
+name = "unicode-general-category"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b993bddc193ae5bd0d623b49ec06ac3e9312875fdae725a975c51db1cc1677f"
 
 [[package]]
 name = "unicode-ident"

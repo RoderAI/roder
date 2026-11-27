@@ -246,27 +246,22 @@ fn sdk_tool_for_spec(
     executor: Arc<dyn TurnToolExecutor>,
 ) -> SdkMcpTool {
     let call_schema = schema.clone();
-    SdkMcpTool::new(
-        claude_name.clone(),
-        description,
-        schema,
-        None,
-        move |input| {
-            let input =
-                repair_sdk_mcp_input_for_tool(input, &call_schema, &claude_name, &roder_name);
-            // Each invocation must carry a unique tool-call id. The TUI and
-            // runtime key tool-call rows by id, so reusing a name-derived id
-            // (e.g. `claude-code-Bash`) collapses every later call of the same
-            // tool into the first row and only the first one ever renders.
-            let seq = NEXT_TOOL_CALL_SEQ.fetch_add(1, Ordering::Relaxed);
-            let call = ToolCallCompleted {
-                id: format!("claude-code-{claude_name}-{seq}"),
-                name: roder_name.clone(),
-                arguments: input.to_string(),
-            };
-            let handle = tokio::runtime::Handle::current();
-            let outcome = tokio::task::block_in_place(|| handle.block_on(executor.execute(call)));
-            match outcome {
+    let handler_name = claude_name.clone();
+    SdkMcpTool::new_async(claude_name, description, schema, None, move |input| {
+        let input = repair_sdk_mcp_input_for_tool(input, &call_schema, &handler_name, &roder_name);
+        // Each invocation must carry a unique tool-call id. The TUI and
+        // runtime key tool-call rows by id, so reusing a name-derived id
+        // (e.g. `claude-code-Bash`) collapses every later call of the same
+        // tool into the first row and only the first one ever renders.
+        let seq = NEXT_TOOL_CALL_SEQ.fetch_add(1, Ordering::Relaxed);
+        let call = ToolCallCompleted {
+            id: format!("claude-code-{handler_name}-{seq}"),
+            name: roder_name.clone(),
+            arguments: input.to_string(),
+        };
+        let executor = Arc::clone(&executor);
+        async move {
+            match executor.execute(call).await {
                 Ok(outcome) => {
                     let text = if outcome.is_error {
                         format!("Tool returned an error:\n{}", outcome.result)
@@ -277,8 +272,12 @@ fn sdk_tool_for_spec(
                 }
                 Err(err) => Err(err.to_string()),
             }
-        },
-    )
+        }
+    })
+    // Claude calls the aliases with its native argument shapes (`file_path`,
+    // argv arrays), which `repair_sdk_mcp_input_for_tool` maps onto Roder's
+    // schema, so the SDK must not reject them against that schema first.
+    .validate_input(false)
 }
 
 fn claude_aliases_for_roder_tool(name: &str) -> impl Iterator<Item = &'static str> {

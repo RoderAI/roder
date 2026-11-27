@@ -10,19 +10,24 @@ This provider runs the local Claude Code CLI through the Rust `claude-agent-sdk`
 
 ## CLI process lifecycle
 
-Roder vendors a narrow, MIT-licensed patch of `claude-code-sdk-rust` 0.4.0 under
-`vendor/claude-code-sdk-rust` and applies it through Cargo's
-`[patch.crates-io]` mechanism. The patch configures the spawned `claude` child
-with `kill_on_drop(true)`, makes the convenience stream observe receiver drop,
-and always disconnects the owned SDK client before the stream task exits. The
-transport close path kills and waits for the child process. This gives an
-interrupted Roder turn an SDK-level child-process cleanup path rather than
-relying only on Tokio task abort.
+Roder uses the registry release of `claude-code-sdk-rust` (0.5.1 or later).
+Each turn runs through `ClaudeAgentClient::spawn_stream_message_supervised`,
+which owns the SDK client in a background task and returns the event receiver
+plus a `SpawnedStreamCleanup` handle. The spawned `claude` child is configured
+with `kill_on_drop(true)`. When Roder interrupts a turn it drops the receiver:
+the SDK task notices at once (even while the CLI is idle), sends the CLI
+SIGTERM without waiting for it to exit on stdin EOF (SIGKILL follows if it
+does not exit), and reaps it. `wait_for_cleanup` resolves only after that, so
+Roder's `ProviderCleanupConfirmed` lifecycle record means the child is gone. A
+turn that completes normally closes gracefully: stdin EOF first, so the CLI
+can flush its session transcript.
 
-The vendor patch provenance is recorded in
-`vendor/claude-code-sdk-rust/RODER_PATCH.md`. Roder intends to remove the
-override after an upstream released SDK contains equivalent receiver-close-aware
-stream cleanup and subprocess ownership behavior.
+Roder's SDK MCP tools (the `mcp__roder__*` aliases) opt out of the SDK's
+input-schema validation (`SdkMcpTool::validate_input(false)`): Claude calls
+the aliases with its native argument shapes, which the handler repairs onto
+Roder's canonical schemas before executing. A `conversation_reset` from the
+CLI (for example after `/clear`) ends CLI-session reuse for that turn, so the
+next turn replays the full transcript.
 
 Roder still treats cleanup as bounded and observable, not guaranteed solely by
 this provider. The local TUI first requests `turn/interrupt`, restores the
@@ -35,9 +40,6 @@ lifecycle persistence failed, when the deadline expired.
 ## Requirements
 
 - `claude` installed and authenticated locally.
-- The vendored `claude-code-sdk-rust` patch included with this Roder source
-  tree. Cargo applies it automatically; a separate local SDK checkout is not a
-  runtime requirement.
 
 Normal tests do not run `claude` and do not require a Claude subscription. Live checks must be explicitly enabled.
 
@@ -174,10 +176,9 @@ cargo test -p roder-ext-claude-code
 cargo test -p roder-app-server --test e2e providers_list_exposes_claude_code_models_without_api_key -- --nocapture
 ```
 
-The vendored SDK also has an offline fake-CLI regression that drops a stream
-receiver and proves its owned child is terminated and reaped. Run it from a
-temporary standalone copy of `vendor/claude-code-sdk-rust` because that vendor
-manifest is intentionally outside the root workspace.
+`tests/runtime_cleanup.rs` drives an interrupted turn against a fake `claude`
+that ignores stdin EOF and proves its child is terminated and reaped before
+Roder confirms cleanup.
 
 Live checks should remain opt-in and redacted:
 
