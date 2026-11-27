@@ -10,6 +10,12 @@ operations, streamed messages and tool output, file edits, token usage, and
 approval requests at this boundary. See [Agent backends](../agent-backends.md)
 for backend selection and policy mapping.
 
+`roder app-server --backend antigravity` uses the same Roder client contract
+with Google's official `agy acp` runtime and personal subscription login.
+The provider ID is `antigravity`, and available models come from the signed-in
+account. See [Agent backends](../agent-backends.md#google-antigravity-subscriptions)
+for prerequisites and the distinction from Roder's Gemini API-key provider.
+
 ## Required Client Methods
 
 | Method | Client caller | Roder backing behavior | Notes |

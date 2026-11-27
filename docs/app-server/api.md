@@ -6358,6 +6358,33 @@ The selected Roder policy mode is sent to Codex as approval and sandbox
 settings when starting a thread or turn. Codex threads remain stored by Codex;
 Roder's native thread persistence is not used for their conversation history.
 
+`roder app-server --backend antigravity` selects the official Google
+Antigravity ACP runtime (`agy acp`) instead. Sign in first with
+the guided TUI (`roder --backend antigravity`) or, if the runtime is installed,
+`roder auth login antigravity`; browser authentication and credential storage
+belong to the official CLI. `initialize`, `providers/list`, and `model/list`
+require a working authenticated session and discover the account's models.
+They return JSON-RPC errors (`-32000`) when sign-in or subscription access is
+unavailable; Roder does not fall back to Gemini API-key billing.
+
+For this backend, the provider ID is `antigravity`. Call `thread/start` with an
+absolute `cwd`, then `turn/start` and consume normal Roder notifications until
+a terminal turn event. Tool permission requests use `thread/resolve_approval`;
+`turn/interrupt` sends ACP cancellation. Antigravity, rather than Roder's
+native inference/tool loop, executes the agent's work. See
+[Agent backends](../agent-backends.md#google-antigravity-subscriptions) for
+setup and validation commands.
+
+The app-server reuses a Roder-managed runtime or an existing `agy` on PATH; it
+does not install software or start interactive login. Starting a thread with
+the server's Bypass policy launches `agy acp --dangerously-skip-permissions`.
+Other policy modes do not receive that flag. A process launched with native
+bypass rejects attempts to tighten its policy; start a new safer thread instead.
+
+For Antigravity, `thread/archive` stops the active backend process and removes
+Roder's in-memory handle; it does not delete the official CLI's saved session.
+Native session listings can therefore still include that conversation.
+
 - `thread/list` and `thread/read` use persisted threads first and in-memory
   protocol threads as a fallback.
 - Lifecycle records are extension state scoped to a turn. JSONL persistence

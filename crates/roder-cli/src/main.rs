@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 mod acp;
 mod agent_node;
+mod antigravity_auth;
+mod antigravity_setup;
 mod automations;
 mod chrome;
 mod commands;
@@ -68,6 +70,7 @@ use roder_core::{
     Runtime, RuntimeConfig, RuntimeDynamicWorkflowConfig, RuntimeReliabilityConfig,
     RuntimeSpeedPolicyConfig, validate_edit_tool,
 };
+use roder_ext_antigravity_backend::AntigravityBackendExtension;
 use roder_ext_codex_backend::CodexBackendExtension;
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
 use roder_extension_host::{
@@ -255,8 +258,11 @@ async fn run_cli() -> anyhow::Result<()> {
     let args = packages::apply_ephemeral_package_args(&args)?;
     let cli_options = parse_cli_options(&args)?;
     let cli_backend = cli_options.backend;
+    if cli_backend == Backend::Antigravity && !antigravity_setup::prepare_tui().await? {
+        return Ok(());
+    }
     let selected_backend = selected_agent_backend(cli_options.backend)?;
-    let codex_model = cli_options.codex_model.clone();
+    let backend_model = cli_options.backend_model.clone();
     let mut startup = cli_options.startup.clone();
     let record_api_transcript = cli_options.record_api_transcript.clone();
     let record_ui_frames = cli_options.record_ui_frames;
@@ -269,11 +275,7 @@ async fn run_cli() -> anyhow::Result<()> {
         server = server.with_agent_backend(backend);
     }
     let app_server = Arc::new(server);
-    let default_model = if cli_backend == Backend::Codex {
-        codex_model.unwrap_or_default()
-    } else {
-        default_model
-    };
+    let default_model = startup_model(cli_backend, backend_model, default_model);
     let client = LocalAppClient::new(app_server.clone());
 
     if enable_chrome {
@@ -1095,7 +1097,7 @@ pub(crate) fn decode_response<T: serde::de::DeserializeOwned>(
 #[derive(Debug, Clone, Default)]
 pub(crate) struct CliOptions {
     backend: Backend,
-    codex_model: Option<String>,
+    backend_model: Option<String>,
     policy_mode: Option<PolicyMode>,
     runtime_profile: Option<RuntimeProfile>,
     team_display: Option<roder_api::teams::AgentTeamDisplayMode>,
@@ -1111,6 +1113,29 @@ enum Backend {
     #[default]
     Roder,
     Codex,
+    Antigravity,
+}
+
+fn startup_model(backend: Backend, backend_model: Option<String>, default_model: String) -> String {
+    if backend == Backend::Roder {
+        default_model
+    } else {
+        backend_model.unwrap_or_default()
+    }
+}
+
+fn require_native_backend(backend: Backend, command: &str) -> anyhow::Result<()> {
+    if backend != Backend::Roder {
+        let id = match backend {
+            Backend::Codex => "codex",
+            Backend::Antigravity => "antigravity",
+            Backend::Roder => unreachable!(),
+        };
+        anyhow::bail!(
+            "roder {command} does not support external agent backends; use `roder --backend {id}` or `roder app-server --backend {id}`"
+        );
+    }
+    Ok(())
 }
 
 fn selected_agent_backend(backend: Backend) -> anyhow::Result<Option<Arc<dyn AgentBackend>>> {
@@ -1118,12 +1143,26 @@ fn selected_agent_backend(backend: Backend) -> anyhow::Result<Option<Arc<dyn Age
         return Ok(None);
     }
     let mut registry = ExtensionRegistryBuilder::new();
-    registry.install(CodexBackendExtension)?;
-    registry.grant_capability(
-        "roder-ext-codex-backend",
-        CapabilityGrant::new("process.codex"),
-    );
-    Ok(registry.build()?.agent_backend("codex"))
+    let backend_id = match backend {
+        Backend::Roder => unreachable!("native backend returned above"),
+        Backend::Codex => {
+            registry.install(CodexBackendExtension)?;
+            registry.grant_capability(
+                "roder-ext-codex-backend",
+                CapabilityGrant::new("process.codex"),
+            );
+            "codex"
+        }
+        Backend::Antigravity => {
+            registry.install(AntigravityBackendExtension)?;
+            registry.grant_capability(
+                "roder-ext-antigravity-backend",
+                CapabilityGrant::new("process.agy"),
+            );
+            "antigravity"
+        }
+    };
+    Ok(registry.build()?.agent_backend(backend_id))
 }
 
 fn extract_global_config_dir(args: &[String]) -> anyhow::Result<(Vec<String>, Option<PathBuf>)> {
@@ -1153,7 +1192,8 @@ fn parse_backend(value: &str) -> anyhow::Result<Backend> {
     match value {
         "roder" => Ok(Backend::Roder),
         "codex" => Ok(Backend::Codex),
-        _ => anyhow::bail!("unknown backend {value:?}; expected roder or codex"),
+        "antigravity" => Ok(Backend::Antigravity),
+        _ => anyhow::bail!("unknown backend {value:?}; expected roder, codex, or antigravity"),
     }
 }
 
@@ -1877,9 +1917,9 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
     while i < args.len() {
         match args[i].as_str() {
             "--backend" => {
-                let value = args
-                    .get(i + 1)
-                    .ok_or_else(|| anyhow::anyhow!("--backend requires roder or codex"))?;
+                let value = args.get(i + 1).ok_or_else(|| {
+                    anyhow::anyhow!("--backend requires roder, codex, or antigravity")
+                })?;
                 options.backend = parse_backend(value)?;
                 i += 1;
             }
@@ -1887,7 +1927,7 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
                 options.backend = parse_backend(&arg["--backend=".len()..])?
             }
             "--model" => {
-                options.codex_model = Some(
+                options.backend_model = Some(
                     args.get(i + 1)
                         .ok_or_else(|| anyhow::anyhow!("--model requires a value"))?
                         .clone(),
@@ -1895,7 +1935,7 @@ fn parse_cli_options(args: &[String]) -> anyhow::Result<CliOptions> {
                 i += 1;
             }
             arg if arg.starts_with("--model=") => {
-                options.codex_model = Some(arg["--model=".len()..].to_string())
+                options.backend_model = Some(arg["--model=".len()..].to_string())
             }
             "resume" => {
                 let thread_id = args.get(i + 1).filter(|value| !value.starts_with("--"));
@@ -3376,6 +3416,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
             let provider_args = args.get(2..).unwrap_or(&[]);
             match auth_provider_kind(provider)? {
+                AuthProviderKind::Antigravity => {
+                    ensure_no_auth_provider_args(provider_args)?;
+                    antigravity_auth::login().await?;
+                }
                 AuthProviderKind::Codex => {
                     ensure_no_auth_provider_args(provider_args)?;
                     eprintln!("Opening browser for Codex sign-in...");
@@ -3408,6 +3452,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
         Some("status") => {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
             match auth_provider_kind(provider)? {
+                AuthProviderKind::Antigravity => {
+                    ensure_no_auth_provider_args(args.get(2..).unwrap_or(&[]))?;
+                    antigravity_auth::status().await?;
+                }
                 AuthProviderKind::Codex => match roder_codex_auth::status().await? {
                     Some(tokens) if !tokens.account_id.is_empty() => {
                         println!("codex: signed in ({})", tokens.account_id);
@@ -3452,6 +3500,10 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
         Some("logout") => {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
             match auth_provider_kind(provider)? {
+                AuthProviderKind::Antigravity => {
+                    ensure_no_auth_provider_args(args.get(2..).unwrap_or(&[]))?;
+                    antigravity_auth::logout().await?;
+                }
                 AuthProviderKind::Codex => {
                     roder_codex_auth::logout()?;
                     println!("codex: signed out");
@@ -3473,7 +3525,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
             Ok(())
         }
         _ => anyhow::bail!(
-            "usage: roder auth login|status|logout [codex|supergrok|kimi-code|roder-cloud]\n\
+            "usage: roder auth login|status|logout [codex|antigravity|supergrok|kimi-code|roder-cloud]\n\
              Kimi Code API key login: roder auth login kimi-code --api-key [KEY]"
         ),
     }
@@ -3572,6 +3624,7 @@ async fn roder_cloud_login() -> anyhow::Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthProviderKind {
     Codex,
+    Antigravity,
     SuperGrok,
     KimiCode,
     RoderCloud,
@@ -3580,6 +3633,7 @@ enum AuthProviderKind {
 fn auth_provider_kind(provider: &str) -> anyhow::Result<AuthProviderKind> {
     match provider.trim().to_ascii_lowercase().as_str() {
         "codex" => Ok(AuthProviderKind::Codex),
+        "antigravity" => Ok(AuthProviderKind::Antigravity),
         "supergrok" | "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             Ok(AuthProviderKind::SuperGrok)
         }
@@ -3717,12 +3771,84 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(options.backend, Backend::Codex);
-        assert_eq!(options.codex_model.as_deref(), Some("gpt-6-sol"));
+        assert_eq!(options.backend_model.as_deref(), Some("gpt-6-sol"));
         assert_eq!(
             options.startup,
             TuiStartup::ResumeThread("thread-123".into())
         );
         assert!(parse_cli_options(&["--backend=unknown".into()]).is_err());
+    }
+
+    #[test]
+    fn antigravity_backend_accepts_both_flag_forms_and_model() {
+        for args in [
+            vec![
+                "--backend".into(),
+                "antigravity".into(),
+                "--model=gemini-model".into(),
+            ],
+            vec![
+                "--backend=antigravity".into(),
+                "--model".into(),
+                "gemini-model".into(),
+            ],
+        ] {
+            let options = parse_cli_options(&args).unwrap();
+            assert_eq!(options.backend, Backend::Antigravity);
+            assert_eq!(options.backend_model.as_deref(), Some("gemini-model"));
+        }
+        assert!(parse_cli_options(&["--backend".into()]).is_err());
+        assert!(parse_cli_options(&["--backend=antigravity".into(), "--model".into()]).is_err());
+        assert_eq!(
+            auth_provider_kind("Antigravity").unwrap(),
+            AuthProviderKind::Antigravity
+        );
+    }
+
+    #[test]
+    fn external_backends_have_independent_startup_models() {
+        for backend in [Backend::Codex, Backend::Antigravity] {
+            assert_eq!(
+                startup_model(backend, Some("chosen-model".into()), "native-model".into()),
+                "chosen-model"
+            );
+            assert_eq!(startup_model(backend, None, "native-model".into()), "");
+        }
+        assert_eq!(
+            startup_model(
+                Backend::Roder,
+                Some("backend-only-model".into()),
+                "native-model".into()
+            ),
+            "native-model"
+        );
+    }
+
+    #[test]
+    fn external_backend_extensions_are_wired_without_starting_processes() {
+        assert!(selected_agent_backend(Backend::Roder).unwrap().is_none());
+        for (selection, id) in [
+            (Backend::Codex, "codex"),
+            (Backend::Antigravity, "antigravity"),
+        ] {
+            assert_eq!(selected_agent_backend(selection).unwrap().unwrap().id(), id);
+        }
+    }
+
+    #[tokio::test]
+    async fn unsupported_commands_reject_external_backends_instead_of_falling_back() {
+        for backend in ["antigravity", "codex"] {
+            for args in [
+                vec!["--backend".into(), backend.into()],
+                vec![format!("--backend={backend}")],
+            ] {
+                let error = acp::run_acp_cli(&args).await.unwrap_err().to_string();
+                assert!(error.contains("does not support external agent backends"));
+                let error = exec::parse_exec_cli(&args).unwrap_err().to_string();
+                assert!(error.contains("does not support external agent backends"));
+            }
+        }
+        assert!(exec::parse_exec_cli(&["--backend=roder".into(), "hello".into()]).is_ok());
     }
 
     #[test]

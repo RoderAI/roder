@@ -25,6 +25,7 @@ mod processes;
 mod progress;
 mod prompt_admission;
 mod prompt_recovery;
+pub mod provider_setup;
 #[allow(dead_code)]
 mod remote;
 mod remote_node;

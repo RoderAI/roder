@@ -915,6 +915,7 @@ dependencies = [
  "crossterm_winapi",
  "derive_more",
  "document-features",
+ "futures-core",
  "mio",
  "parking_lot",
  "rustix 1.1.5",
@@ -3707,6 +3708,7 @@ dependencies = [
  "roder-core",
  "roder-evals",
  "roder-ext-anthropic",
+ "roder-ext-antigravity-backend",
  "roder-ext-browser-use",
  "roder-ext-codex-backend",
  "roder-ext-disk-context",
@@ -4062,6 +4064,25 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "roder-ext-antigravity-backend"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dirs 7.0.0",
+ "flate2",
+ "libc",
+ "reqwest",
+ "roder-api",
+ "semver",
+ "serde_json",
+ "sha2 0.11.1",
+ "tar",
+ "tokio",
+ "which 8.0.6",
 ]
 
 [[package]]

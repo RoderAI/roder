@@ -125,7 +125,7 @@ pub(super) async fn emit_event(
                 turn_id: id,
                 approval_id: request_id.clone(),
                 tool_id: request_id,
-                tool_name: "Codex tool".into(),
+                tool_name: "Agent tool".into(),
                 reason: Some(description),
                 timestamp: now,
             })
@@ -139,7 +139,7 @@ pub(super) async fn emit_event(
                 .await
                 .insert(request_id.clone(), thread_id.into());
             let questions = questions.into_iter().map(|q| json!({
-                "id":q.id,"header":"Codex","question":q.text,
+                "id":q.id,"header":"Agent","question":q.text,
                 "options":q.options.into_iter().map(|label| json!({"label":label,"description":""})).collect::<Vec<_>>()
             })).collect::<Vec<_>>();
             RoderEvent::UserInputRequested(UserInputRequested {
