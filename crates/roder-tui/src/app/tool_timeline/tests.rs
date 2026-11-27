@@ -1522,7 +1522,7 @@ fn mouse_button_up_on_expanded_tool_does_not_reopen_it() {
 }
 
 #[test]
-fn tool_row_relative_times_are_human_readable_without_plus_or_leading_zeroes() {
+fn tool_rows_show_each_tools_own_runtime() {
     let mut timeline = TimelineState::default();
     for (id, command) in [
         ("call_1", "first"),
@@ -1536,22 +1536,54 @@ fn tool_row_relative_times_are_human_readable_without_plus_or_leading_zeroes() {
     }
 
     let base = time::OffsetDateTime::UNIX_EPOCH;
-    if let TimelineItemKind::Tool(tool) = &mut timeline.items[0].kind {
-        tool.started_at = base;
-    }
-    if let TimelineItemKind::Tool(tool) = &mut timeline.items[1].kind {
-        tool.started_at = base + time::Duration::seconds(7);
-    }
-    if let TimelineItemKind::Tool(tool) = &mut timeline.items[2].kind {
-        tool.started_at = base + time::Duration::seconds(153);
+    let runtimes = [
+        time::Duration::milliseconds(400),
+        time::Duration::seconds(14),
+        time::Duration::seconds(146),
+    ];
+    for (index, runtime) in runtimes.into_iter().enumerate() {
+        if let TimelineItemKind::Tool(tool) = &mut timeline.items[index].kind {
+            // Start times are far apart so a gap-based column would disagree.
+            tool.started_at = base + time::Duration::minutes(index as i64 * 10);
+            tool.finished_at = Some(tool.started_at + runtime);
+            tool.status = ToolTimelineStatus::Completed;
+        }
     }
 
     let lines = rendered_lines(&mut timeline);
-    assert!(lines[0].trim_end().ends_with("0s"));
-    assert!(lines[1].trim_end().ends_with("7s"));
-    assert!(lines[2].trim_end().ends_with("2m 26s"));
-    assert!(!lines[1].contains("+07s"));
-    assert!(!lines[2].contains("+153s"));
+    assert!(lines[0].trim_end().ends_with(" 0.4s"), "{}", lines[0]);
+    assert!(lines[1].trim_end().ends_with(" 14s"), "{}", lines[1]);
+    assert!(lines[2].trim_end().ends_with(" 2m 26s"), "{}", lines[2]);
+    // The duration column is fixed-width, so timestamps start in the same column.
+    let ts_col = |line: &str| line.find("00:").expect("timestamp");
+    assert_eq!(ts_col(&lines[0]), ts_col(&lines[1]));
+    assert_eq!(ts_col(&lines[1]), ts_col(&lines[2]));
+}
+
+#[test]
+fn running_tool_row_counts_up_until_completion() {
+    let mut timeline = TimelineState::default();
+    timeline.record_tool_requested(
+        "call_1".to_string(),
+        ToolTimelineEntry::new("shell", r#"{"command":"sleep 30"}"#),
+    );
+    let TimelineItemKind::Tool(tool) = &mut timeline.items[0].kind else {
+        panic!("expected tool");
+    };
+    assert_eq!(tool.finished_at, None);
+    let now = tool.started_at + time::Duration::seconds(12);
+    assert_eq!(tool.elapsed(now), time::Duration::seconds(12));
+    tool.started_at -= time::Duration::seconds(30);
+    let row = rendered_lines(&mut timeline)[0].trim_end().to_string();
+    assert!(row.ends_with(" 30s") || row.ends_with(" 31s"), "{row}");
+
+    timeline.record_tool_completed("call_1", false, None);
+    let TimelineItemKind::Tool(tool) = &timeline.items[0].kind else {
+        panic!("expected tool");
+    };
+    let finished_at = tool.finished_at.expect("finished_at set on completion");
+    let later = finished_at + time::Duration::hours(1);
+    assert_eq!(tool.elapsed(later), finished_at - tool.started_at);
 }
 
 #[test]
