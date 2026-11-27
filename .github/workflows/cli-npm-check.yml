@@ -1,0 +1,36 @@
+name: Roder CLI npm check
+
+# Packaging and launcher tests only. Publishing lives in cli-npm-release.yml.
+on:
+  pull_request:
+    paths:
+      - 'crates/roder-cli/npm/**'
+      - 'scripts/release_cli_npm.py'
+      - 'scripts/test_release_cli_npm.py'
+      - '.github/workflows/cli-npm-check.yml'
+      - '.github/workflows/cli-npm-release.yml'
+      - '.github/workflows/release.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test packaging and launcher without registry writes
+        run: python3 scripts/test_release_cli_npm.py
