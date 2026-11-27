@@ -161,22 +161,21 @@ jobs:
           set -euo pipefail
           version="$(node -p "require('./crates/roder-cli/npm/package.json').version")"
           package="@roderai/roder@$version"
-          # npm's version endpoint can precede the package index used by install.
-          for attempt in {1..31}; do
-            if npm view "$package" version --json --prefer-online --fetch-retries=0 \
-              --registry=https://registry.npmjs.org > "$RUNNER_TEMP/roder-npm-visible.json" \
-              2> "$RUNNER_TEMP/roder-npm-visible.log"; then
+          # A new version can show in npm's metadata before its tarball can be
+          # downloaded, so retry the install itself while npm reports 404s.
+          for attempt in {1..61}; do
+            if npm install --global --ignore-scripts --no-audit --no-fund \
+              --registry=https://registry.npmjs.org --prefer-online --fetch-retries=0 \
+              --prefix "$RUNNER_TEMP/roder-npm-public" "$package" \
+              2> "$RUNNER_TEMP/roder-npm-install.log"; then
               break
             fi
-            cat "$RUNNER_TEMP/roder-npm-visible.log" >&2
-            if ! grep -Eq 'npm error code (ETARGET|E404)' "$RUNNER_TEMP/roder-npm-visible.log" || \
-              [ "$attempt" -eq 31 ]; then
+            cat "$RUNNER_TEMP/roder-npm-install.log" >&2
+            if ! grep -Eq 'npm error code (ETARGET|E404)' "$RUNNER_TEMP/roder-npm-install.log" || \
+              [ "$attempt" -eq 61 ]; then
               exit 1
             fi
-            echo "Waiting for the public npm package index ($attempt/31)."
+            echo "Waiting for the public npm package ($attempt/61)."
             sleep 10
           done
-          npm install --global --ignore-scripts --no-audit --no-fund \
-            --registry=https://registry.npmjs.org --prefer-online \
-            --prefix "$RUNNER_TEMP/roder-npm-public" "$package"
           test "$("$RUNNER_TEMP/roder-npm-public/bin/roder" --version)" = "roder $version"
