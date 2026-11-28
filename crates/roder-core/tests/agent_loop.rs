@@ -440,7 +440,7 @@ impl InferenceEngine for AgentControlEngine {
                     id: "call_spawn".to_string(),
                     name: "spawn_agent".to_string(),
                     arguments: json!({
-                        "task_name": "reviewer",
+                        "task_name": " Review-Code ",
                         "message": "review the code"
                     })
                     .to_string(),
@@ -468,7 +468,7 @@ impl InferenceEngine for AgentControlEngine {
                     id: "call_send".to_string(),
                     name: "send_message".to_string(),
                     arguments: json!({
-                        "target": "reviewer",
+                        "target": "/root/review_code",
                         "message": "add one more detail"
                     })
                     .to_string(),
@@ -484,7 +484,7 @@ impl InferenceEngine for AgentControlEngine {
                     id: "call_followup".to_string(),
                     name: "followup_task".to_string(),
                     arguments: json!({
-                        "target": "reviewer",
+                        "target": "review_code",
                         "message": "turn this into a final review"
                     })
                     .to_string(),
@@ -500,7 +500,7 @@ impl InferenceEngine for AgentControlEngine {
                     id: "call_wait".to_string(),
                     name: "wait_agent".to_string(),
                     arguments: json!({
-                        "target": "reviewer",
+                        "target": "review_code",
                         "timeout_ms": 10_000
                     })
                     .to_string(),
@@ -509,7 +509,7 @@ impl InferenceEngine for AgentControlEngine {
                     id: "call_interrupt".to_string(),
                     name: "interrupt_agent".to_string(),
                     arguments: json!({
-                        "target": "reviewer"
+                        "target": "review_code"
                     })
                     .to_string(),
                 })),
@@ -1528,6 +1528,7 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
         .unwrap();
 
     let mut saw_legacy_one_shot_completion = false;
+    let mut saw_canonical_spawn_path = false;
     loop {
         let envelope = tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
@@ -1539,6 +1540,15 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
         ) {
             saw_legacy_one_shot_completion = true;
         }
+        if let roder_api::events::RoderEvent::ToolCallCompleted(result) = &envelope.event
+            && result.tool_name.as_deref() == Some("spawn_agent")
+        {
+            assert!(!result.is_error, "{:?}", result.output);
+            saw_canonical_spawn_path = result
+                .output
+                .as_deref()
+                .is_some_and(|output| output.contains("/root/review_code"));
+        }
         if envelope.kind == "turn.completed"
             && envelope.thread_id.as_deref() == Some(parent_thread_id.as_str())
         {
@@ -1549,12 +1559,17 @@ async fn model_can_spawn_long_lived_subagent_with_agent_control_tool() {
         !saw_legacy_one_shot_completion,
         "long-lived agent controls must not emit synthetic one-shot SubagentCompleted events"
     );
+    assert!(saw_canonical_spawn_path);
 
     let teams = runtime.list_teams().await;
     assert_eq!(teams.len(), 1);
     assert_eq!(teams[0].lead_thread_id, parent_thread_id);
     assert_eq!(teams[0].members.len(), 2);
-    assert_eq!(teams[0].members[1].name, "reviewer");
+    assert_eq!(teams[0].members[1].name, "review_code");
+    assert_eq!(
+        teams[0].members[1].agent_path.as_deref(),
+        Some("/root/review_code")
+    );
     assert_eq!(
         teams[0].members[1].status,
         roder_api::teams::TeamMemberStatus::Completed

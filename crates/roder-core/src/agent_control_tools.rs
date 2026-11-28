@@ -18,8 +18,8 @@ mod wait;
 use spec::{
     FOLLOWUP_TASK, INTERRUPT_AGENT, InterruptAgentArgs, LIST_AGENTS, ListAgentsArgs,
     MessageAgentArgs, SEND_MESSAGE, SPAWN_AGENT, SpawnAgentArgs, WAIT_AGENT,
-    full_history_selection_overrides_present, normalize_fork_turns, normalized_optional,
-    valid_task_name,
+    full_history_selection_overrides_present, normalize_fork_turns, normalize_task_name,
+    normalized_optional,
 };
 pub(crate) use spec::{contribute_agent_control_tools, is_agent_control_tool};
 use targets::{
@@ -92,13 +92,11 @@ impl Runtime {
             fork_turns,
             workspace_isolation,
         } = args;
-        let task_name = task_name.trim().to_string();
-        if !valid_task_name(&task_name) || message.trim().is_empty() {
-            return control_error(
-                call,
-                "invalid_arguments",
-                "task_name must contain only lowercase letters, digits, and underscores, and message is required",
-            );
+        let Some(task_name) = normalize_task_name(&task_name) else {
+            return control_error(call, "invalid_arguments", "task_name must not be blank");
+        };
+        if message.trim().is_empty() {
+            return control_error(call, "invalid_arguments", "message must not be blank");
         }
         let agent_type = normalized_optional(agent_type);
         let model = normalized_optional(model);
@@ -148,14 +146,18 @@ impl Runtime {
             .await
             .ok()
             .flatten();
+        let agent_path = member.agent_path.unwrap_or(task_name);
         control_ok(
             call,
-            format!("spawned subagent {} as {}", task_name, member.thread_id),
+            format!(
+                "spawned subagent {agent_path} (thread {})",
+                member.thread_id
+            ),
             json!({
                 "team_id": next.id,
                 "member_id": member.id,
                 "thread_id": member.thread_id,
-                "task_name": member.agent_path.unwrap_or(task_name),
+                "task_name": agent_path,
                 "turn_id": turn_id,
                 "workspace": workspace.as_ref().map(|metadata| &metadata.workspace),
                 "workspace_fork": workspace.and_then(|metadata| metadata.workspace_fork),

@@ -1,3 +1,4 @@
+use std::fmt::Write as _;
 use std::sync::Arc;
 
 use roder_api::tools::{ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec};
@@ -101,7 +102,7 @@ impl AgentControlToolKind {
                 "properties": {
                     "task_name": {
                         "type": "string",
-                        "description": "Stable lowercase task name for the spawned subagent."
+                        "description": "Short task name. Roder normalizes it into one path segment. Use the canonical path returned in task_name to address the agent."
                     },
                     "message": {
                         "type": "string",
@@ -296,11 +297,25 @@ pub(super) fn normalize_fork_turns(value: Option<&str>) -> Result<String, &'stat
     }
 }
 
-pub(super) fn valid_task_name(task_name: &str) -> bool {
-    !task_name.is_empty()
-        && task_name
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+pub(super) fn normalize_task_name(task_name: &str) -> Option<String> {
+    let name = task_name.trim().to_lowercase();
+    if name.is_empty() {
+        return None;
+    }
+    let segment = name
+        .split(|ch: char| ch != '_' && !ch.is_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join("_");
+    if !segment.is_empty() {
+        return Some(segment);
+    }
+    // Give punctuation- and emoji-only names a stable path segment as well.
+    let mut segment = String::from("task");
+    for ch in name.chars() {
+        write!(segment, "_{:x}", u32::from(ch)).expect("writing to a String cannot fail");
+    }
+    Some(segment)
 }
 
 pub(super) fn full_history_selection_overrides_present(
@@ -339,13 +354,20 @@ mod tests {
     }
 
     #[test]
-    fn task_names_are_stable_canonical_path_segments() {
-        for valid in ["worker", "task_3", "5x"] {
-            assert!(valid_task_name(valid), "{valid}");
+    fn task_names_normalize_to_stable_path_segments() {
+        for (name, expected) in [
+            ("worker", "worker"),
+            ("__task__3_", "__task__3_"),
+            ("  Review-Code / Phase 2  ", "review_code_phase_2"),
+            ("../../Deploy", "deploy"),
+            ("RÉSUMÉ 审核", "résumé_审核"),
+            ("🧪", "task_1f9ea"),
+            ("..", "task_2e_2e"),
+        ] {
+            assert_eq!(normalize_task_name(name).as_deref(), Some(expected));
+            assert_eq!(normalize_task_name(expected).as_deref(), Some(expected));
         }
-        for invalid in ["", "Task", "two words", "parent/child", "task-3"] {
-            assert!(!valid_task_name(invalid), "{invalid}");
-        }
+        assert_eq!(normalize_task_name(" \t\n"), None);
     }
 
     #[test]

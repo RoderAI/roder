@@ -40,12 +40,18 @@ Example:
 
 ```json
 {
-  "task_name": "reviewer",
+  "task_name": "Code Review",
   "message": "Review the current patch and report blocking risks.",
   "agent_type": "release-audit",
   "fork_turns": "all"
 }
 ```
+
+Roder normalizes `Code Review` to `code_review` and returns `/root/code_review`
+for a child spawned by the lead. It lowercases letters and converts spaces and
+punctuation to underscores where they separate words. If that path already
+exists, choose another name or use the returned path to follow up with the
+existing agent.
 
 Context and selection rules:
 
