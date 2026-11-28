@@ -238,15 +238,19 @@ impl Runtime {
                 }
                 // Pick up mail accepted between the initial reservation and active
                 // turn registration. New sends can now steer this turn directly.
-                if let Some((team_id, member)) = &team_member {
-                    let _ = runtime
+                if let Some((team_id, member)) = &team_member
+                    && let Err(error) = runtime
                         .deliver_pending_team_mailbox(
                             team_id,
                             &member.id,
                             thread_id_for_task.clone(),
                             turn_id_for_task.clone(),
                         )
-                        .await;
+                        .await
+                {
+                    eprintln!(
+                        "could not pick up pending team mail for turn {turn_id_for_task}: {error}"
+                    );
                 }
                 let result = Abortable::new(
                     runtime.run_turn(

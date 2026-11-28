@@ -19,12 +19,12 @@ mod verification;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
-    exercise_handoff(false).await;
+    exercise_handoff(ResumePath::SameRuntime).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn agent_message_board_recovers_child_replies_after_restart_before_resuming() {
-    exercise_handoff(true).await;
+    exercise_handoff(ResumePath::AfterRestart).await;
 }
 
 pub(super) struct HandoffTimings {
@@ -34,7 +34,13 @@ pub(super) struct HandoffTimings {
     pub interrupt_recovery: Duration,
 }
 
-pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimings {
+#[derive(PartialEq, Eq)]
+pub(super) enum ResumePath {
+    SameRuntime,
+    AfterRestart,
+}
+
+pub(super) async fn exercise_handoff(resume_path: ResumePath) -> HandoffTimings {
     let dir = tempfile::tempdir().unwrap();
     let mut eval = BoardEvaluation::open(dir.path());
     let mut notifications = eval.notifications();
@@ -217,13 +223,13 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
         })),
     )
     .await;
-    if !restart_before_resume {
+    if resume_path == ResumePath::SameRuntime {
         eval.turn(&root, "Summarize the verified work.").await;
     }
     let interrupted =
         wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
     assert_eq!(interrupted.params["turn"]["status"], "interrupted");
-    if restart_before_resume {
+    if resume_path == ResumePath::AfterRestart {
         assert!(matches!(
             eval.runtime
                 .drain_active_turns(Duration::from_secs(5))
@@ -327,4 +333,46 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
         handoff_delivery,
         interrupt_recovery,
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_message_board_first_reads_leave_the_team_uninitialized() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut eval = BoardEvaluation::open(dir.path());
+    let mut notifications = eval.notifications();
+    let workspace = create_workspace_for_path(&eval.client, dir.path()).await;
+    let root = eval.new_thread(&workspace).await;
+    eval.turn(&root, "Read the empty board.").await;
+    eval.sample(&root)
+        .await
+        .board("channels", json!({"action": "list_channels"}));
+    let sample = eval.sample(&root).await;
+    assert_eq!(
+        sample.output("channels")["channels"],
+        json!([
+            {"channel": "general", "description": "", "subscribed": false}
+        ])
+    );
+    sample.board(
+        "posts",
+        json!({"action": "list_posts", "channel": "general"}),
+    );
+    let sample = eval.sample(&root).await;
+    assert_eq!(
+        sample.output("posts"),
+        json!({"posts": [], "next_before": null})
+    );
+    sample.board(
+        "missing",
+        json!({
+            "action": "read_post", "post_id": "00000000-0000-0000-0000-000000000000"
+        }),
+    );
+    let sample = eval.sample(&root).await;
+    assert!(sample.result("missing").is_error);
+    let teams: TeamListResult = request(&eval.client, "team/list", Some(json!({}))).await;
+    assert!(teams.data.is_empty());
+    assert!(!dir.path().join("teams").exists());
+    sample.finish("Empty board read.");
+    wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
 }

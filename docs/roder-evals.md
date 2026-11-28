@@ -25,6 +25,7 @@ mise exec -- cargo test --locked -p roder-app-server --features e2e-tests --test
 
 | Scenario | Assertions |
 | --- | --- |
+| First board reads | An empty board exposes its default channel without creating a team or writing to disk. |
 | Peer coordination | One of two agents wins the claim. The loser cannot release it. Sibling mail and handoff reach their intended recipient once. The parent receives both child replies once after interruption. |
 | Cold recovery | The app-server restarts after the parent is interrupted and before its next turn. Both unconsumed replies arrive, and the stored board retains the claim and evidence. |
 | Delivery burst | Sixteen posts reach a subscriber once and in order. Explicit targeting and subscription deduplicate, the author receives no echo, and unsubscribe suppresses subsequent channel notices. An explicit notice queued to the idle agent survives restart. |
@@ -43,8 +44,9 @@ mise exec -- cargo test --locked -p roder-app-server --features e2e-tests --test
 A post round trip runs from tool submission to the sender's next model request
 with the result. One sender submits the 16 burst posts serially while the
 recipient is active. Direct mail and handoff run from tool submission to the
-recipient's next model request containing the notice. The recovery metrics end
-at the first model request containing the queued mail. The byte counts cover
+recipient's next model request containing the notice. The parent interruption
+metric resumes the parent in the same runtime. Both recovery metrics end at the
+first model request containing the queued mail. The byte counts cover
 the original post bodies and the stored notice bodies. Compare timings on the
 same host, Cargo profile, and filesystem.
 

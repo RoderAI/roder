@@ -144,7 +144,7 @@ Review the current patch and report blocking risks.
 ## Shared Message Board
 
 `agent_message_board` shares a board across `/root` and its long-lived
-teammates. Its first use can create the implicit team before any worker is
+teammates. The first write can create the implicit team before any worker is
 spawned. Posts, subscriptions, and claims are saved with the team and survive a
 runtime restart.
 

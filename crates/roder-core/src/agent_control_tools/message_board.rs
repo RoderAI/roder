@@ -83,6 +83,9 @@ impl Runtime {
         let team = match self.caller_agents(caller).await.into_iter().next() {
             Some(team) => team,
             None => {
+                if let Some(result) = action.read_empty_board() {
+                    return result;
+                }
                 self.start_team(TeamStartRequest {
                     lead_thread_id: Some(caller.clone()),
                     display_mode: AgentTeamDisplayMode::InProcess,

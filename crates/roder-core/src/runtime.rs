@@ -2119,14 +2119,18 @@ impl Runtime {
         let turn_id = self.active_turn_for_thread(&member.thread_id).await?;
         // Admission may close after the lookup. The persisted entry remains available
         // for the next turn if we cannot steer this one.
-        self.deliver_pending_team_mailbox(
-            team_id,
-            &member.id,
-            member.thread_id.clone(),
-            turn_id.clone(),
-        )
-        .await
-        .ok()?;
+        if let Err(error) = self
+            .deliver_pending_team_mailbox(
+                team_id,
+                &member.id,
+                member.thread_id.clone(),
+                turn_id.clone(),
+            )
+            .await
+        {
+            eprintln!("could not steer turn {turn_id} with pending team mail: {error}");
+            return None;
+        }
         Some(turn_id)
     }
 

@@ -9,6 +9,9 @@ use uuid::Uuid;
 
 use super::{TeamManager, TeamState};
 
+#[path = "message_board/read.rs"]
+mod read;
+
 const MAX_CHANNELS: usize = 32;
 const MAX_POSTS: usize = 4096;
 const MAX_TEXT_BYTES: usize = 8192;
@@ -135,29 +138,17 @@ impl TeamManager {
             .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
         ensure_active_member(&team, actor)?;
         let mut recipients = BTreeSet::new();
+        if let Some(result) = action.read(&team.board, actor) {
+            return Ok(BoardResult {
+                value: result?,
+                recipients,
+            });
+        }
         let value = match action {
-            BoardAction::ListChannels => {
-                return Ok(BoardResult {
-                    value: team.board.0.channels_for(actor),
-                    recipients,
-                });
-            }
-            BoardAction::ListPosts {
-                channel,
-                query,
-                before,
-                limit,
-            } => {
-                return Ok(BoardResult {
-                    value: team.board.0.list_posts(channel, query, before, limit)?,
-                    recipients,
-                });
-            }
-            BoardAction::ReadPost { post_id } => {
-                return Ok(BoardResult {
-                    value: json!(team.board.0.post(post_id)?),
-                    recipients,
-                });
+            BoardAction::ListChannels
+            | BoardAction::ListPosts { .. }
+            | BoardAction::ReadPost { .. } => {
+                unreachable!("read-only board actions return before mutation")
             }
             BoardAction::CreateChannel {
                 channel,
@@ -372,67 +363,6 @@ impl BoardState {
         };
         self.posts.push(post.clone());
         Ok(post)
-    }
-
-    fn list_posts(
-        &self,
-        channel: Option<String>,
-        query: Option<String>,
-        before: Option<Uuid>,
-        limit: Option<usize>,
-    ) -> anyhow::Result<Value> {
-        if let Some(channel) = &channel {
-            anyhow::ensure!(
-                self.contains_channel(channel),
-                "unknown channel {channel:?}"
-            );
-        }
-        let limit = limit.unwrap_or(10);
-        anyhow::ensure!(
-            (1..=MAX_PAGE_SIZE).contains(&limit),
-            "limit must be between 1 and {MAX_PAGE_SIZE}"
-        );
-        let end = match before {
-            Some(id) => self
-                .posts
-                .iter()
-                .position(|post| post.id == id)
-                .ok_or_else(|| anyhow::anyhow!("unknown board cursor {id}"))?,
-            None => self.posts.len(),
-        };
-        let query = query.map(|value| value.to_lowercase());
-        let mut matches = self.posts[..end].iter().rev().filter(|post| {
-            channel
-                .as_ref()
-                .is_none_or(|channel| post.channel == *channel)
-                && query
-                    .as_ref()
-                    .is_none_or(|query| post.text.to_lowercase().contains(query))
-        });
-        let mut posts = Vec::new();
-        let mut last = None;
-        for post in matches.by_ref().take(limit) {
-            let work = match &post.work {
-                None => Value::Null,
-                Some(BoardWork::Completed { owner, .. }) => {
-                    json!({ "status": "completed", "owner": owner })
-                }
-                work => json!(work),
-            };
-            posts.push(json!({
-                "id": post.id,
-                "channel": post.channel,
-                "author": post.author,
-                "reply_to": post.reply_to,
-                "work": work,
-                "text_preview": post.text.chars().take(160)
-                    .map(|ch| if ch.is_control() { ' ' } else { ch })
-                    .collect::<String>(),
-            }));
-            last = Some(post.id);
-        }
-        let next_before = matches.next().and(last);
-        Ok(json!({ "posts": posts, "next_before": next_before }))
     }
 }
 

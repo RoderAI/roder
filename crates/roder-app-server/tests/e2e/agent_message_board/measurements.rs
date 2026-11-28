@@ -34,7 +34,7 @@ async fn agent_message_board_measure_scenarios() {
     let mut notice_bytes = 0;
     for trial in 1..=REPEATS {
         eprintln!("Agent board measurement {trial}/{REPEATS}: handoff");
-        let timing = exercise_handoff(false).await;
+        let timing = exercise_handoff(ResumePath::SameRuntime).await;
         claim.push(timing.claim_race);
         direct.push(timing.direct_delivery);
         handoff.push(timing.handoff_delivery);
@@ -53,7 +53,7 @@ async fn agent_message_board_measure_scenarios() {
         "claim_race": summarize(claim),
         "active_direct_mail": summarize(direct),
         "active_handoff_mail": summarize(handoff),
-        "recover_interrupted_parent": summarize(interrupt),
+        "recover_interrupted_parent_same_runtime": summarize(interrupt),
         "post_result": summarize(post),
         "first_post_to_final_notice": summarize(burst),
         "idle_notice_after_restart": summarize(idle),
