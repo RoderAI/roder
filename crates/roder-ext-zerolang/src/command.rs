@@ -67,12 +67,14 @@ impl ZeroCommandRunner {
         command.stdin(Stdio::null());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
-        let child = command.spawn().with_context(|| {
-            format!(
-                "failed to launch Zero binary {}; set RODER_ZERO_BIN or [zerolang].binary",
-                binary.display()
-            )
-        })?;
+        let child = roder_api::spawn::spawn_retrying_busy(&mut command)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to launch Zero binary {}; set RODER_ZERO_BIN or [zerolang].binary",
+                    binary.display()
+                )
+            })?;
         let output = timeout(
             Duration::from_secs(timeout_seconds),
             child.wait_with_output(),

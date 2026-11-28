@@ -95,7 +95,8 @@ pub struct RedactedHttpError {
     pub url: String,
     pub status: Option<u16>,
     pub retry_after: Option<RetryAfter>,
-    pub body: Option<HttpErrorBody>,
+    /// Boxed to keep the error small enough to return by value.
+    pub body: Option<Box<HttpErrorBody>>,
     pub headers: Vec<(String, String)>,
     pub message: String,
 }
@@ -135,7 +136,7 @@ impl RedactedHttpError {
             url: url.to_string(),
             status: Some(status.as_u16()),
             retry_after,
-            body,
+            body: body.map(Box::new),
             headers: redact_sensitive_headers(headers),
             message,
         }

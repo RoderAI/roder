@@ -44,6 +44,7 @@ mod thread_events;
 mod thread_history;
 pub mod transcript;
 mod vcs;
+#[cfg(feature = "webwright")]
 mod webwright;
 mod workflows;
 mod workspace_files;

@@ -423,8 +423,17 @@ async fn list_models_without_key_falls_back_to_catalog() {
         .await
         .unwrap();
 
-    assert_eq!(models.len(), 4);
-    assert_eq!(models[0].id, "roder.cloud/free");
+    assert_eq!(
+        models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "roder.cloud/free",
+            "roder.cloud/anthropic/claude-opus-4-7",
+            "roder.cloud/google/gemini-3.1-pro-preview",
+        ]
+    );
 }
 
 #[test]

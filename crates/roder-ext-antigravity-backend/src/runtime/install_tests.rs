@@ -120,6 +120,12 @@ fn owned_staging_and_lock_cleanup() {
     let lock = installation_lock(&root.0).unwrap();
     assert!(installation_lock(&root.0).is_err());
     drop(lock);
+    // A process another test forks in this instant briefly shares the lock's
+    // open file until its exec closes it, so allow a short retry.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while installation_lock(&root.0).is_err() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert!(installation_lock(&root.0).is_ok());
 }
 

@@ -17,6 +17,11 @@ use crate::{CliOptions, build_runtime_from_config, decode_response};
 
 pub async fn run_setup_cli(args: &[String]) -> anyhow::Result<()> {
     match args.first().map(String::as_str) {
+        #[cfg(not(feature = "antigravity"))]
+        Some("antigravity") => {
+            anyhow::bail!("antigravity is not built into this Roder distribution")
+        }
+        #[cfg(feature = "antigravity")]
         Some("antigravity") => {
             anyhow::ensure!(args.len() == 1, "usage: roder setup antigravity");
             if crate::antigravity_setup::prepare_tui().await? {

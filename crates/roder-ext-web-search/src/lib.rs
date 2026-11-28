@@ -8,11 +8,15 @@ use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult,
     ToolSpec,
 };
+#[cfg(feature = "firecrawl")]
 use roder_ext_firecrawl_search::{FirecrawlSearchClient, FirecrawlSearchConfig};
+#[cfg(feature = "parallel")]
 use roder_ext_parallel_search::{
     ParallelSearchClient, ParallelSearchConfig, ParallelSearchOptions,
 };
+#[cfg(feature = "perplexity")]
 use roder_ext_perplexity_search::{PerplexitySearchClient, PerplexitySearchConfig};
+#[cfg(feature = "synthetic")]
 use roder_ext_synthetic_search::{SyntheticSearchClient, SyntheticSearchConfig};
 use roder_ext_tavily_search::{TavilySearchClient, TavilySearchConfig};
 use roder_web_search::{
@@ -27,20 +31,28 @@ const MAX_RESULTS_LIMIT: u8 = 20;
 
 #[derive(Debug, Clone)]
 pub enum WebSearchRouterProvider {
+    #[cfg(feature = "firecrawl")]
     Firecrawl(FirecrawlSearchConfig),
+    #[cfg(feature = "perplexity")]
     Perplexity(PerplexitySearchConfig),
     Tavily(TavilySearchConfig),
+    #[cfg(feature = "parallel")]
     Parallel(ParallelSearchConfig),
+    #[cfg(feature = "synthetic")]
     Synthetic(SyntheticSearchConfig),
 }
 
 impl WebSearchRouterProvider {
     pub fn id(&self) -> &'static str {
         match self {
+            #[cfg(feature = "firecrawl")]
             Self::Firecrawl(_) => "firecrawl",
+            #[cfg(feature = "perplexity")]
             Self::Perplexity(_) => "perplexity",
             Self::Tavily(_) => "tavily",
+            #[cfg(feature = "parallel")]
             Self::Parallel(_) => "parallel",
+            #[cfg(feature = "synthetic")]
             Self::Synthetic(_) => "synthetic",
         }
     }
@@ -135,18 +147,22 @@ impl WebSearchRouterTool {
         let max_results = config.max_results.clamp(1, MAX_RESULTS_LIMIT);
         let provider_id = config.provider.id();
         let backend = match config.provider {
+            #[cfg(feature = "firecrawl")]
             WebSearchRouterProvider::Firecrawl(config) => {
                 WebSearchBackend::Firecrawl(FirecrawlSearchClient::new(config.clone())?, config)
             }
+            #[cfg(feature = "perplexity")]
             WebSearchRouterProvider::Perplexity(config) => {
                 WebSearchBackend::Perplexity(PerplexitySearchClient::new(config.clone())?, config)
             }
             WebSearchRouterProvider::Tavily(config) => {
                 WebSearchBackend::Tavily(TavilySearchClient::new(config.clone())?, config)
             }
+            #[cfg(feature = "parallel")]
             WebSearchRouterProvider::Parallel(config) => {
                 WebSearchBackend::Parallel(ParallelSearchClient::new(config.clone())?, config)
             }
+            #[cfg(feature = "synthetic")]
             WebSearchRouterProvider::Synthetic(config) => {
                 WebSearchBackend::Synthetic(SyntheticSearchClient::new(config.clone())?, config)
             }
@@ -161,10 +177,14 @@ impl WebSearchRouterTool {
 
 #[derive(Debug, Clone)]
 enum WebSearchBackend {
+    #[cfg(feature = "firecrawl")]
     Firecrawl(FirecrawlSearchClient, FirecrawlSearchConfig),
+    #[cfg(feature = "perplexity")]
     Perplexity(PerplexitySearchClient, PerplexitySearchConfig),
     Tavily(TavilySearchClient, TavilySearchConfig),
+    #[cfg(feature = "parallel")]
     Parallel(ParallelSearchClient, ParallelSearchConfig),
+    #[cfg(feature = "synthetic")]
     Synthetic(SyntheticSearchClient, SyntheticSearchConfig),
 }
 
@@ -193,10 +213,12 @@ impl ToolExecutor for WebSearchRouterTool {
         let response_format = request.response_format;
 
         let (response, provider_config) = match &self.backend {
+            #[cfg(feature = "firecrawl")]
             WebSearchBackend::Firecrawl(client, config) => {
                 let response = client.search(request).await?;
                 (response, config.provider_config())
             }
+            #[cfg(feature = "perplexity")]
             WebSearchBackend::Perplexity(client, config) => {
                 let response = client.search(request).await?;
                 let request_id =
@@ -208,6 +230,7 @@ impl ToolExecutor for WebSearchRouterTool {
                 let request_id = roder_ext_tavily_search::client::tavily_request_id(&response.raw);
                 (response, config.provider_config_with_request_id(request_id))
             }
+            #[cfg(feature = "parallel")]
             WebSearchBackend::Parallel(client, config) => {
                 let options = ParallelSearchOptions::from_tool_arguments(&call.arguments);
                 let response = client.search(request, options).await?;
@@ -215,6 +238,7 @@ impl ToolExecutor for WebSearchRouterTool {
                     roder_ext_parallel_search::client::parallel_request_id(&response.raw);
                 (response, config.provider_config_with_request_id(request_id))
             }
+            #[cfg(feature = "synthetic")]
             WebSearchBackend::Synthetic(client, config) => {
                 let response = client.search(request).await?;
                 let request_id =
@@ -254,13 +278,6 @@ fn tool_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use roder_api::policy_mode::PolicyMode;
-    use roder_api::tools::{ToolExecutionContext, ToolExecutor};
-    use roder_ext_synthetic_search::SyntheticSearchConfig;
-    use serde_json::{Value, json};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
-    use tokio::sync::Mutex;
 
     #[test]
     fn response_format_controls_web_search_result_text() {
@@ -289,50 +306,6 @@ mod tests {
         assert!(concise.text.contains("..."));
     }
 
-    #[tokio::test]
-    async fn router_routes_to_synthetic_backend() {
-        let server = SyntheticMockServer::start(vec![SyntheticMockResponse::json(
-            200,
-            json!({
-                "request_id": "req-router",
-                "results": [{
-                    "url": "https://example.com/roder",
-                    "title": "Roder",
-                    "text": "Roder result"
-                }]
-            }),
-        )])
-        .await;
-        let tool = WebSearchRouterTool::new(WebSearchRouterConfig {
-            provider: WebSearchRouterProvider::Synthetic(
-                SyntheticSearchConfig::new("secret-test-key").with_base_url(server.base_url()),
-            ),
-            max_results: 3,
-        })
-        .unwrap();
-        let call = ToolCall {
-            id: "call-router".to_string(),
-            name: WEB_SEARCH_TOOL_NAME.to_string(),
-            raw_arguments: "{}".to_string(),
-            arguments: json!({ "query": "roder" }),
-            thread_id: "thread-1".to_string(),
-            turn_id: "turn-1".to_string(),
-        };
-
-        let result = tool
-            .execute(
-                ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default),
-                call,
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(result.name, "web_search");
-        assert!(result.text.contains("https://example.com/roder"));
-        assert_eq!(result.data["provider"], "synthetic");
-        assert_eq!(result.data["provider_request_id"], "req-router");
-    }
-
     fn _ensure_request_type_in_scope() {
         // Anchor WebSearchRequest/Freshness types so they remain used by the
         // router surface even if future tests stop referencing them directly.
@@ -340,142 +313,202 @@ mod tests {
         let _ = roder_web_search::Freshness::Day;
     }
 
-    #[derive(Debug, Clone)]
-    struct SyntheticMockResponse {
-        status: u16,
-        body: String,
-    }
+    #[cfg(feature = "synthetic")]
+    mod synthetic_backend {
+        use super::*;
+        use roder_api::policy_mode::PolicyMode;
+        use roder_api::tools::{ToolExecutionContext, ToolExecutor};
+        use roder_ext_synthetic_search::SyntheticSearchConfig;
+        use serde_json::{Value, json};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+        use tokio::sync::Mutex;
 
-    impl SyntheticMockResponse {
-        fn json(status: u16, body: Value) -> Self {
-            Self {
-                status,
-                body: body.to_string(),
+        #[tokio::test]
+        async fn router_routes_to_synthetic_backend() {
+            let server = SyntheticMockServer::start(vec![SyntheticMockResponse::json(
+                200,
+                json!({
+                    "request_id": "req-router",
+                    "results": [{
+                        "url": "https://example.com/roder",
+                        "title": "Roder",
+                        "text": "Roder result"
+                    }]
+                }),
+            )])
+            .await;
+            let tool = WebSearchRouterTool::new(WebSearchRouterConfig {
+                provider: WebSearchRouterProvider::Synthetic(
+                    SyntheticSearchConfig::new("secret-test-key").with_base_url(server.base_url()),
+                ),
+                max_results: 3,
+            })
+            .unwrap();
+            let call = ToolCall {
+                id: "call-router".to_string(),
+                name: WEB_SEARCH_TOOL_NAME.to_string(),
+                raw_arguments: "{}".to_string(),
+                arguments: json!({ "query": "roder" }),
+                thread_id: "thread-1".to_string(),
+                turn_id: "turn-1".to_string(),
+            };
+
+            let result = tool
+                .execute(
+                    ToolExecutionContext::new("thread-1", "turn-1", PolicyMode::Default),
+                    call,
+                )
+                .await
+                .unwrap();
+
+            assert_eq!(result.name, "web_search");
+            assert!(result.text.contains("https://example.com/roder"));
+            assert_eq!(result.data["provider"], "synthetic");
+            assert_eq!(result.data["provider_request_id"], "req-router");
+        }
+
+        #[derive(Debug, Clone)]
+        struct SyntheticMockResponse {
+            status: u16,
+            body: String,
+        }
+
+        impl SyntheticMockResponse {
+            fn json(status: u16, body: Value) -> Self {
+                Self {
+                    status,
+                    body: body.to_string(),
+                }
             }
         }
-    }
 
-    #[derive(Debug, Clone)]
-    struct SyntheticCapturedRequest {
-        #[allow(dead_code)]
-        headers: Vec<(String, String)>,
-        #[allow(dead_code)]
-        body: String,
-    }
+        #[derive(Debug, Clone)]
+        struct SyntheticCapturedRequest {
+            #[allow(dead_code)]
+            headers: Vec<(String, String)>,
+            #[allow(dead_code)]
+            body: String,
+        }
 
-    #[derive(Debug)]
-    struct SyntheticMockServer {
-        address: std::net::SocketAddr,
-        #[allow(dead_code)]
-        requests: std::sync::Arc<Mutex<Vec<SyntheticCapturedRequest>>>,
-    }
+        #[derive(Debug)]
+        struct SyntheticMockServer {
+            address: std::net::SocketAddr,
+            #[allow(dead_code)]
+            requests: std::sync::Arc<Mutex<Vec<SyntheticCapturedRequest>>>,
+        }
 
-    impl SyntheticMockServer {
-        async fn start(responses: Vec<SyntheticMockResponse>) -> Self {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let address = listener.local_addr().unwrap();
-            let responses =
-                std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from(responses)));
-            let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
-            let server_responses = responses.clone();
-            let server_requests = requests.clone();
-            tokio::spawn(async move {
-                loop {
-                    let Ok((mut stream, _)) = listener.accept().await else {
-                        break;
-                    };
-                    let responses = server_responses.clone();
-                    let requests = server_requests.clone();
-                    tokio::spawn(async move {
-                        let mut buffer = vec![0; 8192];
-                        let mut read = 0;
-                        loop {
-                            let n = stream.read(&mut buffer[read..]).await.unwrap();
-                            if n == 0 {
-                                return;
-                            }
-                            read += n;
-                            if find_header_end(&buffer[..read]).is_some() {
-                                break;
-                            }
-                            if read == buffer.len() {
-                                buffer.resize(buffer.len() * 2, 0);
-                            }
-                        }
-                        let header_end = find_header_end(&buffer[..read]).unwrap();
-                        let headers_text =
-                            String::from_utf8_lossy(&buffer[..header_end]).to_string();
-                        let content_length = parse_content_length(&headers_text);
-                        while read < header_end + 4 + content_length {
-                            if read == buffer.len() {
-                                buffer.resize(buffer.len() * 2, 0);
-                            }
-                            let n = stream.read(&mut buffer[read..]).await.unwrap();
-                            if n == 0 {
-                                break;
-                            }
-                            read += n;
-                        }
-                        let body_start = header_end + 4;
-                        let body = String::from_utf8_lossy(
-                            &buffer[body_start..(body_start + content_length).min(read)],
-                        )
-                        .to_string();
-                        requests.lock().await.push(SyntheticCapturedRequest {
-                            headers: parse_headers(&headers_text),
-                            body,
-                        });
-                        let response = responses.lock().await.pop_front().unwrap_or_else(|| {
-                            SyntheticMockResponse::json(500, json!({"message":"no response"}))
-                        });
-                        let reason = if response.status == 200 {
-                            "OK"
-                        } else {
-                            "Error"
+        impl SyntheticMockServer {
+            async fn start(responses: Vec<SyntheticMockResponse>) -> Self {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let address = listener.local_addr().unwrap();
+                let responses =
+                    std::sync::Arc::new(Mutex::new(std::collections::VecDeque::from(responses)));
+                let requests = std::sync::Arc::new(Mutex::new(Vec::new()));
+                let server_responses = responses.clone();
+                let server_requests = requests.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let Ok((mut stream, _)) = listener.accept().await else {
+                            break;
                         };
-                        let raw = format!(
-                            "HTTP/1.1 {} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
-                            response.status,
-                            reason,
-                            response.body.len(),
-                            response.body
-                        );
-                        stream.write_all(raw.as_bytes()).await.unwrap();
-                    });
-                }
-            });
-            Self { address, requests }
+                        let responses = server_responses.clone();
+                        let requests = server_requests.clone();
+                        tokio::spawn(async move {
+                            let mut buffer = vec![0; 8192];
+                            let mut read = 0;
+                            loop {
+                                let n = stream.read(&mut buffer[read..]).await.unwrap();
+                                if n == 0 {
+                                    return;
+                                }
+                                read += n;
+                                if find_header_end(&buffer[..read]).is_some() {
+                                    break;
+                                }
+                                if read == buffer.len() {
+                                    buffer.resize(buffer.len() * 2, 0);
+                                }
+                            }
+                            let header_end = find_header_end(&buffer[..read]).unwrap();
+                            let headers_text =
+                                String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                            let content_length = parse_content_length(&headers_text);
+                            while read < header_end + 4 + content_length {
+                                if read == buffer.len() {
+                                    buffer.resize(buffer.len() * 2, 0);
+                                }
+                                let n = stream.read(&mut buffer[read..]).await.unwrap();
+                                if n == 0 {
+                                    break;
+                                }
+                                read += n;
+                            }
+                            let body_start = header_end + 4;
+                            let body = String::from_utf8_lossy(
+                                &buffer[body_start..(body_start + content_length).min(read)],
+                            )
+                            .to_string();
+                            requests.lock().await.push(SyntheticCapturedRequest {
+                                headers: parse_headers(&headers_text),
+                                body,
+                            });
+                            let response =
+                                responses.lock().await.pop_front().unwrap_or_else(|| {
+                                    SyntheticMockResponse::json(
+                                        500,
+                                        json!({"message":"no response"}),
+                                    )
+                                });
+                            let reason = if response.status == 200 {
+                                "OK"
+                            } else {
+                                "Error"
+                            };
+                            let raw = format!(
+                                "HTTP/1.1 {} {}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                                response.status,
+                                reason,
+                                response.body.len(),
+                                response.body
+                            );
+                            stream.write_all(raw.as_bytes()).await.unwrap();
+                        });
+                    }
+                });
+                Self { address, requests }
+            }
+
+            fn base_url(&self) -> String {
+                format!("http://{}", self.address)
+            }
         }
 
-        fn base_url(&self) -> String {
-            format!("http://{}", self.address)
+        fn find_header_end(buffer: &[u8]) -> Option<usize> {
+            buffer.windows(4).position(|window| window == b"\r\n\r\n")
         }
-    }
 
-    fn find_header_end(buffer: &[u8]) -> Option<usize> {
-        buffer.windows(4).position(|window| window == b"\r\n\r\n")
-    }
+        fn parse_content_length(headers: &str) -> usize {
+            headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse().ok())
+                        .flatten()
+                })
+                .unwrap_or_default()
+        }
 
-    fn parse_content_length(headers: &str) -> usize {
-        headers
-            .lines()
-            .find_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                name.eq_ignore_ascii_case("content-length")
-                    .then(|| value.trim().parse().ok())
-                    .flatten()
-            })
-            .unwrap_or_default()
-    }
-
-    fn parse_headers(headers: &str) -> Vec<(String, String)> {
-        headers
-            .lines()
-            .skip(1)
-            .filter_map(|line| {
-                let (name, value) = line.split_once(':')?;
-                Some((name.to_string(), value.trim().to_string()))
-            })
-            .collect()
+        fn parse_headers(headers: &str) -> Vec<(String, String)> {
+            headers
+                .lines()
+                .skip(1)
+                .filter_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    Some((name.to_string(), value.trim().to_string()))
+                })
+                .collect()
+        }
     }
 }

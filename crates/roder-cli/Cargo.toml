@@ -30,21 +30,16 @@ roder-config.workspace = true
 roder-usage-analytics.workspace = true
 roder-core.workspace = true
 roder-evals.workspace = true
-roder-ext-anthropic.workspace = true
-roder-ext-antigravity-backend.workspace = true
+roder-ext-antigravity-backend = { workspace = true, optional = true }
 roder-ext-codex-backend.workspace = true
-roder-ext-disk-context.workspace = true
-roder-ext-gemini.workspace = true
-roder-ext-jsonl-thread-store.workspace = true
-roder-ext-memory.workspace = true
 roder-ext-openai-responses.workspace = true
-roder-ext-mysql-session.workspace = true
-roder-ext-postgres-session.workspace = true
-roder-ext-roder-cloud.workspace = true
+roder-ext-mysql-session = { workspace = true, optional = true }
+roder-ext-postgres-session = { workspace = true, optional = true }
+roder-ext-roder-cloud = { workspace = true, optional = true }
 roder-ext-subagents.workspace = true
-roder-ext-zerolang.workspace = true
-roder-ext-kimi-code.workspace = true
-roder-ext-browser-use.workspace = true
+roder-ext-zerolang = { workspace = true, optional = true }
+roder-ext-kimi-code = { workspace = true, optional = true }
+roder-ext-browser-use = { workspace = true, optional = true }
 roder-extension-host.workspace = true
 roder-protocol.workspace = true
 roder-roadmap.workspace = true
@@ -57,6 +52,60 @@ roder-web-search.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 tokio.workspace = true
+
+[features]
+# Build-time distributions; see docs/distributions.md. `base` is what the
+# released binary ships, `full` turns every extension on.
+default = ["base"]
+base = ["roder-extension-host/base", "roder-cloud"]
+full = ["roder-extension-host/full", "base", "antigravity", "hosted-runners", "anthropic", "claude-code", "gemini", "xai", "openrouter", "roder-cloud", "runner-docker", "vertex", "opencode", "fireworks", "poolside", "cursor", "xiaomi-mimo", "kimi-code", "synthetic", "deepseek", "hopper", "runner-blaxel", "runner-cloudflare", "runner-daytona", "runner-e2b", "runner-modal", "runner-runloop", "runner-sprites", "runner-vercel", "webwright", "chrome", "cua", "jev", "browser-use", "zerolang", "memory", "honcho", "knowledge", "design", "embeddings", "images", "speech", "firecrawl-search", "parallel-search", "perplexity-search", "synthetic-search", "mysql-session", "postgres-session"]
+hosted-runners = ["roder-extension-host/hosted-runners"]
+# Antigravity sign-in and setup commands.
+antigravity = ["dep:roder-ext-antigravity-backend"]
+anthropic = ["roder-extension-host/anthropic"]
+claude-code = ["roder-extension-host/claude-code"]
+gemini = ["roder-extension-host/gemini"]
+xai = ["roder-extension-host/xai"]
+openrouter = ["roder-extension-host/openrouter"]
+roder-cloud = ["dep:roder-ext-roder-cloud", "roder-extension-host/roder-cloud"]
+runner-docker = ["roder-extension-host/runner-docker"]
+vertex = ["roder-extension-host/vertex"]
+opencode = ["roder-extension-host/opencode"]
+fireworks = ["roder-extension-host/fireworks"]
+poolside = ["roder-extension-host/poolside"]
+cursor = ["roder-extension-host/cursor"]
+xiaomi-mimo = ["roder-extension-host/xiaomi-mimo"]
+kimi-code = ["dep:roder-ext-kimi-code", "roder-extension-host/kimi-code", "roder-app-server/kimi-code"]
+synthetic = ["roder-extension-host/synthetic"]
+deepseek = ["roder-extension-host/deepseek"]
+hopper = ["roder-extension-host/hopper"]
+runner-blaxel = ["roder-extension-host/runner-blaxel"]
+runner-cloudflare = ["roder-extension-host/runner-cloudflare"]
+runner-daytona = ["roder-extension-host/runner-daytona"]
+runner-e2b = ["roder-extension-host/runner-e2b"]
+runner-modal = ["roder-extension-host/runner-modal"]
+runner-runloop = ["roder-extension-host/runner-runloop"]
+runner-sprites = ["roder-extension-host/runner-sprites"]
+runner-vercel = ["roder-extension-host/runner-vercel"]
+webwright = ["roder-extension-host/webwright", "roder-app-server/webwright"]
+chrome = ["roder-extension-host/chrome"]
+cua = ["roder-extension-host/cua"]
+jev = ["roder-extension-host/jev"]
+browser-use = ["dep:roder-ext-browser-use", "roder-extension-host/browser-use"]
+zerolang = ["dep:roder-ext-zerolang", "roder-extension-host/zerolang", "roder-evals/zerolang"]
+memory = ["roder-extension-host/memory"]
+honcho = ["roder-extension-host/honcho"]
+knowledge = ["roder-extension-host/knowledge"]
+design = ["roder-extension-host/design"]
+embeddings = ["roder-extension-host/embeddings"]
+images = ["roder-extension-host/images"]
+speech = ["roder-extension-host/speech"]
+firecrawl-search = ["roder-extension-host/firecrawl-search"]
+parallel-search = ["roder-extension-host/parallel-search"]
+perplexity-search = ["roder-extension-host/perplexity-search"]
+synthetic-search = ["roder-extension-host/synthetic-search"]
+mysql-session = ["dep:roder-ext-mysql-session", "roder-extension-host/mysql-session"]
+postgres-session = ["dep:roder-ext-postgres-session", "roder-extension-host/postgres-session"]
 
 [dev-dependencies]
 time.workspace = true

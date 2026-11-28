@@ -255,7 +255,16 @@ impl CuaTransport for LocalDesktop {
         })
     }
 }
+/// The local macOS backend shares one desktop per process: a lease and an
+/// input generation that invalidates every other session's captures. Tests
+/// that use it run one at a time, as two agents on one real desktop would.
+static LOCAL_DESKTOP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn exercise(mode: PolicyMode, refuse_click: bool, backend: CuaBackend) {
+    let _local_desktop = match backend {
+        CuaBackend::LocalMacos => Some(LOCAL_DESKTOP.lock().await),
+        CuaBackend::Runner => None,
+    };
     let temp = tempfile::tempdir().unwrap();
     let desktop = Arc::new(Desktop {
         refuse_click,

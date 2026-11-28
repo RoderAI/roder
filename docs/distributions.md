@@ -4,6 +4,36 @@ Roder treats distributions as first-class artifacts: a distribution is a small b
 
 The configurator binary is `roder-configure`.
 
+## Build-Time Features
+
+What a Roder binary contains is decided at build time by Cargo features on `roder` (the CLI crate) and `roder-extension-host`. A feature that is off leaves its extension out of the build, so its tools, providers, and commands never appear.
+
+- `base` (the default) is what the released `roder` binary, npm package, and Homebrew formula ship: Anthropic, Claude Code, Gemini, xAI, OpenRouter, and roder.cloud, plus the Docker runner. Every build also includes OpenAI Responses and Codex, custom OpenAI-compatible providers, git, plan mode, the task ledger, verification, subagents, process tasks, process-hosted extensions, the local runner, MCP, the inference router, terminal and desktop notifications, GitHub review, fork rift, JSONL sessions, and web search through Tavily.
+- `full` turns on every extension.
+- Each opt-in extension has its own feature:
+  - Providers: `vertex`, `opencode`, `fireworks`, `poolside`, `cursor`, `xiaomi-mimo`, `kimi-code`, `synthetic`, `deepseek`, `hopper`, and (CLI only) `antigravity`.
+  - Tools: `zerolang`, `design`, `webwright`, `jev`, `chrome`, `browser-use`, `cua`, `knowledge`, `memory`, `honcho`, `embeddings`, `images`, `speech`.
+  - Search backends: `firecrawl-search`, `parallel-search`, `perplexity-search`, `synthetic-search`.
+  - Runners: `runner-blaxel`, `runner-cloudflare`, `runner-daytona`, `runner-e2b`, `runner-modal`, `runner-runloop`, `runner-sprites`, `runner-vercel`, or all of them with `hosted-runners`.
+  - Session stores: `mysql-session`, `postgres-session`.
+
+Build the default, everything, or a hand-picked set:
+
+```sh
+cargo build -p roder --release                                   # base
+cargo build -p roder --release --features full                   # everything
+cargo build -p roder --release --features zerolang,memory        # base plus two
+cargo build -p roder --release --no-default-features --features anthropic
+```
+
+Configuration that names a feature this build leaves out fails with a "not built into this Roder distribution" error. This applies to the honcho memory backend, the MySQL and PostgreSQL session stores, an explicit `web_search.provider`, and the `roder zerolang` command. `--browser-use` prints a warning instead.
+
+`embeddings` builds in the OpenAI, Google, and ZeroEntropy embedding providers together; `images` and `speech` likewise each cover their OpenAI and Google providers.
+
+`make test` runs the workspace suite against the full build, so every feature's tests run. `make check-distributions` lints the minimal, base, and full builds and runs the CLI and extension-host tests for minimal and base.
+
+Generated distribution crates depend on `roder` with `default-features = false` and turn on the features for the extensions in their profile.
+
 ## Built-In Profiles
 
 - `minimal`: CLI/TUI with JSONL thread storage, plan mode, and terminal notifications.

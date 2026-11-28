@@ -1,6 +1,6 @@
 //! Exercise the real CLI/app-server bridge against offline and opt-in live ACP.
 
-#![cfg(unix)]
+#![cfg(all(unix, feature = "antigravity"))]
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;

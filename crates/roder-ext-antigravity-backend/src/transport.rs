@@ -115,12 +115,14 @@ impl Transport {
             .kill_on_drop(true);
         #[cfg(unix)]
         command.process_group(0);
-        let mut child = command.spawn().with_context(|| {
-            format!(
-                "start {} acp; install the official Antigravity CLI",
-                program.display()
-            )
-        })?;
+        let mut child = roder_api::spawn::spawn_retrying_busy(&mut command)
+            .await
+            .with_context(|| {
+                format!(
+                    "start {} acp; install the official Antigravity CLI",
+                    program.display()
+                )
+            })?;
         let input = child
             .stdin
             .take()

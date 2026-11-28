@@ -131,10 +131,11 @@ fn cargo_dependencies(
     extensions: &[&crate::catalog::CatalogEntry],
 ) -> String {
     let workspace = workspace_root();
+    let features = build_features(extensions);
     let mut lines = vec!["anyhow = \"1\"".to_string()];
     if manifest.include_cli {
         lines.push(format!(
-            "roder = {{ path = {:?} }}",
+            "roder = {{ path = {:?}, default-features = false, features = {features} }}",
             workspace.join("crates/roder-cli").display().to_string()
         ));
     }
@@ -153,7 +154,7 @@ fn cargo_dependencies(
                 workspace.join("crates/roder-core").display().to_string()
             ),
             format!(
-                "roder-extension-host = {{ path = {:?} }}",
+                "roder-extension-host = {{ path = {:?}, default-features = false, features = {features} }}",
                 workspace
                     .join("crates/roder-extension-host")
                     .display()
@@ -192,6 +193,92 @@ fn cargo_dependencies(
     lines.join("\n")
 }
 
+/// The Cargo features of `roder` and `roder-extension-host` that build the
+/// chosen extensions in, as a TOML array. The feature names match on both
+/// crates.
+fn build_features(extensions: &[&crate::catalog::CatalogEntry]) -> String {
+    let mut features = extensions
+        .iter()
+        .filter_map(|extension| build_feature(&extension.entry.id))
+        .collect::<Vec<_>>();
+    features.sort();
+    features.dedup();
+    let quoted = features
+        .iter()
+        .map(|feature| format!("{feature:?}"))
+        .collect::<Vec<_>>();
+    format!("[{}]", quoted.join(", "))
+}
+
+/// Extensions every Roder build registers, with no feature to turn on.
+fn always_built_in(id: &str) -> bool {
+    matches!(
+        id,
+        "fork-rift"
+            | "git"
+            | "github-review"
+            | "inference-router"
+            | "jsonl-thread-store"
+            | "mcp-tools"
+            | "notify-desktop"
+            | "notify-terminal"
+            | "openai-chat-completions"
+            | "openai-responses"
+            | "plan-mode"
+            | "process-host"
+            | "subagents"
+            | "task-ledger"
+            | "task-process"
+            | "task-subagent"
+            | "tavily-search"
+            | "verification"
+            | "web-search"
+    )
+}
+
+/// The Cargo feature that builds an extension into Roder, or `None` when
+/// there is none (see `always_built_in`). The OpenAI, Google and ZeroEntropy
+/// embeddings share the `embeddings` feature, as do the two image and the two
+/// speech providers: choosing one of them builds in the others too.
+fn build_feature(id: &str) -> Option<&'static str> {
+    Some(match id {
+        "anthropic" => "anthropic",
+        "browser-use" => "browser-use",
+        "chrome" => "chrome",
+        "claude-code" => "claude-code",
+        "cursor" => "cursor",
+        "deepseek" => "deepseek",
+        "firecrawl-search" => "firecrawl-search",
+        "fireworks" => "fireworks",
+        "gemini" => "gemini",
+        "google-embeddings" | "openai-embeddings" | "zeroentropy-embeddings" => "embeddings",
+        "google-images" | "openai-images" => "images",
+        "google-speech" | "openai-speech" => "speech",
+        "honcho" => "honcho",
+        "hopper" => "hopper",
+        "jev" => "jev",
+        "kimi-code" => "kimi-code",
+        "knowledge-md" => "knowledge",
+        "memory" => "memory",
+        "mysql-session" => "mysql-session",
+        "opencode" => "opencode",
+        "openrouter" => "openrouter",
+        "parallel-search" => "parallel-search",
+        "perplexity-search" => "perplexity-search",
+        "poolside" => "poolside",
+        "postgres-session" => "postgres-session",
+        "roder-cloud" => "roder-cloud",
+        "synthetic" => "synthetic",
+        "synthetic-search" => "synthetic-search",
+        "vertex" => "vertex",
+        "webwright" => "webwright",
+        "xai" => "xai",
+        "xiaomi-mimo" => "xiaomi-mimo",
+        "zerolang" => "zerolang",
+        _ => return None,
+    })
+}
+
 fn is_remote_app_server_only(manifest: &DistributionManifest) -> bool {
     manifest.include_app_server && !manifest.include_tui && !manifest.include_cli
 }
@@ -207,11 +294,19 @@ fn workspace_root() -> PathBuf {
 fn install_extensions(extensions: &[&crate::catalog::CatalogEntry]) -> String {
     extensions
         .iter()
-        .map(|extension| {
-            format!(
-                "    // install {} via {}\n",
+        .map(|extension| match build_feature(&extension.entry.id) {
+            Some(feature) => format!(
+                "    // {} ({}) is built in by the `{feature}` feature\n",
                 extension.entry.id, extension.entry.extension_path
-            )
+            ),
+            None if always_built_in(&extension.entry.id) => format!(
+                "    // {} ({}) is built into every Roder distribution\n",
+                extension.entry.id, extension.entry.extension_path
+            ),
+            None => format!(
+                "    // {} ({}) is not registered by Roder's default registry\n",
+                extension.entry.id, extension.entry.extension_path
+            ),
         })
         .collect::<String>()
 }

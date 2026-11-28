@@ -18,71 +18,71 @@ roder-codex-auth.workspace = true
 roder-code-index.workspace = true
 roder-config.workspace = true
 roder-context.workspace = true
-roder-ext-anthropic.workspace = true
-roder-ext-browser-use.workspace = true
-roder-ext-chrome.workspace = true
-roder-ext-cua.workspace = true
-roder-ext-jev.workspace = true
-roder-ext-claude-code.workspace = true
-roder-ext-cursor.workspace = true
-roder-ext-deepseek.workspace = true
-roder-ext-hopper.workspace = true
-roder-ext-fireworks.workspace = true
-roder-ext-firecrawl-search.workspace = true
+roder-ext-anthropic = { workspace = true, optional = true }
+roder-ext-browser-use = { workspace = true, optional = true }
+roder-ext-chrome = { workspace = true, optional = true }
+roder-ext-cua = { workspace = true, optional = true }
+roder-ext-jev = { workspace = true, optional = true }
+roder-ext-claude-code = { workspace = true, optional = true }
+roder-ext-cursor = { workspace = true, optional = true }
+roder-ext-deepseek = { workspace = true, optional = true }
+roder-ext-hopper = { workspace = true, optional = true }
+roder-ext-fireworks = { workspace = true, optional = true }
+roder-ext-firecrawl-search = { workspace = true, optional = true }
 roder-ext-fork-rift.workspace = true
 roder-ext-git.workspace = true
 roder-ext-github-review.workspace = true
 roder-ext-process-host.workspace = true
-roder-ext-gemini.workspace = true
-roder-ext-google-embeddings.workspace = true
-roder-ext-google-images.workspace = true
-roder-ext-honcho.workspace = true
+roder-ext-gemini = { workspace = true, optional = true }
+roder-ext-google-embeddings = { workspace = true, optional = true }
+roder-ext-google-images = { workspace = true, optional = true }
+roder-ext-honcho = { workspace = true, optional = true }
 roder-ext-inference-router.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
-roder-ext-knowledge-md.workspace = true
-roder-ext-kimi-code.workspace = true
-roder-ext-memory.workspace = true
+roder-ext-knowledge-md = { workspace = true, optional = true }
+roder-ext-kimi-code = { workspace = true, optional = true }
+roder-ext-memory = { workspace = true, optional = true }
 roder-ext-notify-desktop.workspace = true
 roder-ext-notify-terminal.workspace = true
-roder-ext-openai-embeddings.workspace = true
+roder-ext-openai-embeddings = { workspace = true, optional = true }
 roder-ext-openai-chat-completions.workspace = true
 roder-ext-openai-responses.workspace = true
-roder-ext-openai-images.workspace = true
-roder-ext-openai-speech.workspace = true
-roder-ext-openrouter.workspace = true
-roder-ext-roder-cloud.workspace = true
-roder-ext-google-speech.workspace = true
-roder-ext-opencode.workspace = true
-roder-ext-mysql-session.workspace = true
-roder-ext-postgres-session.workspace = true
-roder-ext-parallel-search.workspace = true
-roder-ext-perplexity-search.workspace = true
-roder-ext-synthetic-search.workspace = true
-roder-ext-poolside.workspace = true
+roder-ext-openai-images = { workspace = true, optional = true }
+roder-ext-openai-speech = { workspace = true, optional = true }
+roder-ext-openrouter = { workspace = true, optional = true }
+roder-ext-roder-cloud = { workspace = true, optional = true }
+roder-ext-google-speech = { workspace = true, optional = true }
+roder-ext-opencode = { workspace = true, optional = true }
+roder-ext-mysql-session = { workspace = true, optional = true }
+roder-ext-postgres-session = { workspace = true, optional = true }
+roder-ext-parallel-search = { workspace = true, optional = true }
+roder-ext-perplexity-search = { workspace = true, optional = true }
+roder-ext-synthetic-search = { workspace = true, optional = true }
+roder-ext-poolside = { workspace = true, optional = true }
 roder-ext-plan-mode.workspace = true
-roder-ext-runner-blaxel.workspace = true
-roder-ext-runner-cloudflare.workspace = true
-roder-ext-runner-daytona.workspace = true
-roder-ext-runner-docker.workspace = true
-roder-ext-runner-e2b.workspace = true
-roder-ext-runner-modal.workspace = true
-roder-ext-runner-runloop.workspace = true
-roder-ext-runner-sprites.workspace = true
+roder-ext-runner-blaxel = { workspace = true, optional = true }
+roder-ext-runner-cloudflare = { workspace = true, optional = true }
+roder-ext-runner-daytona = { workspace = true, optional = true }
+roder-ext-runner-docker = { workspace = true, optional = true }
+roder-ext-runner-e2b = { workspace = true, optional = true }
+roder-ext-runner-modal = { workspace = true, optional = true }
+roder-ext-runner-runloop = { workspace = true, optional = true }
+roder-ext-runner-sprites = { workspace = true, optional = true }
 roder-ext-runner-unix-local.workspace = true
-roder-ext-runner-vercel.workspace = true
+roder-ext-runner-vercel = { workspace = true, optional = true }
 roder-ext-subagents.workspace = true
-roder-ext-synthetic.workspace = true
+roder-ext-synthetic = { workspace = true, optional = true }
 roder-ext-task-ledger.workspace = true
 roder-ext-task-process.workspace = true
 roder-ext-verification.workspace = true
-roder-ext-vertex.workspace = true
+roder-ext-vertex = { workspace = true, optional = true }
 roder-ext-tavily-search.workspace = true
-roder-ext-webwright.workspace = true
+roder-ext-webwright = { workspace = true, optional = true }
 roder-ext-web-search.workspace = true
-roder-ext-xai.workspace = true
-roder-ext-xiaomi-mimo.workspace = true
-roder-ext-zeroentropy-embeddings.workspace = true
-roder-ext-zerolang.workspace = true
+roder-ext-xai = { workspace = true, optional = true }
+roder-ext-xiaomi-mimo = { workspace = true, optional = true }
+roder-ext-zeroentropy-embeddings = { workspace = true, optional = true }
+roder-ext-zerolang = { workspace = true, optional = true }
 roder-web-search.workspace = true
 roder-tools.workspace = true
 reqwest = { workspace = true, features = ["json"] }
@@ -91,6 +91,58 @@ serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
+
+[features]
+# Build-time distributions. `base` is what the released `roder` binary ships;
+# everything else is opt-in. `full` turns every extension on.
+default = ["base"]
+base = ["anthropic", "claude-code", "gemini", "xai", "openrouter", "roder-cloud", "runner-docker"]
+hosted-runners = ["runner-blaxel", "runner-cloudflare", "runner-daytona", "runner-e2b", "runner-modal", "runner-runloop", "runner-sprites", "runner-vercel"]
+full = ["vertex", "opencode", "fireworks", "poolside", "cursor", "xiaomi-mimo", "kimi-code", "synthetic", "deepseek", "hopper", "webwright", "chrome", "cua", "jev", "browser-use", "zerolang", "memory", "honcho", "knowledge", "design", "embeddings", "images", "speech", "firecrawl-search", "parallel-search", "perplexity-search", "synthetic-search", "mysql-session", "postgres-session", "base", "hosted-runners"]
+anthropic = ["dep:roder-ext-anthropic"]
+claude-code = ["dep:roder-ext-claude-code"]
+gemini = ["dep:roder-ext-gemini"]
+xai = ["dep:roder-ext-xai"]
+openrouter = ["dep:roder-ext-openrouter"]
+roder-cloud = ["dep:roder-ext-roder-cloud"]
+runner-docker = ["dep:roder-ext-runner-docker"]
+vertex = ["dep:roder-ext-vertex"]
+opencode = ["dep:roder-ext-opencode"]
+fireworks = ["dep:roder-ext-fireworks"]
+poolside = ["dep:roder-ext-poolside"]
+cursor = ["dep:roder-ext-cursor"]
+xiaomi-mimo = ["dep:roder-ext-xiaomi-mimo"]
+kimi-code = ["dep:roder-ext-kimi-code"]
+synthetic = ["dep:roder-ext-synthetic"]
+deepseek = ["dep:roder-ext-deepseek"]
+hopper = ["dep:roder-ext-hopper"]
+runner-blaxel = ["dep:roder-ext-runner-blaxel"]
+runner-cloudflare = ["dep:roder-ext-runner-cloudflare"]
+runner-daytona = ["dep:roder-ext-runner-daytona"]
+runner-e2b = ["dep:roder-ext-runner-e2b"]
+runner-modal = ["dep:roder-ext-runner-modal"]
+runner-runloop = ["dep:roder-ext-runner-runloop"]
+runner-sprites = ["dep:roder-ext-runner-sprites"]
+runner-vercel = ["dep:roder-ext-runner-vercel"]
+webwright = ["dep:roder-ext-webwright"]
+chrome = ["dep:roder-ext-chrome"]
+cua = ["dep:roder-ext-cua"]
+jev = ["dep:roder-ext-jev"]
+browser-use = ["dep:roder-ext-browser-use"]
+zerolang = ["dep:roder-ext-zerolang"]
+memory = ["dep:roder-ext-memory"]
+honcho = ["dep:roder-ext-honcho", "memory"]
+knowledge = ["dep:roder-ext-knowledge-md"]
+design = []
+embeddings = ["dep:roder-ext-openai-embeddings", "dep:roder-ext-google-embeddings", "dep:roder-ext-zeroentropy-embeddings"]
+images = ["dep:roder-ext-openai-images", "dep:roder-ext-google-images"]
+speech = ["dep:roder-ext-openai-speech", "dep:roder-ext-google-speech"]
+firecrawl-search = ["dep:roder-ext-firecrawl-search", "roder-ext-web-search/firecrawl"]
+parallel-search = ["dep:roder-ext-parallel-search", "roder-ext-web-search/parallel"]
+perplexity-search = ["dep:roder-ext-perplexity-search", "roder-ext-web-search/perplexity"]
+synthetic-search = ["dep:roder-ext-synthetic-search", "roder-ext-web-search/synthetic"]
+mysql-session = ["dep:roder-ext-mysql-session"]
+postgres-session = ["dep:roder-ext-postgres-session"]
 
 [dev-dependencies]
 tempfile = "3"

@@ -75,8 +75,16 @@ fn copy_dir(from: &Path, to: &Path) {
 }
 
 fn git(repo: &Path, args: &[&str]) -> String {
+    // Ignore the machine's git config (signing, hooks, default branch) so
+    // the fixture repos behave the same everywhere.
     let output = Command::new("git")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_AUTHOR_NAME", "Roder Tests")
+        .env("GIT_AUTHOR_EMAIL", "tests@roder.invalid")
+        .env("GIT_COMMITTER_NAME", "Roder Tests")
+        .env("GIT_COMMITTER_EMAIL", "tests@roder.invalid")
         .current_dir(repo)
         .args(args)
         .output()

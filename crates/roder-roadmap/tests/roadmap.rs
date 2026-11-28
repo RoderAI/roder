@@ -10,8 +10,7 @@ use time::OffsetDateTime;
 
 #[test]
 fn parse_existing_roadmap_extracts_core_document_shape() {
-    let path = PathBuf::from("roadmap/20-roadmapping-mode.md");
-    let path = workspace_root().join(path);
+    let path = fixture_path("roadmap/20-roadmapping-mode.md");
     let content = fs::read_to_string(&path).unwrap();
     let document = parse_document(&path, &content);
 
@@ -48,8 +47,7 @@ fn parse_existing_roadmap_extracts_core_document_shape() {
 
 #[test]
 fn task_ids_remain_stable_when_unrelated_lines_change() {
-    let path = PathBuf::from("roadmap/20-roadmapping-mode.md");
-    let path = workspace_root().join(path);
+    let path = fixture_path("roadmap/20-roadmapping-mode.md");
     let content = fs::read_to_string(&path).unwrap();
     let edited = content.replace(
         "**Goal:** Add a document-first roadmapping mode",
@@ -256,10 +254,9 @@ fn temp_dir(name: &str) -> PathBuf {
     path
 }
 
-fn workspace_root() -> PathBuf {
+/// A checked-in roadmap document under `tests/fixtures`.
+fn fixture_path(relative: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(|path| path.parent())
-        .expect("workspace root")
-        .to_path_buf()
+        .join("tests/fixtures")
+        .join(relative)
 }

@@ -26,7 +26,7 @@ else
   ENSURE_SCCACHE = sh "$(CURDIR)/scripts/ensure-sccache-server.sh"
 endif
 
-.PHONY: fmt fmt-check clippy build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock ensure-sccache
+.PHONY: fmt fmt-check clippy check-distributions build install run run-existing app-server mock-run mock-existing mock-app-server jaeger dev-deps test test-fast smoke registry-readmes publish-crates publish publish-verify release-brew update-homebrew-tap clean clean-target cargo-unlock ensure-sccache
 
 # Wipe the cargo target dir. Incremental builds accumulate session artifacts
 # unboundedly (cargo does not GC them on stable); once target/ grows to hundreds
@@ -73,7 +73,7 @@ CARGO_TEST ?= $(shell command -v cargo-nextest >/dev/null 2>&1 && echo "$(CARGO)
 # Unit tests only (skips integration `tests/*.rs` binaries such as app-server e2e).
 TEST_FAST_ARGS ?= --workspace --lib
 # Full workspace test; uses nextest when installed. Enables app-server e2e integration tests.
-TEST_ARGS ?= --workspace --features roder-app-server/e2e-tests
+TEST_ARGS ?= --workspace --features roder-app-server/e2e-tests,roder/full
 
 build: ensure-sccache
 	@mkdir -p $(dir $(BINARY))
@@ -124,7 +124,17 @@ fmt-check:
 	$(CARGO) fmt --check
 
 clippy:
-	$(CARGO) clippy --workspace --all-targets --no-deps -- -D warnings
+	$(CARGO) clippy --workspace --all-targets --no-deps --features roder-app-server/e2e-tests -- -D warnings
+
+# Lint the minimal, base (released) and full builds of the CLI, and run the
+# feature-gated CLI and extension-host tests for minimal and base (`make test`
+# covers full).
+check-distributions:
+	$(CARGO) clippy -p roder --all-targets --no-deps --no-default-features -- -D warnings
+	$(CARGO) clippy -p roder --all-targets --no-deps -- -D warnings
+	$(CARGO) clippy -p roder --all-targets --no-deps --features full -- -D warnings
+	$(CARGO) test -p roder -p roder-extension-host --no-default-features
+	$(CARGO) test -p roder -p roder-extension-host
 
 dev-deps:
 	$(CARGO) install cargo-nextest --locked
