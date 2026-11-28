@@ -34,7 +34,7 @@ Rules of thumb:
 The model is told the same thing. When a turn advertises two or more of these
 families, Roder adds a "Browser Tool Routing" block of about 110 words to the
 developer instructions, with one line per advertised family and nothing about
-the others (`roder-core`, `browser_routing.rs`). Families are told apart by
+the others (`roder-api`, `browser_routing.rs`). Families are told apart by
 tool name: `jev_browse` (the `jev_tab_*` tools that continue a Jev run are not
 a family of their own), `chrome_*`, `browser_use_*` and `webwright.*`. With one
 family, or none, there is no block. The text depends only on which families

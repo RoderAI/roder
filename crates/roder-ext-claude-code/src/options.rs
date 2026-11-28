@@ -79,11 +79,15 @@ pub fn build_options(
     }
     let allowed_tool_names = allowed_claude_tool_names(request);
     if !request.tools.is_empty() && !matches!(request.tool_choice, ToolChoice::None) {
-        let executor = tool_executor.ok_or_else(|| {
-            anyhow::anyhow!("Claude Code provider requires a Roder tool executor")
-        })?;
-        let server = roder_sdk_mcp_server(request, executor);
-        builder = builder.sdk_mcp_server("roder", server);
+        // Register the Roder server only when some Roder tool survives the
+        // Claude Code filter.
+        if !allowed_tool_names.is_empty() {
+            let executor = tool_executor.ok_or_else(|| {
+                anyhow::anyhow!("Claude Code provider requires a Roder tool executor")
+            })?;
+            let server = roder_sdk_mcp_server(request, executor);
+            builder = builder.sdk_mcp_server("roder", server);
+        }
         // Disable every built-in Claude Code tool (Read/Bash/Edit/Glob/...).
         // Roder mediates all tool access through its own executor, so the
         // model must use the `mcp__roder__*` tools we advertise. Leaving the
@@ -205,15 +209,60 @@ fn claude_config_path() -> Option<std::path::PathBuf> {
     Some(std::path::PathBuf::from(home).join(".claude.json"))
 }
 
+/// Roder tools that are not offered to Claude Code. Every advertised tool
+/// schema is sent on every request, so each extra tool costs tokens on every
+/// turn.
+///
+/// - `exec_command`, `unified_exec` and `write_stdin` are Codex-style PTY shells.
+///   Claude uses `Bash`.
+/// - `echo` and `media_generate_video` are test fixtures.
+///
+/// `apply_patch` (the Codex patch format) is handled separately: it is hidden
+/// only when `edit` is also offered, because in Roder's `patch` edit mode it is
+/// the only editing tool.
+const TOOLS_HIDDEN_FROM_CLAUDE: [&str; 5] = [
+    "exec_command",
+    "unified_exec",
+    "write_stdin",
+    "echo",
+    "media_generate_video",
+];
+
+/// Prefixes of Roder tool families that are not offered to Claude Code.
+/// Claude Code already has its own browser through Claude-in-Chrome, so the
+/// Roder browser stacks (`chrome_*`, `jev_*`, `browser_use_*`, `webwright.*`)
+/// would be extra copies. The other families are specialist tools.
+const TOOL_PREFIXES_HIDDEN_FROM_CLAUDE: [&str; 8] = [
+    "chrome_",
+    "jev_",
+    "browser_use_",
+    "zerolang_",
+    "design_",
+    "knowledge_",
+    "webwright.",
+    "memory_",
+];
+
+/// Whether a Roder tool is offered to Claude Code.
+fn exposed_to_claude(name: &str) -> bool {
+    !TOOLS_HIDDEN_FROM_CLAUDE.contains(&name)
+        && !TOOL_PREFIXES_HIDDEN_FROM_CLAUDE
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
+
+fn claude_tool_specs(
+    request: &AgentInferenceRequest,
+) -> impl Iterator<Item = &roder_api::tools::ToolSpec> {
+    let has_edit = request.tools.iter().any(|tool| tool.name == "edit");
+    request.tools.iter().filter(move |tool| {
+        exposed_to_claude(&tool.name) && !(has_edit && tool.name == "apply_patch")
+    })
+}
+
 fn allowed_claude_tool_names(request: &AgentInferenceRequest) -> Vec<String> {
-    request
-        .tools
-        .iter()
-        .flat_map(|tool| {
-            let mut names = vec![tool.name.clone()];
-            names.extend(claude_aliases_for_roder_tool(&tool.name).map(str::to_string));
-            names
-        })
+    claude_tool_specs(request)
+        .map(|tool| claude_name_for_roder_tool(&tool.name).to_string())
         .collect()
 }
 
@@ -221,21 +270,15 @@ fn roder_sdk_mcp_server(
     request: &AgentInferenceRequest,
     executor: Arc<dyn TurnToolExecutor>,
 ) -> SimpleMCPServer {
-    let tools = request
-        .tools
-        .iter()
-        .flat_map(|spec| {
-            let mut names = vec![spec.name.clone()];
-            names.extend(claude_aliases_for_roder_tool(&spec.name).map(str::to_string));
-            names.into_iter().map(|claude_name| {
-                sdk_tool_for_spec(
-                    claude_name,
-                    spec.name.clone(),
-                    spec.description.clone(),
-                    spec.parameters.clone(),
-                    Arc::clone(&executor),
-                )
-            })
+    let tools = claude_tool_specs(request)
+        .map(|spec| {
+            sdk_tool_for_spec(
+                claude_name_for_roder_tool(&spec.name).to_string(),
+                spec.name.clone(),
+                spec.description.clone(),
+                spec.parameters.clone(),
+                Arc::clone(&executor),
+            )
         })
         .collect();
     claude_code_sdk_rust::mcp::create_sdk_mcp_server("roder", tools)
@@ -287,17 +330,19 @@ fn sdk_tool_for_spec(
     .validate_input(false)
 }
 
-fn claude_aliases_for_roder_tool(name: &str) -> impl Iterator<Item = &'static str> {
+/// The name Claude Code sees for a Roder tool. Core tools use Claude Code's
+/// native names, which the model is trained on. Calls still run the Roder tool.
+fn claude_name_for_roder_tool(name: &str) -> &str {
     match name {
-        "shell" => ["Bash"].as_slice().iter().copied(),
-        "read_file" => ["Read"].as_slice().iter().copied(),
-        "list_files" => ["LS"].as_slice().iter().copied(),
-        "grep" => ["Grep"].as_slice().iter().copied(),
-        "glob" => ["Glob"].as_slice().iter().copied(),
-        "write_file" => ["Write"].as_slice().iter().copied(),
-        "edit" => ["Edit"].as_slice().iter().copied(),
-        "multi_edit" => ["MultiEdit"].as_slice().iter().copied(),
-        _ => [].as_slice().iter().copied(),
+        "shell" => "Bash",
+        "read_file" => "Read",
+        "list_files" => "LS",
+        "grep" => "Grep",
+        "glob" => "Glob",
+        "write_file" => "Write",
+        "edit" => "Edit",
+        "multi_edit" => "MultiEdit",
+        other => other,
     }
 }
 
@@ -409,10 +454,16 @@ fn normalize_sdk_mcp_aliases(
 }
 
 fn merged_system_prompt(request: &AgentInferenceRequest) -> Option<String> {
-    match (
-        request.instructions.system.as_deref(),
-        request.instructions.developer.as_deref(),
-    ) {
+    // Core adds browser routing guidance for Roder's browser tool families.
+    // Claude Code is offered none of them (it has Claude-in-Chrome), so the
+    // guidance would name tools the model cannot call.
+    let developer = request
+        .instructions
+        .developer
+        .as_deref()
+        .map(roder_api::browser_routing::strip_browser_routing)
+        .filter(|text| !text.trim().is_empty());
+    match (request.instructions.system.as_deref(), developer.as_deref()) {
         (Some(system), Some(developer)) => Some(format!("{system}\n\n{developer}")),
         (Some(system), None) => Some(system.to_string()),
         (None, Some(developer)) => Some(developer.to_string()),
@@ -588,10 +639,7 @@ mod tests {
         .unwrap();
 
         assert!(options.mcp_servers.contains_key("roder"));
-        assert_eq!(
-            options.allowed_tools,
-            vec!["mcp__roder__grep", "mcp__roder__Grep"]
-        );
+        assert_eq!(options.allowed_tools, vec!["mcp__roder__Grep"]);
         let server = options.sdk_mcp_servers.get("roder").unwrap();
         let mut names = server
             .list_tools()
@@ -599,7 +647,7 @@ mod tests {
             .map(|tool| tool.name.clone())
             .collect::<Vec<_>>();
         names.sort();
-        assert_eq!(names, vec!["Grep", "grep"]);
+        assert_eq!(names, vec!["Grep"]);
 
         // Built-in Claude Code tools must be disabled so the model uses the
         // Roder MCP tools instead of bare built-ins (which would be denied).
@@ -616,6 +664,116 @@ mod tests {
         // With no Roder tools advertised we leave the built-in tool set alone.
         assert!(!options.tools_set);
         assert!(options.strict_mcp_config);
+    }
+
+    fn options_for_tools(names: &[&str]) -> ClaudeAgentOptions {
+        let mut request = chrome_request();
+        request.tool_choice = ToolChoice::Auto;
+        request.tools = names
+            .iter()
+            .map(|name| ToolSpec {
+                name: name.to_string(),
+                description: format!("{name} tool"),
+                parameters: serde_json::json!({"type": "object", "properties": {}}),
+            })
+            .collect();
+        build_options(
+            &ClaudeCodeConfig::default(),
+            &request,
+            Some(Arc::new(FakeToolExecutor)),
+            None,
+            None,
+        )
+        .unwrap()
+    }
+
+    fn roder_server_tool_names(options: &ClaudeAgentOptions) -> Vec<String> {
+        let mut names = options.sdk_mcp_servers["roder"]
+            .list_tools()
+            .into_iter()
+            .map(|tool| tool.name.clone())
+            .collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn offers_claude_code_one_copy_of_each_needed_tool() {
+        let options = options_for_tools(&[
+            "read_file",
+            "edit",
+            "spawn_agent",
+            "webwright_helper",
+            "exec_command",
+            "unified_exec",
+            "write_stdin",
+            "apply_patch",
+            "echo",
+            "media_generate_video",
+            "chrome_click",
+            "jev_browse",
+            "browser_use_navigate",
+            "zerolang_edit",
+            "design_patch",
+            "knowledge_search",
+            "webwright.run_script",
+            "memory_query",
+        ]);
+
+        assert_eq!(
+            options.allowed_tools,
+            vec![
+                "mcp__roder__Read",
+                "mcp__roder__Edit",
+                "mcp__roder__spawn_agent",
+                "mcp__roder__webwright_helper"
+            ]
+        );
+        assert_eq!(
+            roder_server_tool_names(&options),
+            vec!["Edit", "Read", "spawn_agent", "webwright_helper"]
+        );
+    }
+
+    #[test]
+    fn keeps_apply_patch_when_it_is_the_only_editing_tool() {
+        // Roder's `patch` edit mode offers `apply_patch` without `edit`.
+        let options = options_for_tools(&["read_file", "apply_patch"]);
+        assert_eq!(
+            roder_server_tool_names(&options),
+            vec!["Read", "apply_patch"]
+        );
+    }
+
+    #[test]
+    fn built_in_tools_stay_disabled_when_every_roder_tool_is_hidden() {
+        let options = options_for_tools(&["chrome_click", "jev_browse"]);
+        assert!(options.tools_set);
+        assert!(options.tools.is_empty());
+        assert!(options.allowed_tools.is_empty());
+        assert!(options.sdk_mcp_servers.is_empty());
+    }
+
+    #[test]
+    fn system_prompt_drops_browser_routing_for_hidden_browser_tools() {
+        let mut request = chrome_request();
+        request.instructions.system = Some("System.".to_string());
+        request.instructions.developer = Some("Developer.".to_string());
+        request.instructions = roder_api::browser_routing::apply_browser_routing(
+            request.instructions,
+            ["jev_browse", "chrome_click", "read_file"],
+        );
+        assert!(
+            request
+                .instructions
+                .developer
+                .as_deref()
+                .is_some_and(|text| text.contains("## Browser Tool Routing"))
+        );
+        assert_eq!(
+            merged_system_prompt(&request).as_deref(),
+            Some("System.\n\nDeveloper.")
+        );
     }
 
     fn chrome_request() -> AgentInferenceRequest {

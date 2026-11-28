@@ -1,6 +1,5 @@
 mod agent_control_tools;
 pub mod artifacts;
-mod browser_routing;
 pub mod bus;
 mod compaction;
 mod compaction_runtime;

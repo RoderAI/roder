@@ -15,7 +15,7 @@
 //! the tool set does. Core cannot see keys or pairing state, so the block
 //! never says a family works; it says any of them can fail at call time.
 
-use roder_api::inference::InstructionBundle;
+use crate::inference::InstructionBundle;
 
 const HEADING: &str = "## Browser Tool Routing";
 
@@ -110,7 +110,7 @@ fn block(tool_names: impl IntoIterator<Item = impl AsRef<str>>) -> Option<String
 
 /// Append the browser routing block to the developer instructions when two or
 /// more browser tool families are on the turn.
-pub(crate) fn apply_browser_routing(
+pub fn apply_browser_routing(
     mut instructions: InstructionBundle,
     tool_names: impl IntoIterator<Item = impl AsRef<str>>,
 ) -> InstructionBundle {
@@ -132,9 +132,75 @@ pub(crate) fn apply_browser_routing(
     instructions
 }
 
+/// Remove the routing block from `text`, for a provider that hides every
+/// browser family the block names. Only a block exactly as [`block`] builds
+/// it is removed, so other text that reuses its heading or wording stays.
+/// Returns `text` unchanged when it has no block.
+pub fn strip_browser_routing(text: &str) -> String {
+    /// One tool name per family, in `ORDER`, to rebuild each possible block.
+    const SAMPLE_TOOLS: [&str; 4] = [
+        "jev_browse",
+        "chrome_tabs_list",
+        "browser_use_navigate",
+        "webwright.run_script",
+    ];
+    let candidates = (0u8..1 << ORDER.len()).filter_map(|subset| {
+        block(
+            SAMPLE_TOOLS
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| subset & (1 << index) != 0)
+                .map(|(_, name)| *name),
+        )
+    });
+    for candidate in candidates {
+        let Some(start) = text.find(&candidate) else {
+            continue;
+        };
+        let before = text[..start].trim_end();
+        let after = text[start + candidate.len()..].trim_start();
+        return match (before.is_empty(), after.is_empty()) {
+            (true, _) => after.to_string(),
+            (false, true) => before.to_string(),
+            (false, false) => format!("{before}\n\n{after}"),
+        };
+    }
+    text.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_removes_the_block_and_keeps_surrounding_text() {
+        let block = block(names(0b1111)).unwrap();
+        let text = format!("Before.\n\n{block}\n\nAfter.");
+        assert_eq!(strip_browser_routing(&text), "Before.\n\nAfter.");
+        assert_eq!(strip_browser_routing(&block), "");
+        assert_eq!(strip_browser_routing("No block."), "No block.");
+    }
+
+    #[test]
+    fn strip_removes_every_possible_block() {
+        for subset in 0u8..16 {
+            let Some(block) = block(names(subset)) else {
+                continue;
+            };
+            let text = format!("Before.\n\n{block}");
+            assert_eq!(
+                strip_browser_routing(&text),
+                "Before.",
+                "subset {subset:04b}"
+            );
+        }
+    }
+
+    #[test]
+    fn strip_keeps_text_that_only_reuses_the_heading_and_footer() {
+        let text = format!("{HEADING}\n\nProject rules for browsers.\n\n{FOOTER}\n\nMore.");
+        assert_eq!(strip_browser_routing(&text), text);
+    }
 
     const JEV: &[&str] = &["jev_browse", "jev_tab_look", "jev_tab_click"];
     const CHROME: &[&str] = &["chrome_tabs_list", "chrome_click", "chrome_page_snapshot"];

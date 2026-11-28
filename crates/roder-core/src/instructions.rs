@@ -34,7 +34,7 @@ Roder is inspired by OpenAI Codex and the original Gode agent harness. Within th
 
 - Default to ASCII when editing or creating files. Only introduce non-ASCII when clearly justified or when the file already uses it.
 - Add succinct comments only when they clarify non-obvious logic.
-- Prefer dedicated file-editing tools (`apply_patch`, `edit`, `multi_edit`, or `write_file`) for source changes when they are available. Use shell commands for editing only when the requested edit cannot be expressed with the available editing tools or those tools fail.
+- Prefer dedicated file-editing tools (`apply_patch`, `edit`, `multi_edit`, or `write_file`; in Claude Code, `Edit`, `MultiEdit`, or `Write`) for source changes when they are available. Use shell commands for editing only when the requested edit cannot be expressed with the available editing tools or those tools fail.
 - Do not revert changes you did not make unless the user explicitly asks.
 - You may be in a dirty git worktree. Ignore unrelated work from other agents or the user.
 - Do not use destructive operations such as hard resets or deleting user work unless explicitly requested.
