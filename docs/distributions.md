@@ -28,7 +28,9 @@ cargo build -p roder --release --no-default-features --features anthropic
 
 Configuration that names a feature this build leaves out fails with a "not built into this Roder distribution" error. This applies to the honcho memory backend, the MySQL and PostgreSQL session stores, an explicit `web_search.provider`, and the `roder zerolang` command. `--browser-use` prints a warning instead.
 
-`make check-distributions` runs clippy on the minimal, base, and full builds.
+`embeddings` builds in the OpenAI, Google, and ZeroEntropy embedding providers together; `images` and `speech` likewise each cover their OpenAI and Google providers.
+
+`make test` runs the workspace suite against the full build, so every feature's tests run. `make check-distributions` lints the minimal, base, and full builds and runs the CLI and extension-host tests for minimal and base.
 
 Generated distribution crates depend on `roder` with `default-features = false` and turn on the features for the extensions in their profile.
 

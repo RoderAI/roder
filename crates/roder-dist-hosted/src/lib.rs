@@ -68,9 +68,9 @@ pub fn auth_from_config(
     Ok((authenticator, tenants))
 }
 
-/// Default per-tenant runtime factory: the full default extension registry
-/// (providers resolve credentials from the process env; hosted runner
-/// destinations are configured per deployment) with a private JSONL thread
+/// Default per-tenant runtime factory: the default registry with the `base`
+/// extensions plus the hosted runners (providers resolve credentials from the
+/// process env; hosted runner destinations are configured per deployment) with a private JSONL thread
 /// store under the tenant data dir.
 pub fn default_tenant_factory() -> TenantAppServerFactory {
     Arc::new(|_tenant_id, data_dir| {

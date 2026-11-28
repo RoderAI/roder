@@ -210,8 +210,36 @@ fn build_features(extensions: &[&crate::catalog::CatalogEntry]) -> String {
     format!("[{}]", quoted.join(", "))
 }
 
+/// Extensions every Roder build registers, with no feature to turn on.
+fn always_built_in(id: &str) -> bool {
+    matches!(
+        id,
+        "fork-rift"
+            | "git"
+            | "github-review"
+            | "inference-router"
+            | "jsonl-thread-store"
+            | "mcp-tools"
+            | "notify-desktop"
+            | "notify-terminal"
+            | "openai-chat-completions"
+            | "openai-responses"
+            | "plan-mode"
+            | "process-host"
+            | "subagents"
+            | "task-ledger"
+            | "task-process"
+            | "task-subagent"
+            | "tavily-search"
+            | "verification"
+            | "web-search"
+    )
+}
+
 /// The Cargo feature that builds an extension into Roder, or `None` when
-/// every build includes it.
+/// there is none (see `always_built_in`). The OpenAI, Google and ZeroEntropy
+/// embeddings share the `embeddings` feature, as do the two image and the two
+/// speech providers: choosing one of them builds in the others too.
 fn build_feature(id: &str) -> Option<&'static str> {
     Some(match id {
         "anthropic" => "anthropic",
@@ -271,8 +299,12 @@ fn install_extensions(extensions: &[&crate::catalog::CatalogEntry]) -> String {
                 "    // {} ({}) is built in by the `{feature}` feature\n",
                 extension.entry.id, extension.entry.extension_path
             ),
-            None => format!(
+            None if always_built_in(&extension.entry.id) => format!(
                 "    // {} ({}) is built into every Roder distribution\n",
+                extension.entry.id, extension.entry.extension_path
+            ),
+            None => format!(
+                "    // {} ({}) is not registered by Roder's default registry\n",
                 extension.entry.id, extension.entry.extension_path
             ),
         })

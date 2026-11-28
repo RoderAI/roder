@@ -70,6 +70,16 @@ async fn context_window_persistence_failure_leaves_live_override_unchanged() {
     let mut permissions = std::fs::metadata(&config).unwrap().permissions();
     permissions.set_readonly(true);
     std::fs::set_permissions(&config, permissions).unwrap();
+    if std::fs::OpenOptions::new()
+        .write(true)
+        .open(&config)
+        .is_ok()
+    {
+        // Root ignores the read-only bit, so the save cannot be made to fail.
+        eprintln!("skipping: the read-only config is still writable (running as root?)");
+        std::fs::remove_dir_all(dir).unwrap();
+        return;
+    }
     let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &dir);
     let runtime = Arc::new(Runtime::fake().unwrap());
     runtime

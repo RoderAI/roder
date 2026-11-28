@@ -13,6 +13,9 @@ roder-ext-zerolang: patch
 roder-ext-antigravity-backend: patch
 roder-web-search: minor
 roder-config: patch
+roder-core: patch
+roder-ext-memory: patch
+roder-ext-zeroentropy-embeddings: patch
 ---
 
 # Choose Roder's extensions at build time
@@ -38,7 +41,7 @@ The following are opt-in and no longer in the released binary:
 - Memory (including Honcho) and knowledge.
 - Embeddings, image generation and speech.
 - The Firecrawl, Parallel, Perplexity and Synthetic search backends.
-- Hosted runners.
+- Hosted runners. `roder-dist-hosted` builds `base` plus the hosted runners.
 - The MySQL and PostgreSQL session stores.
 
 `--features full` builds everything. `make check-distributions` lints the

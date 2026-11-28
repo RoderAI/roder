@@ -1879,12 +1879,12 @@ fn load_config_file() -> anyhow::Result<Config> {
 fn load_config_file_from_path(path: impl AsRef<Path>) -> anyhow::Result<Config> {
     let path = path.as_ref();
     if path.exists() {
-        let contents = anyhow::Context::with_context(fs::read_to_string(path), || {
-            format!("read Roder config {}", path.display())
-        })?;
-        anyhow::Context::with_context(toml::from_str(&contents), || {
-            format!("parse Roder config {}", path.display())
-        })
+        // The cause goes in the message itself: some callers print only the
+        // outermost error.
+        let contents = fs::read_to_string(path)
+            .map_err(|err| anyhow::anyhow!("read Roder config {}: {err}", path.display()))?;
+        toml::from_str(&contents)
+            .map_err(|err| anyhow::anyhow!("parse Roder config {}: {err}", path.display()))
     } else {
         Ok(Config::default())
     }

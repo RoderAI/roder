@@ -784,6 +784,15 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             ))?;
         }
     }
+    // Without the memory feature Roder runs without memory, including when the
+    // config names the default sqlite backend. Any other backend (honcho) is
+    // an explicit request this build cannot meet, so it fails loudly.
+    #[cfg(not(feature = "memory"))]
+    if config.memory
+        && let Some(backend) = selected_memory_backend().filter(|backend| backend != "sqlite")
+    {
+        anyhow::bail!("memory backend {backend:?} is not built into this Roder distribution");
+    }
     #[cfg(feature = "memory")]
     match selected_memory_backend().as_deref() {
         _ if !config.memory => {}
@@ -935,7 +944,6 @@ fn known_provider_id(id: &str) -> bool {
 
 /// `RODER_MEMORY_BACKEND` overrides `[memories] backend` via the config
 /// loader's env overrides.
-#[cfg(feature = "memory")]
 fn selected_memory_backend() -> Option<String> {
     roder_config::load_config()
         .ok()

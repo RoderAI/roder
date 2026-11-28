@@ -286,7 +286,13 @@ async fn run_offline_fixture(
     let mut failure_message = None;
     let mut outcome = EvalOutcome::Pass;
     let mut failure_class = None;
-    if let Err(err) = run_workspace_setup(fixture, &workspace.path) {
+    if !cfg!(feature = "zerolang") && fixture.tags.iter().any(|tag| tag == "zerolang") {
+        // Fail this fixture only; the rest of the suite still runs.
+        outcome = EvalOutcome::HarnessError;
+        failure_class = Some(EvalFailureClass::Environment);
+        failure_message =
+            Some("zerolang fixtures need a Roder build with the `zerolang` feature".to_string());
+    } else if let Err(err) = run_workspace_setup(fixture, &workspace.path) {
         outcome = EvalOutcome::HarnessError;
         failure_class = Some(EvalFailureClass::Environment);
         failure_message = Some(err.to_string());

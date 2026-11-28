@@ -49,6 +49,7 @@ pub(crate) fn install_web_search(
         return Ok(());
     }
 
+    reject_configured_backends_not_built_in(&config)?;
     let selected = resolve_selected_web_search_provider(&config)?;
     builder.install(WebSearchRouterExtension::new(WebSearchRouterConfig {
         provider: selected.clone(),
@@ -147,6 +148,29 @@ fn install_namespaced_web_search_tools(
                 builder.install(SyntheticSearchExtension::with_config(provider_config))?;
             }
             None => {}
+        }
+    }
+    Ok(())
+}
+
+/// A backend with an API key configured is an explicit request; if this
+/// build leaves it out, say so instead of quietly picking another backend.
+fn reject_configured_backends_not_built_in(config: &DefaultWebSearchConfig) -> anyhow::Result<()> {
+    for (kind, provider_config) in [
+        (WebSearchProviderKind::Firecrawl, &config.firecrawl),
+        (WebSearchProviderKind::Perplexity, &config.perplexity),
+        (WebSearchProviderKind::Parallel, &config.parallel),
+        (WebSearchProviderKind::Synthetic, &config.synthetic),
+    ] {
+        let configured = provider_config
+            .api_key
+            .as_deref()
+            .is_some_and(|key| !key.trim().is_empty());
+        if configured && !compiled_in(kind) {
+            anyhow::bail!(
+                "web_search provider {:?} is not built into this Roder distribution",
+                kind.as_str()
+            );
         }
     }
     Ok(())
@@ -419,6 +443,31 @@ mod tests {
         assert!(!text.contains(secret));
         assert!(!text.contains("Authorization"));
         assert!(!text.contains("x-api-key"));
+    }
+
+    #[cfg(not(feature = "firecrawl-search"))]
+    #[test]
+    fn a_configured_backend_this_build_leaves_out_is_an_error() {
+        for provider in [None, Some(WebSearchProviderKind::Firecrawl)] {
+            let error = build_default_registry(DefaultRegistryConfig {
+                web_search: Some(DefaultWebSearchConfig {
+                    enabled: true,
+                    provider,
+                    firecrawl: provider_with_key("firecrawl-key"),
+                    tavily: provider_with_key("tavily-key"),
+                    ..DefaultWebSearchConfig::default()
+                }),
+                ..DefaultRegistryConfig::default()
+            })
+            .err()
+            .expect("firecrawl is not built in");
+            assert!(
+                error
+                    .to_string()
+                    .contains("not built into this Roder distribution"),
+                "{error}"
+            );
+        }
     }
 
     fn provider_with_key(key: &str) -> DefaultWebSearchProviderConfig {

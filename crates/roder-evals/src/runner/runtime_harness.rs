@@ -32,10 +32,6 @@ pub(super) fn build_fake_runtime(
     builder.tool_contributor(Arc::new(
         roder_ext_verification::VerificationToolContributor,
     ));
-    #[cfg(not(feature = "zerolang"))]
-    if fixture.tags.iter().any(|tag| tag == "zerolang") {
-        anyhow::bail!("zerolang fixtures need a Roder build with the `zerolang` feature");
-    }
     #[cfg(feature = "zerolang")]
     if fixture.tags.iter().any(|tag| tag == "zerolang") {
         builder.tool_contributor(Arc::new(roder_ext_zerolang::ZerolangToolContributor::new(

@@ -11512,6 +11512,7 @@ fn without_provider_credentials(config_dir: &std::path::Path) -> Vec<EnvVarGuard
         "CURSOR_API_KEY",
         "RODER_CURSOR_API_KEY",
         "CURSOR_ACCESS_TOKEN",
+        "CURSOR_AUTH_TOKEN",
         "OPENROUTER_API_KEY",
         "RODER_OPENROUTER_API_KEY",
     ] {

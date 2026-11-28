@@ -1225,7 +1225,14 @@ fn parse_backend(value: &str) -> anyhow::Result<Backend> {
         "codex" => Ok(Backend::Codex),
         #[cfg(feature = "antigravity")]
         "antigravity" => Ok(Backend::Antigravity),
+        #[cfg(not(feature = "antigravity"))]
+        "antigravity" => {
+            anyhow::bail!("the antigravity backend is not built into this Roder distribution")
+        }
+        #[cfg(feature = "antigravity")]
         _ => anyhow::bail!("unknown backend {value:?}; expected roder, codex, or antigravity"),
+        #[cfg(not(feature = "antigravity"))]
+        _ => anyhow::bail!("unknown backend {value:?}; expected roder or codex"),
     }
 }
 
@@ -3698,14 +3705,26 @@ fn auth_provider_kind(provider: &str) -> anyhow::Result<AuthProviderKind> {
         "codex" => Ok(AuthProviderKind::Codex),
         #[cfg(feature = "antigravity")]
         "antigravity" => Ok(AuthProviderKind::Antigravity),
+        #[cfg(not(feature = "antigravity"))]
+        "antigravity" => {
+            anyhow::bail!("antigravity is not built into this Roder distribution")
+        }
         "supergrok" | "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             Ok(AuthProviderKind::SuperGrok)
         }
         #[cfg(feature = "kimi-code")]
         "kimi-code" | "kimi_code" | "kimi" | "moonshot" => Ok(AuthProviderKind::KimiCode),
+        #[cfg(not(feature = "kimi-code"))]
+        "kimi-code" | "kimi_code" | "kimi" | "moonshot" => {
+            anyhow::bail!("kimi-code is not built into this Roder distribution")
+        }
         #[cfg(feature = "roder-cloud")]
         "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
             Ok(AuthProviderKind::RoderCloud)
+        }
+        #[cfg(not(feature = "roder-cloud"))]
+        "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
+            anyhow::bail!("roder-cloud is not built into this Roder distribution")
         }
         provider => anyhow::bail!("unsupported auth provider {provider:?}"),
     }
