@@ -56,9 +56,20 @@ impl Runtime {
         parent_thread_id: &ThreadId,
         target: &str,
     ) -> anyhow::Result<AgentTarget> {
+        Self::resolve_agent_target_in_teams(
+            parent_thread_id,
+            target,
+            &self.caller_agents(parent_thread_id).await,
+        )
+    }
+
+    pub(super) fn resolve_agent_target_in_teams(
+        parent_thread_id: &ThreadId,
+        target: &str,
+        teams: &[TeamState],
+    ) -> anyhow::Result<AgentTarget> {
         let target = target.trim();
         anyhow::ensure!(!target.is_empty(), "agent target must not be empty");
-        let teams = self.caller_agents(parent_thread_id).await;
         anyhow::ensure!(!teams.is_empty(), "caller is not part of an agent team");
         let caller_path = teams
             .iter()
@@ -68,12 +79,11 @@ impl Runtime {
             .unwrap_or_else(|| "/root".to_string());
         let relative_path = canonical_agent_path(&caller_path, target);
         let all_targets = teams
-            .into_iter()
+            .iter()
             .flat_map(|team| {
-                let team_id = team.id;
-                team.members.into_iter().map(move |member| AgentTarget {
-                    team_id: team_id.clone(),
-                    member,
+                team.members.iter().map(|member| AgentTarget {
+                    team_id: team.id.clone(),
+                    member: member.clone(),
                 })
             })
             .collect::<Vec<_>>();

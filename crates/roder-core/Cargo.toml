@@ -20,11 +20,11 @@ roder-roadmap.workspace = true
 roder-sandbox.workspace = true
 roder-skills.workspace = true
 regex.workspace = true
-serde = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
-uuid = { workspace = true, features = ["v4"] }
+uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]
 roder-ext-openai-responses.workspace = true

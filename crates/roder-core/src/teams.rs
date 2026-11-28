@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
+pub(crate) mod message_board;
+pub use message_board::TeamMessageBoard;
+
 #[derive(Debug, Clone)]
 pub struct TeamStartRequest {
     pub lead_thread_id: Option<ThreadId>,
@@ -33,11 +36,34 @@ pub struct TeamState {
     pub display_mode: AgentTeamDisplayMode,
     pub members: Vec<TeamMemberDescriptor>,
     pub mailbox: Vec<TeamMailboxMessage>,
+    #[serde(default, skip_serializing_if = "TeamMessageBoard::is_empty")]
+    pub board: TeamMessageBoard,
     pub tasks: Vec<TeamTaskDescriptor>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+}
+
+impl TeamState {
+    fn push_mailbox_message(
+        &mut self,
+        from_member_id: Option<TeamMemberId>,
+        to_member_id: TeamMemberId,
+        kind: TeamMailboxMessageKind,
+        text: String,
+    ) {
+        self.mailbox.push(TeamMailboxMessage {
+            id: uuid::Uuid::new_v4().to_string(),
+            team_id: self.id.clone(),
+            from_member_id,
+            to_member_id,
+            kind,
+            text,
+            delivered: false,
+            timestamp: OffsetDateTime::now_utc(),
+        });
+    }
 }
 
 #[derive(Debug)]
@@ -155,16 +181,7 @@ impl TeamManager {
         if !team.members.iter().any(|member| member.id == to_member_id) {
             anyhow::bail!("unknown team member {to_member_id:?}");
         }
-        team.mailbox.push(TeamMailboxMessage {
-            id: uuid::Uuid::new_v4().to_string(),
-            team_id: team_id.to_string(),
-            from_member_id,
-            to_member_id,
-            kind,
-            text,
-            delivered: false,
-            timestamp: OffsetDateTime::now_utc(),
-        });
+        team.push_mailbox_message(from_member_id, to_member_id, kind, text);
         team.updated_at = OffsetDateTime::now_utc();
         self.persist(&team).await?;
         teams.insert(team.id.clone(), team.clone());

@@ -10,6 +10,7 @@ use serde_json::json;
 use crate::runtime::Runtime;
 use crate::teams::TeamMemberStartRequest;
 
+mod message_board;
 mod spec;
 mod targets;
 mod wait;
@@ -36,6 +37,10 @@ impl Runtime {
         match call.name.as_str() {
             SPAWN_AGENT => {
                 self.spawn_agent_tool(parent_thread_id, parent_turn_id, call, arguments)
+                    .await
+            }
+            message_board::AGENT_MESSAGE_BOARD => {
+                self.message_board_tool(parent_thread_id, call, arguments)
                     .await
             }
             SEND_MESSAGE => {

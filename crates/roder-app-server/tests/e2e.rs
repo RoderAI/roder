@@ -7687,6 +7687,7 @@ async fn tools_list_exposes_default_coding_tools() {
         "apply_patch",
         "spawn_agent",
         "send_message",
+        "agent_message_board",
         "followup_task",
         "wait_agent",
         "list_agents",
@@ -11757,3 +11758,6 @@ mod thread_events;
 
 #[path = "thread_history.rs"]
 mod thread_history;
+
+#[path = "e2e/agent_message_board.rs"]
+mod agent_message_board;
