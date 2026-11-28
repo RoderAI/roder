@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
+use std::time::Instant;
 
 use roder_api::tools::{
     ToolCall, ToolContributor, ToolExecutionContext, ToolExecutionMode, ToolExecutor, ToolRegistry,
@@ -16,6 +17,7 @@ type InferenceBatch = Vec<InferenceEvent>;
 struct ScriptedBoardEngine(mpsc::UnboundedSender<Sample>);
 
 pub(super) struct Sample {
+    pub(super) observed_at: Instant,
     thread: String,
     request: AgentInferenceRequest,
     respond: oneshot::Sender<InferenceBatch>,
@@ -80,6 +82,18 @@ impl Sample {
         serde_json::from_str(&result.result).expect("board result is JSON")
     }
 
+    pub(super) fn mail_text(&self) -> String {
+        self.request
+            .transcript
+            .iter()
+            .filter_map(|item| match item {
+                TranscriptItem::UserMessage(user) => Some(user.text.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub(super) fn mail_count(&self, text: &str) -> usize {
         self.request
             .transcript
@@ -117,6 +131,7 @@ impl InferenceEngine for ScriptedBoardEngine {
         let (respond, response) = oneshot::channel();
         self.0
             .send(Sample {
+                observed_at: Instant::now(),
                 thread: ctx.thread_id.to_owned(),
                 request,
                 respond,
@@ -173,6 +188,10 @@ pub(super) struct BoardEvaluation {
 
 impl BoardEvaluation {
     pub(super) fn open(dir: &Path) -> Self {
+        Self::open_with_profile(dir, RuntimeProfile::Interactive)
+    }
+
+    pub(super) fn open_with_profile(dir: &Path, profile: RuntimeProfile) -> Self {
         let (send, samples) = mpsc::unbounded_channel();
         let mut builder = ExtensionRegistryBuilder::new();
         builder.inference_engine(Arc::new(ScriptedBoardEngine(send)));
@@ -181,16 +200,23 @@ impl BoardEvaluation {
         builder.thread_store_factory(Arc::new(JsonlThreadStoreFactory {
             base_path: dir.join("threads"),
         }));
-        let runtime = Arc::new(
-            Runtime::new(
-                builder.build().unwrap(),
-                RuntimeConfig {
-                    team_data_dir: Some(dir.join("teams")),
-                    ..RuntimeConfig::default()
-                },
-            )
-            .unwrap(),
-        );
+        let mut config = RuntimeConfig {
+            runtime_profile: profile,
+            team_data_dir: Some(dir.join("teams")),
+            ..RuntimeConfig::default()
+        };
+        if profile == RuntimeProfile::Eval {
+            builder
+                .install(roder_ext_task_ledger::TaskLedgerExtension)
+                .unwrap();
+            builder
+                .install(roder_ext_verification::VerificationExtension)
+                .unwrap();
+            builder.tool_contributor(roder_tools::builtin_coding_tools_contributor(dir).unwrap());
+            config.policy_mode = PolicyMode::AcceptAll;
+            config.reliability.empty_tool_call_nudges = 0;
+        }
+        let runtime = Arc::new(Runtime::new(builder.build().unwrap(), config).unwrap());
         let server = app_server_with_feature_config(
             runtime.clone(),
             AppServerFeatureConfig::default()
@@ -220,11 +246,21 @@ impl BoardEvaluation {
     }
 
     pub(super) async fn turn(&self, thread: &str, text: &str) -> String {
+        self.turn_with_ledger(thread, text, false).await
+    }
+
+    pub(super) async fn turn_with_ledger(
+        &self,
+        thread: &str,
+        text: &str,
+        required: bool,
+    ) -> String {
         let started: Value = request(
             &self.client,
             "turn/start",
             Some(json!({
-                "threadId": thread, "input": [{ "type": "text", "text": text }]
+                "threadId": thread, "input": [{ "type": "text", "text": text }],
+                "taskLedgerRequired": required
             })),
         )
         .await;

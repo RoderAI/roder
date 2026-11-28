@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use roder_api::teams::TeamMailboxMessageKind;
 use roder_core::runtime::RuntimeDrainOutcome;
 use serde_json::json;
@@ -8,8 +10,31 @@ use super::*;
 mod harness;
 use harness::BoardEvaluation;
 
+#[path = "agent_message_board/burst.rs"]
+mod burst;
+#[path = "agent_message_board/measurements.rs"]
+mod measurements;
+#[path = "agent_message_board/verification.rs"]
+mod verification;
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
+    exercise_handoff(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn agent_message_board_recovers_child_replies_after_restart_before_resuming() {
+    exercise_handoff(true).await;
+}
+
+pub(super) struct HandoffTimings {
+    pub claim_race: Duration,
+    pub direct_delivery: Duration,
+    pub handoff_delivery: Duration,
+    pub interrupt_recovery: Duration,
+}
+
+pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimings {
     let dir = tempfile::tempdir().unwrap();
     let mut eval = BoardEvaluation::open(dir.path());
     let mut notifications = eval.notifications();
@@ -82,12 +107,14 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
     }
     let alpha_sample = eval.sample(&alpha.thread_id).await;
     let beta_sample = eval.sample(&beta.thread_id).await;
+    let claim_started = Instant::now();
     for sample in [alpha_sample, beta_sample] {
         assert_eq!(sample.output("discover")["posts"][0]["id"], *post_id);
         sample.board("claim", json!({"action": "claim", "post_id": post_id}));
     }
     let alpha_sample = eval.sample(&alpha.thread_id).await;
     let beta_sample = eval.sample(&beta.thread_id).await;
+    let claim_race = alpha_sample.observed_at.max(beta_sample.observed_at) - claim_started;
     let alpha_won = !alpha_sample.result("claim").is_error;
     assert_eq!(
         alpha_won,
@@ -119,6 +146,7 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
     let reply_id = reply["id"].as_str().unwrap();
     assert_eq!(reply["author"], owner.id);
     assert_eq!(reply["reply_to"], *post_id);
+    let direct_started = Instant::now();
     sample.call(
         "direct",
         "send_message",
@@ -128,6 +156,11 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
     );
     let sample = eval.sample(&owner.thread_id).await;
     assert!(!sample.result("direct").is_error);
+    let receiver = eval
+        .sample_after_mail(receiver, "Synthetic peer-only message.")
+        .await;
+    let direct_delivery = receiver.observed_at - direct_started;
+    let handoff_started = Instant::now();
     sample.board(
         "handoff",
         json!({"action": "handoff", "post_id": post_id, "target": peer_path}),
@@ -135,9 +168,11 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
     let sample = eval.sample(&owner.thread_id).await;
     assert_eq!(sample.output("handoff")["work"]["owner"], peer.id);
     sample.finish("Synthetic claimant finished.");
-    eval.sample_after_mail(receiver, "was handed off to you in #build.")
-        .await
-        .board("read", json!({"action": "read_post", "post_id": post_id}));
+    let receiver = eval
+        .sample_after_mail(receiver, "was handed off to you in #build.")
+        .await;
+    let handoff_delivery = receiver.observed_at - handoff_started;
+    receiver.board("read", json!({"action": "read_post", "post_id": post_id}));
     let sample = eval.sample(&peer.thread_id).await;
     assert_eq!(sample.output("read")["work"]["owner"], peer.id);
     assert_eq!(
@@ -173,6 +208,7 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
             .count(),
         2
     );
+    let interrupt_started = Instant::now();
     let _: TurnInterruptResult = request(
         &eval.client,
         "turn/interrupt",
@@ -181,11 +217,26 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
         })),
     )
     .await;
-    eval.turn(&root, "Summarize the verified work.").await;
+    if !restart_before_resume {
+        eval.turn(&root, "Summarize the verified work.").await;
+    }
     let interrupted =
         wait_for_notification(&mut notifications, "turn/completed", Some(&root)).await;
     assert_eq!(interrupted.params["turn"]["status"], "interrupted");
+    if restart_before_resume {
+        assert!(matches!(
+            eval.runtime
+                .drain_active_turns(Duration::from_secs(5))
+                .await,
+            RuntimeDrainOutcome::Clean { .. }
+        ));
+        drop(eval);
+        eval = BoardEvaluation::open(dir.path());
+        notifications = eval.notifications();
+        eval.turn(&root, "Summarize the verified work.").await;
+    }
     let sample = eval.sample(&root).await;
+    let interrupt_recovery = sample.observed_at - interrupt_started;
     assert_eq!(sample.mail_count("Synthetic claimant finished."), 1);
     assert_eq!(sample.mail_count("Synthetic verifying child finished."), 1);
     assert_eq!(sample.mail_count("Synthetic peer-only message."), 0);
@@ -270,4 +321,10 @@ async fn agent_message_board_evaluates_peer_handoff_and_interrupt_recovery() {
     assert!(sample.result("outside-notify").is_error);
     sample.finish("No access to the other team.");
     wait_for_notification(&mut notifications, "turn/completed", Some(&outsider)).await;
+    HandoffTimings {
+        claim_race,
+        direct_delivery,
+        handoff_delivery,
+        interrupt_recovery,
+    }
 }
