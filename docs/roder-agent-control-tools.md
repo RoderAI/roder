@@ -48,10 +48,12 @@ Example:
 ```
 
 Roder normalizes `Code Review` to `code_review` and returns `/root/code_review`
-for a child spawned by the lead. It lowercases letters and converts spaces and
-punctuation to underscores where they separate words. If that path already
-exists, choose another name or use the returned path to follow up with the
-existing agent.
+for a child spawned by the lead. It normalizes equivalent Unicode spellings,
+lowercases letters, and keeps existing underscores. Runs of spaces and other
+punctuation become one underscore between words and are dropped at the ends.
+A name made entirely of symbols gets a stable path such as `task_1f9ea` for
+`🧪`. Roder rejects blank names. If the resulting path already exists, choose
+another name or follow up with the existing agent at that path.
 
 Context and selection rules:
 

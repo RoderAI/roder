@@ -3973,6 +3973,7 @@ dependencies = [
  "tempfile",
  "time",
  "tokio",
+ "unicode-normalization",
  "uuid",
 ]
 

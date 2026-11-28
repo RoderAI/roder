@@ -1,6 +1,6 @@
 ---
 roder: patch
-roder-core: patch
+roder-core: minor
 ---
 
 # Accept ordinary subagent task names

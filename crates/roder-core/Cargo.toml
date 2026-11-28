@@ -24,6 +24,7 @@ serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 time.workspace = true
 tokio.workspace = true
+unicode-normalization.workspace = true
 uuid = { workspace = true, features = ["v4", "serde"] }
 
 [dev-dependencies]

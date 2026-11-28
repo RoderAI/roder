@@ -4,6 +4,7 @@ use std::sync::Arc;
 use roder_api::tools::{ToolExecutionContext, ToolExecutor, ToolRegistry, ToolResult, ToolSpec};
 use serde::Deserialize;
 use serde_json::json;
+use unicode_normalization::UnicodeNormalization as _;
 
 use super::message_board::{self, AGENT_MESSAGE_BOARD};
 
@@ -298,7 +299,8 @@ pub(super) fn normalize_fork_turns(value: Option<&str>) -> Result<String, &'stat
 }
 
 pub(super) fn normalize_task_name(task_name: &str) -> Option<String> {
-    let name = task_name.trim().to_lowercase();
+    let name = task_name.trim().nfc().collect::<String>().to_lowercase();
+    let name = name.nfc().collect::<String>();
     if name.is_empty() {
         return None;
     }
@@ -361,6 +363,7 @@ mod tests {
             ("  Review-Code / Phase 2  ", "review_code_phase_2"),
             ("../../Deploy", "deploy"),
             ("RÉSUMÉ 审核", "résumé_审核"),
+            ("RE\u{301}SUME\u{301} 审核", "résumé_审核"),
             ("🧪", "task_1f9ea"),
             ("..", "task_2e_2e"),
         ] {
