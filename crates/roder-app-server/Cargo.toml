@@ -146,5 +146,7 @@ roder-ext-jsonl-thread-store.workspace = true
 roder-ext-git.workspace = true
 roder-ext-process-host.workspace = true
 roder-ext-subagents.workspace = true
+roder-ext-task-ledger.workspace = true
+roder-ext-verification.workspace = true
 roder-extension-host.workspace = true
 roder-tools.workspace = true

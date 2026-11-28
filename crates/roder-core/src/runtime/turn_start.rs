@@ -145,10 +145,10 @@ impl Runtime {
                 }
             };
 
-            let team_status = if let Some((team_id, member)) = team_member {
+            let team_status = if let Some((team_id, member)) = &team_member {
                 let updated = match self
                     .teams
-                    .update_member(&team_id, &member.id, |member| {
+                    .update_member(team_id, &member.id, |member| {
                         member.current_turn_id = Some(turn_id.clone());
                         member.status = TeamMemberStatus::Running;
                         member.final_message = None;
@@ -172,7 +172,7 @@ impl Runtime {
                     .find(|candidate| candidate.id == member.id)
                     .map(|member| {
                         RoderEvent::TeamMemberStatusChanged(TeamMemberStatusChanged {
-                            team_id,
+                            team_id: team_id.clone(),
                             member_id: member.id,
                             member_thread_id: member.thread_id,
                             status: TeamMemberStatus::Running,
@@ -235,6 +235,22 @@ impl Runtime {
             tokio::spawn(async move {
                 for envelope in &start_events {
                     runtime.dispatch_event_sinks(envelope).await;
+                }
+                // Pick up mail accepted between the initial reservation and active
+                // turn registration. New sends can now steer this turn directly.
+                if let Some((team_id, member)) = &team_member
+                    && let Err(error) = runtime
+                        .deliver_pending_team_mailbox(
+                            team_id,
+                            &member.id,
+                            thread_id_for_task.clone(),
+                            turn_id_for_task.clone(),
+                        )
+                        .await
+                {
+                    eprintln!(
+                        "could not pick up pending team mail for turn {turn_id_for_task}: {error}"
+                    );
                 }
                 let result = Abortable::new(
                     runtime.run_turn(
@@ -387,12 +403,12 @@ impl Runtime {
                     }
                     Ok(Ok(TurnRunOutcome::Completed)) => {}
                 }
+                let unconsumed_steers =
+                    runtime.take_unconsumed_turn_steers(&turn_id_for_task).await;
                 runtime
                     .teams
                     .release_mailbox_reservations_for_turn(&turn_id_for_task)
                     .await;
-                let unconsumed_steers =
-                    runtime.take_unconsumed_turn_steers(&turn_id_for_task).await;
                 runtime.turn_usage.lock().await.remove(&turn_id_for_task);
                 if let Some(drain) = runtime.turn_drains.write().await.remove(&turn_id_for_task) {
                     drain.completed.store(true, Ordering::Release);

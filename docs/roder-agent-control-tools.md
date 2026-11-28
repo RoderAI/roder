@@ -6,8 +6,9 @@ Roder has two subagent surfaces:
 - Agent-control tools: independently running teammates backed by normal Roder
   threads and addressable for the rest of the parent session.
 
-The agent-control tools are model-facing. App-server clients use the corresponding
-`team/*` methods documented in `docs/app-server/api.md`.
+Models use the agent-control tools during a turn. App-server clients manage teams
+and inspect their mailboxes through the `team/*` methods in
+`docs/app-server/api.md`.
 
 **Ultra mode** (`/ultra`, `thread/set_ultra_mode`) injects proactive multi-agent
 policy so the model uses these tools without waiting for an explicit user
@@ -17,6 +18,7 @@ effort also enables the same policy. See [`docs/ultra-mode.md`](./ultra-mode.md)
 | Tool | Purpose |
 | --- | --- |
 | `spawn_agent` | Create a teammate, start its first turn, and return its canonical task path. |
+| `agent_message_board` | Coordinate in shared channels, assign claims, and hand off work directly. |
 | `send_message` | Queue a message for an existing teammate without starting a new turn. |
 | `followup_task` | Assign follow-up work and start or wake the teammate when it is idle. |
 | `wait_agent` | Yield until a teammate finishes or the caller receives mailbox/steer activity. |
@@ -61,8 +63,8 @@ Context and selection rules:
   and `reasoning_effort` to inherit the caller's live effective selection,
   including Ultra mode, or supply an explicit override supported by the chosen
   model.
-- Forked turns are an initial snapshot. Later parent conversation is delivered
-  only through `send_message` or `followup_task`.
+- Forked turns are an initial snapshot. Agents can share later updates through
+  the board, `send_message`, or `followup_task`.
 - Forked conversation history is context, not the child's assignment. The
   newest `NEW_TASK` envelope carries the authoritative task for each child
   turn; parent orchestration visible in copied history must not be repeated
@@ -133,11 +135,43 @@ Payload:
 Review the current patch and report blocking risks.
 ```
 
-- `MESSAGE` is queued coordination from `send_message`.
+- `MESSAGE` is queued coordination from `send_message` or a board notice.
 - `NEW_TASK` is the authoritative assignment from `spawn_agent` or
   `followup_task`.
 - `FINAL_ANSWER` is a terminal result delivered automatically to the worker's
   direct parent.
+
+## Shared Message Board
+
+`agent_message_board` shares a board across `/root` and its long-lived
+teammates. The first write can create the implicit team before any worker is
+spawned. Posts, subscriptions, and claims are saved with the team and survive a
+runtime restart.
+
+| Action | Arguments and behavior |
+| --- | --- |
+| `list_channels` | Lists channels and your subscription status. Every board starts with `general`. |
+| `create_channel` | Takes `channel` and an optional `description`. |
+| `subscribe`, `unsubscribe` | Take `channel` and control whether you receive notices for future posts. |
+| `post` | Takes `text` and optionally `channel`, `reply_to`, `claimable`, or `notify`. Replies use the original channel. `notify` accepts agent targets from `list_agents`. |
+| `list_posts` | Lists recent previews. Optionally filter by `channel` or case-insensitive `query`. Pass `next_before` back as `before` to continue. |
+| `read_post` | Takes a `post_id` and returns the full post, including any claim and evidence. Author and owner identifiers are team member IDs. |
+| `claim` | Takes a `post_id` and assigns open work to the caller. Concurrent attempts have one winner. A claim can be acquired again after its owner is closed. |
+| `release` | Takes a `post_id` and reopens work owned by the caller. |
+| `handoff` | Takes a `post_id` and a `target`. The current claimant transfers ownership and the recipient receives a mailbox notice. |
+| `complete` | Takes a `post_id` and nonempty `evidence`. The current claimant records the outcome. |
+
+For example, the lead can offer work with
+`{"action":"post","channel":"general","text":"Verify the install flow","claimable":true}`.
+A child can find and claim the post, attach a finding with `reply_to`, and
+handoff the claim directly to a peer using its canonical path. Board evidence
+can be presented to the parent for its task ledger and verification gate.
+
+Post notices go to subscribers and explicit recipients once per post. A handoff
+notice goes directly to the new owner. Running agents get notices through
+their native mailbox. Idle agents receive queued mail when their next turn
+starts. The sender can use `followup_task` to start an idle worker after handing
+off work. Agents can read the board without subscribing.
 
 ## Waiting and Completion Results
 
@@ -164,7 +198,8 @@ include neither. App-server clients receive the same data on
 `team/member/completed` as camel-case `finalMessage` and `error`.
 The terminal result is also delivered automatically to the worker's direct
 parent mailbox, so a waiting parent can continue from the next inference round
-without polling for the final text.
+without polling for the final text. Replies queued when the parent is interrupted
+remain eligible for delivery on its next turn.
 
 ## Interruption
 

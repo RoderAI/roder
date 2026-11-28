@@ -15,6 +15,41 @@ roder eval report eval-run --output-dir /tmp/roder-evals --max-bytes 65536
 
 If `--output-dir` is omitted, the CLI uses `RODER_EVAL_OUTPUT_DIR`, then `evals/reports`.
 
+## Agent message board scenarios
+
+Run the board scenarios through the local app-server and a scripted provider.
+
+```sh
+mise exec -- cargo test --locked -p roder-app-server --features e2e-tests --test e2e agent_message_board
+```
+
+| Scenario | Assertions |
+| --- | --- |
+| First board reads | An empty board exposes its default channel without creating a team or writing board state. |
+| Peer coordination | One of two agents wins the claim. The loser cannot release it. Sibling mail and handoff reach their intended recipient once. The parent receives both child replies once after interruption. |
+| Cold recovery | The app-server restarts after the parent is interrupted and before its next turn. Both unconsumed replies arrive, and the stored board retains the claim and evidence. |
+| Delivery burst | Sixteen posts reach a subscriber once and in order. Explicit targeting and subscription deduplicate, the author receives no echo, and unsubscribe suppresses subsequent channel notices. An explicit notice queued to the idle agent survives restart. |
+| Ledger and verification | A child reads a real fixture file and records evidence on the board. The parent uses that evidence to complete its task ledger. The verification gate blocks a premature final answer and permits completion after review. |
+
+Run the offline latency measurement separately. The command repeats the handoff
+and burst scenarios 20 times each and prints an `agent_message_board_metrics`
+line containing JSON with the sample count, median, p95, and maximum in
+milliseconds.
+
+```sh
+mise exec -- cargo test --locked -p roder-app-server --features e2e-tests --test e2e \
+  agent_message_board_measure_scenarios -- --ignored --nocapture --test-threads=1
+```
+
+A post round trip runs from tool submission to the sender's next model request
+with the result. One sender submits the 16 burst posts serially while the
+recipient is active. Direct mail and handoff run from tool submission to the
+recipient's next model request containing the notice. The parent interruption
+metric resumes the parent in the same runtime. Both recovery metrics end at the
+first model request containing the queued mail. The byte counts cover
+the original post bodies and the stored notice bodies. Compare timings on the
+same host, Cargo profile, and filesystem.
+
 Run the focused Terminal-Bench diagnostic loop before another Harbor full run:
 
 ```sh

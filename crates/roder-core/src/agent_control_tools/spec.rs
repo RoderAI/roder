@@ -4,6 +4,8 @@ use roder_api::tools::{ToolExecutionContext, ToolExecutor, ToolRegistry, ToolRes
 use serde::Deserialize;
 use serde_json::json;
 
+use super::message_board::{self, AGENT_MESSAGE_BOARD};
+
 pub(super) const SPAWN_AGENT: &str = "spawn_agent";
 pub(super) const SEND_MESSAGE: &str = "send_message";
 pub(super) const FOLLOWUP_TASK: &str = "followup_task";
@@ -24,7 +26,13 @@ pub(crate) fn contribute_agent_control_tools(registry: &mut ToolRegistry) -> any
 pub(crate) fn is_agent_control_tool(name: &str) -> bool {
     matches!(
         name,
-        SPAWN_AGENT | SEND_MESSAGE | FOLLOWUP_TASK | WAIT_AGENT | LIST_AGENTS | INTERRUPT_AGENT
+        SPAWN_AGENT
+            | SEND_MESSAGE
+            | FOLLOWUP_TASK
+            | WAIT_AGENT
+            | LIST_AGENTS
+            | INTERRUPT_AGENT
+            | AGENT_MESSAGE_BOARD
     )
 }
 
@@ -32,6 +40,7 @@ pub(crate) fn is_agent_control_tool(name: &str) -> bool {
 enum AgentControlToolKind {
     SpawnAgent,
     SendMessage,
+    MessageBoard,
     FollowupTask,
     WaitAgent,
     ListAgents,
@@ -39,10 +48,11 @@ enum AgentControlToolKind {
 }
 
 impl AgentControlToolKind {
-    fn all() -> [Self; 6] {
+    fn all() -> [Self; 7] {
         [
             Self::SpawnAgent,
             Self::SendMessage,
+            Self::MessageBoard,
             Self::FollowupTask,
             Self::WaitAgent,
             Self::ListAgents,
@@ -54,6 +64,7 @@ impl AgentControlToolKind {
         match self {
             Self::SpawnAgent => SPAWN_AGENT,
             Self::SendMessage => SEND_MESSAGE,
+            Self::MessageBoard => AGENT_MESSAGE_BOARD,
             Self::FollowupTask => FOLLOWUP_TASK,
             Self::WaitAgent => WAIT_AGENT,
             Self::ListAgents => LIST_AGENTS,
@@ -65,6 +76,9 @@ impl AgentControlToolKind {
         match self {
             Self::SpawnAgent => {
                 "Spawn a subagent for a concrete bounded task. The child gets a canonical task path, inherits the live model and reasoning by default, and can recursively use the same agent-control tools up to five levels below /root."
+            }
+            Self::MessageBoard => {
+                "Use the durable board shared by this agent team. Post findings in channels, subscribe or notify peers, find work with list_posts, claim work, hand it off directly to another agent, and complete it with evidence."
             }
             Self::SendMessage => {
                 "Queue a message for an existing agent without starting a new turn. Running agents receive it at an inference boundary."
@@ -122,6 +136,7 @@ impl AgentControlToolKind {
                 "required": ["task_name", "message"],
                 "additionalProperties": false
             }),
+            Self::MessageBoard => message_board::parameters(),
             Self::SendMessage | Self::FollowupTask => json!({
                 "type": "object",
                 "properties": {

@@ -662,6 +662,7 @@ fn manager_test_team(id: &str) -> TeamState {
             ),
         ],
         mailbox: Vec::new(),
+        board: Default::default(),
         tasks: Vec::new(),
         created_at: now,
         updated_at: now,

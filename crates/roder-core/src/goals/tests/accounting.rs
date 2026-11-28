@@ -218,6 +218,7 @@ async fn descendant_tokens_roll_up_once_through_nested_agents() {
                 grandchild_member,
             ],
             mailbox: vec![],
+            board: Default::default(),
             tasks: vec![],
             created_at: now,
             updated_at: now,

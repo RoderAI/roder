@@ -614,7 +614,7 @@ pub struct Runtime {
     team_member_turn_contexts: Mutex<HashMap<ThreadId, InheritedTurnContext>>,
     workspace: PathBuf,
     pub(crate) teams: TeamManager,
-    agent_team_spawn_lock: Mutex<()>,
+    pub(crate) agent_team_spawn_lock: Mutex<()>,
     pub(crate) roadmaps: Mutex<roder_roadmap::RoadmapRuntime>,
     /// Completed reviews, most recent last, so a later publish can resolve a
     /// review id back to its findings. Bounded; see `review::run`.
@@ -1983,6 +1983,7 @@ impl Runtime {
                 display_mode: req.display_mode,
                 members,
                 mailbox: Vec::new(),
+                board: Default::default(),
                 tasks: Vec::new(),
                 created_at: now,
                 updated_at: now,
@@ -2088,26 +2089,49 @@ impl Runtime {
         if member.status == TeamMemberStatus::Closed {
             anyhow::bail!("subagent {} is closed", member.name);
         }
-        let from_member_id = team
+        let sender = team
             .members
             .iter()
-            .find(|candidate| candidate.thread_id == *caller_thread_id)
-            .map(|candidate| candidate.id.clone());
+            .find(|candidate| {
+                candidate.thread_id == *caller_thread_id
+                    && candidate.status != TeamMemberStatus::Closed
+            })
+            .ok_or_else(|| anyhow::anyhow!("caller is not an active member of this team"))?;
         self.teams
             .append_mailbox_message(
                 team_id,
-                from_member_id,
+                Some(sender.id.clone()),
                 member_id.to_string(),
                 TeamMailboxMessageKind::Message,
                 message,
             )
             .await?;
-        let Some(turn_id) = self.active_turn_for_thread(&member.thread_id).await else {
-            return Ok(None);
-        };
-        self.deliver_pending_team_mailbox(team_id, member_id, member.thread_id, turn_id.clone())
-            .await?;
-        Ok(Some(turn_id))
+        Ok(self
+            .try_deliver_team_mailbox_to_active_turn(team_id, &member)
+            .await)
+    }
+
+    pub(crate) async fn try_deliver_team_mailbox_to_active_turn(
+        &self,
+        team_id: &str,
+        member: &TeamMemberDescriptor,
+    ) -> Option<TurnId> {
+        let turn_id = self.active_turn_for_thread(&member.thread_id).await?;
+        // Admission may close after the lookup. The persisted entry remains available
+        // for the next turn if we cannot steer this one.
+        if let Err(error) = self
+            .deliver_pending_team_mailbox(
+                team_id,
+                &member.id,
+                member.thread_id.clone(),
+                turn_id.clone(),
+            )
+            .await
+        {
+            eprintln!("could not steer turn {turn_id} with pending team mail: {error}");
+            return None;
+        }
+        Some(turn_id)
     }
 
     /// Deliver queued messages and start an idle agent, or steer its active turn.
@@ -2253,13 +2277,6 @@ impl Runtime {
         }
         self.interrupt_turn(member.thread_id.clone(), turn_id.clone())
             .await?;
-        // Make queued mailbox work immediately eligible for the replacement turn while the
-        // lifecycle lock still prevents a follow-up from starting. Delivery acknowledgements
-        // are turn-owned, so a late acknowledgement from the aborted turn cannot steal a
-        // reservation acquired by its replacement.
-        self.teams
-            .release_mailbox_reservations_for_turn(&turn_id)
-            .await;
         self.teams
             .update_member(team_id, member_id, |member| {
                 member.status = TeamMemberStatus::Interrupted;
@@ -2461,19 +2478,9 @@ impl Runtime {
                 )
                 .await
                 .is_ok();
-            if mailbox_appended
-                && let Some(parent_turn_id) = self.active_turn_for_thread(parent_thread_id).await
-            {
-                // The parent may finish between the active-turn lookup and enqueue. Its durable
-                // mailbox entry remains pending for the next turn, while terminal observers must
-                // still receive TeamMemberCompleted for this child.
+            if mailbox_appended {
                 let _ = self
-                    .deliver_pending_team_mailbox(
-                        &team_id,
-                        &parent.id,
-                        parent_thread_id.clone(),
-                        parent_turn_id,
-                    )
+                    .try_deliver_team_mailbox_to_active_turn(&team_id, parent)
                     .await;
             }
         }
@@ -3349,6 +3356,11 @@ impl Runtime {
             )
             .await;
             handle.abort.abort();
+            // The old turn is no longer steerable. Make its unacknowledged mail
+            // available before a replacement turn can be started after this call.
+            self.teams
+                .release_mailbox_reservations_for_turn(&turn_id)
+                .await;
             self.sync_turn_goal_usage(&thread_id, &turn_id).await?;
             if reason == TurnLifecycleReason::UserInterrupt {
                 self.thread_events.remove_thread(&thread_id).await;
