@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 mod acp;
 mod agent_node;
+#[cfg(feature = "antigravity")]
 mod antigravity_auth;
+#[cfg(feature = "antigravity")]
 mod antigravity_setup;
 mod automations;
 mod backend_relaunch;
@@ -33,6 +35,7 @@ mod tui_config;
 mod version;
 mod webwright;
 mod workflows;
+#[cfg(feature = "zerolang")]
 mod zerolang;
 
 use automations::run_automations_cli;
@@ -71,6 +74,7 @@ use roder_core::{
     Runtime, RuntimeConfig, RuntimeDynamicWorkflowConfig, RuntimeReliabilityConfig,
     RuntimeSpeedPolicyConfig, validate_edit_tool,
 };
+#[cfg(feature = "antigravity")]
 use roder_ext_antigravity_backend::AntigravityBackendExtension;
 use roder_ext_codex_backend::CodexBackendExtension;
 use roder_ext_subagents::{AgentLoadConfig, load_agent_definitions};
@@ -164,7 +168,10 @@ async fn run_cli() -> anyhow::Result<()> {
         return webwright::run_webwright_cli(&args[1..]).await;
     }
     if matches!(args.first().map(String::as_str), Some("zerolang")) {
+        #[cfg(feature = "zerolang")]
         return zerolang::run_zerolang_cli(&args[1..]).await;
+        #[cfg(not(feature = "zerolang"))]
+        anyhow::bail!("zerolang is not built into this Roder distribution");
     }
     if matches!(args.first().map(String::as_str), Some("ps")) {
         return run_ps_cli(&args[1..]).await;
@@ -259,6 +266,7 @@ async fn run_cli() -> anyhow::Result<()> {
     let args = packages::apply_ephemeral_package_args(&args)?;
     let cli_options = parse_cli_options(&args)?;
     let cli_backend = cli_options.backend;
+    #[cfg(feature = "antigravity")]
     if cli_backend == Backend::Antigravity && !antigravity_setup::prepare_tui().await? {
         return Ok(());
     }
@@ -1127,6 +1135,7 @@ enum Backend {
     #[default]
     Roder,
     Codex,
+    #[cfg(feature = "antigravity")]
     Antigravity,
 }
 
@@ -1135,6 +1144,7 @@ impl Backend {
         match self {
             Backend::Roder => "roder",
             Backend::Codex => "codex",
+            #[cfg(feature = "antigravity")]
             Backend::Antigravity => "antigravity",
         }
     }
@@ -1173,6 +1183,7 @@ fn selected_agent_backend(backend: Backend) -> anyhow::Result<Option<Arc<dyn Age
             );
             "codex"
         }
+        #[cfg(feature = "antigravity")]
         Backend::Antigravity => {
             registry.install(AntigravityBackendExtension)?;
             registry.grant_capability(
@@ -1212,6 +1223,7 @@ fn parse_backend(value: &str) -> anyhow::Result<Backend> {
     match value {
         "roder" => Ok(Backend::Roder),
         "codex" => Ok(Backend::Codex),
+        #[cfg(feature = "antigravity")]
         "antigravity" => Ok(Backend::Antigravity),
         _ => anyhow::bail!("unknown backend {value:?}; expected roder, codex, or antigravity"),
     }
@@ -1282,7 +1294,7 @@ pub(crate) async fn build_runtime_with_config(
     let config_dir = roder_config::config_dir();
     let keys = provider_keys(&cfg);
     let web_search = resolve_web_search_config(cfg.web_search.as_ref())?;
-    let zerolang = resolve_zerolang_config(cfg.zerolang.as_ref());
+    let zerolang = cfg.zerolang.clone();
     let policy_mode = resolve_policy_mode(&options, &cfg)?;
     let runtime_profile = resolve_runtime_profile(&options, &cfg)?;
     let speed_policy = resolve_speed_policy_config(cfg.speed_policy.as_ref());
@@ -1536,6 +1548,11 @@ fn resolve_browser_use_config(
     if !browser_use.enabled {
         return None;
     }
+    if !cfg!(feature = "browser-use") {
+        eprintln!("warning: browser-use is not built into this Roder distribution");
+        return None;
+    }
+    #[cfg(feature = "browser-use")]
     if flag {
         let probe = roder_ext_browser_use::BrowserUseConfig {
             uvx: browser_use.uvx.clone(),
@@ -1555,16 +1572,6 @@ fn resolve_review_config(
         default_publisher: cfg.and_then(|cfg| cfg.default_publisher.clone()),
         model: cfg.and_then(|cfg| cfg.model.clone()),
     }
-}
-
-fn resolve_zerolang_config(
-    cfg: Option<&roder_config::ZerolangConfig>,
-) -> Option<roder_ext_zerolang::ZerolangConfig> {
-    cfg.map(|cfg| roder_ext_zerolang::ZerolangConfig {
-        binary: cfg.binary.clone(),
-        timeout_seconds: cfg.timeout_seconds,
-        artifact_dir: cfg.artifact_dir.clone(),
-    })
 }
 
 fn resolve_media_generation_config(
@@ -1737,6 +1744,7 @@ fn resolve_session_store_config(
     };
     match config.store.trim().to_ascii_lowercase().as_str() {
         "" | "jsonl" | "jsonl-thread-store" => Ok(SessionStoreConfig::Jsonl),
+        #[cfg(feature = "postgres-session")]
         "postgres" | "postgres-session" => {
             let postgres = config.postgres.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("[sessions.postgres] is required when sessions.store = 'postgres'")
@@ -1756,6 +1764,7 @@ fn resolve_session_store_config(
             resolved.max_connections = postgres.max_connections;
             Ok(SessionStoreConfig::Postgres(resolved))
         }
+        #[cfg(feature = "mysql-session")]
         "mysql" | "mysql-session" => {
             let mysql = config.mysql.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("[sessions.mysql] is required when sessions.store = 'mysql'")
@@ -1773,6 +1782,14 @@ fn resolve_session_store_config(
             resolved.max_connections = mysql.max_connections;
             Ok(SessionStoreConfig::Mysql(resolved))
         }
+        #[cfg(not(feature = "postgres-session"))]
+        "postgres" | "postgres-session" => {
+            anyhow::bail!("the postgres session store is not built into this Roder distribution")
+        }
+        #[cfg(not(feature = "mysql-session"))]
+        "mysql" | "mysql-session" => {
+            anyhow::bail!("the mysql session store is not built into this Roder distribution")
+        }
         other => {
             anyhow::bail!(
                 "unsupported sessions.store {other:?}; expected 'jsonl', 'postgres', or 'mysql'"
@@ -1781,6 +1798,7 @@ fn resolve_session_store_config(
     }
 }
 
+#[cfg(any(feature = "postgres-session", feature = "mysql-session"))]
 fn resolve_config_secret(value: Option<&str>, env_name: Option<&str>) -> Option<String> {
     value
         .filter(|value| !value.trim().is_empty())
@@ -3445,6 +3463,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
             let provider_args = args.get(2..).unwrap_or(&[]);
             match auth_provider_kind(provider)? {
+                #[cfg(feature = "antigravity")]
                 AuthProviderKind::Antigravity => {
                     ensure_no_auth_provider_args(provider_args)?;
                     antigravity_auth::login().await?;
@@ -3468,10 +3487,12 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                         eprintln!("Signed in with SuperGrok");
                     }
                 }
+                #[cfg(feature = "roder-cloud")]
                 AuthProviderKind::RoderCloud => {
                     ensure_no_auth_provider_args(provider_args)?;
                     roder_cloud_login().await?;
                 }
+                #[cfg(feature = "kimi-code")]
                 AuthProviderKind::KimiCode => {
                     kimi_code_login(provider_args).await?;
                 }
@@ -3481,6 +3502,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
         Some("status") => {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
             match auth_provider_kind(provider)? {
+                #[cfg(feature = "antigravity")]
                 AuthProviderKind::Antigravity => {
                     ensure_no_auth_provider_args(args.get(2..).unwrap_or(&[]))?;
                     antigravity_auth::status().await?;
@@ -3499,6 +3521,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     Some(_) => println!("supergrok: signed in"),
                     None => println!("supergrok: signed out"),
                 },
+                #[cfg(feature = "kimi-code")]
                 AuthProviderKind::KimiCode => {
                     if roder_config::provider_api_key(PROVIDER_KIMI_CODE).is_some()
                         || env_nonempty("KIMI_CODE_API_KEY").is_some()
@@ -3512,6 +3535,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                         }
                     }
                 }
+                #[cfg(feature = "roder-cloud")]
                 AuthProviderKind::RoderCloud => {
                     let configured = env_nonempty("RODER_CLOUD_API_KEY")
                         .or_else(|| env_nonempty("RODER_CLOUD_TOKEN"))
@@ -3529,6 +3553,7 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
         Some("logout") => {
             let provider = args.get(1).map(String::as_str).unwrap_or("codex");
             match auth_provider_kind(provider)? {
+                #[cfg(feature = "antigravity")]
                 AuthProviderKind::Antigravity => {
                     ensure_no_auth_provider_args(args.get(2..).unwrap_or(&[]))?;
                     antigravity_auth::logout().await?;
@@ -3541,11 +3566,13 @@ async fn run_auth(args: &[String]) -> anyhow::Result<()> {
                     roder_supergrok_auth::logout()?;
                     println!("supergrok: signed out");
                 }
+                #[cfg(feature = "kimi-code")]
                 AuthProviderKind::KimiCode => {
                     roder_ext_kimi_code::logout()?;
                     roder_config::delete_provider_api_key(PROVIDER_KIMI_CODE)?;
                     println!("kimi-code: signed out and API key removed from config");
                 }
+                #[cfg(feature = "roder-cloud")]
                 AuthProviderKind::RoderCloud => {
                     roder_config::delete_provider_api_key(PROVIDER_RODER_CLOUD)?;
                     println!("roder-cloud: API key removed from config");
@@ -3568,12 +3595,14 @@ fn ensure_no_auth_provider_args(args: &[String]) -> anyhow::Result<()> {
     }
 }
 
+#[cfg(feature = "kimi-code")]
 #[derive(Debug, PartialEq, Eq)]
 enum KimiCodeLoginMode {
     OAuth,
     ApiKey(Option<String>),
 }
 
+#[cfg(feature = "kimi-code")]
 async fn kimi_code_login(args: &[String]) -> anyhow::Result<()> {
     match parse_kimi_code_login_mode(args)? {
         KimiCodeLoginMode::OAuth => {
@@ -3601,6 +3630,7 @@ async fn kimi_code_login(args: &[String]) -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "kimi-code")]
 fn parse_kimi_code_login_mode(args: &[String]) -> anyhow::Result<KimiCodeLoginMode> {
     match args {
         [] => Ok(KimiCodeLoginMode::OAuth),
@@ -3624,6 +3654,7 @@ fn parse_kimi_code_login_mode(args: &[String]) -> anyhow::Result<KimiCodeLoginMo
  * paste: point the user at the API-keys page, read the `roder_` key, validate
  * it with one real token exchange, and only then persist it to config.
  */
+#[cfg(feature = "roder-cloud")]
 async fn roder_cloud_login() -> anyhow::Result<()> {
     let web_url = env_nonempty("RODER_CLOUD_WEB_URL")
         .unwrap_or_else(|| roder_ext_roder_cloud::DEFAULT_WEB_URL.to_string());
@@ -3653,20 +3684,26 @@ async fn roder_cloud_login() -> anyhow::Result<()> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum AuthProviderKind {
     Codex,
+    #[cfg(feature = "antigravity")]
     Antigravity,
     SuperGrok,
+    #[cfg(feature = "kimi-code")]
     KimiCode,
+    #[cfg(feature = "roder-cloud")]
     RoderCloud,
 }
 
 fn auth_provider_kind(provider: &str) -> anyhow::Result<AuthProviderKind> {
     match provider.trim().to_ascii_lowercase().as_str() {
         "codex" => Ok(AuthProviderKind::Codex),
+        #[cfg(feature = "antigravity")]
         "antigravity" => Ok(AuthProviderKind::Antigravity),
         "supergrok" | "grok-oauth" | "xai-oauth" | "x-ai-oauth" | "xai-grok-oauth" => {
             Ok(AuthProviderKind::SuperGrok)
         }
+        #[cfg(feature = "kimi-code")]
         "kimi-code" | "kimi_code" | "kimi" | "moonshot" => Ok(AuthProviderKind::KimiCode),
+        #[cfg(feature = "roder-cloud")]
         "roder-cloud" | "roder_cloud" | "rodercloud" | "roder.cloud" => {
             Ok(AuthProviderKind::RoderCloud)
         }
@@ -3808,6 +3845,7 @@ mod tests {
         assert!(parse_cli_options(&["--backend=unknown".into()]).is_err());
     }
 
+    #[cfg(feature = "antigravity")]
     #[test]
     fn antigravity_backend_accepts_both_flag_forms_and_model() {
         for args in [
@@ -3836,7 +3874,11 @@ mod tests {
 
     #[test]
     fn external_backends_have_independent_startup_models() {
-        for backend in [Backend::Codex, Backend::Antigravity] {
+        #[allow(unused_mut)]
+        let mut backends = vec![Backend::Codex];
+        #[cfg(feature = "antigravity")]
+        backends.push(Backend::Antigravity);
+        for backend in backends {
             assert_eq!(
                 startup_model(backend, Some("chosen-model".into()), "native-model".into()),
                 "chosen-model"
@@ -3856,17 +3898,22 @@ mod tests {
     #[test]
     fn external_backend_extensions_are_wired_without_starting_processes() {
         assert!(selected_agent_backend(Backend::Roder).unwrap().is_none());
-        for (selection, id) in [
-            (Backend::Codex, "codex"),
-            (Backend::Antigravity, "antigravity"),
-        ] {
+        #[allow(unused_mut)]
+        let mut backends = vec![(Backend::Codex, "codex")];
+        #[cfg(feature = "antigravity")]
+        backends.push((Backend::Antigravity, "antigravity"));
+        for (selection, id) in backends {
             assert_eq!(selected_agent_backend(selection).unwrap().unwrap().id(), id);
         }
     }
 
     #[tokio::test]
     async fn unsupported_commands_reject_external_backends_instead_of_falling_back() {
-        for backend in ["antigravity", "codex"] {
+        #[allow(unused_mut)]
+        let mut backends = vec!["codex"];
+        #[cfg(feature = "antigravity")]
+        backends.push("antigravity");
+        for backend in backends {
             for args in [
                 vec!["--backend".into(), backend.into()],
                 vec![format!("--backend={backend}")],
@@ -4041,17 +4088,21 @@ mod tests {
             auth_provider_kind("xai-oauth").unwrap(),
             AuthProviderKind::SuperGrok
         );
-        assert_eq!(
-            auth_provider_kind("kimi-code").unwrap(),
-            AuthProviderKind::KimiCode
-        );
-        assert_eq!(
-            auth_provider_kind("moonshot").unwrap(),
-            AuthProviderKind::KimiCode
-        );
+        #[cfg(feature = "kimi-code")]
+        {
+            assert_eq!(
+                auth_provider_kind("kimi-code").unwrap(),
+                AuthProviderKind::KimiCode
+            );
+            assert_eq!(
+                auth_provider_kind("moonshot").unwrap(),
+                AuthProviderKind::KimiCode
+            );
+        }
         assert!(auth_provider_kind("xai").is_err());
     }
 
+    #[cfg(feature = "kimi-code")]
     #[test]
     fn kimi_code_login_args_select_oauth_or_api_key() {
         assert_eq!(
@@ -4280,6 +4331,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "browser-use")]
     #[test]
     fn browser_use_flag_enables_the_provider_over_config() {
         let options = parse_cli_options(&["--browser-use".to_string()]).unwrap();

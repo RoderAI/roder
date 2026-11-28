@@ -32,6 +32,7 @@ impl AppServer {
 mod tests {
     use super::*;
     use roder_api::extension::ExtensionRegistryBuilder;
+    use roder_api::inference::{AgentInferenceRequest, InferenceEngine, InferenceTurnContext};
     use roder_core::{RuntimeConfig, fake_provider::FakeInferenceEngine};
 
     struct CatalogEngine(&'static str);

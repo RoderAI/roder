@@ -44,6 +44,7 @@ pub mod remote_runner;
 pub mod retrieval;
 pub mod review;
 pub mod skills;
+pub mod spawn;
 pub mod speech;
 pub mod subagents;
 pub mod task_ledger;

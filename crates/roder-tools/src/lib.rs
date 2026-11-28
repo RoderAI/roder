@@ -169,12 +169,39 @@ impl ToolContributor for BuiltinCodingToolsContributor {
             backend: self.backend.clone(),
         }))?;
         edit::register(registry, self.workspace.clone(), self.backend.clone())?;
-        design::register(registry, self.workspace.clone())?;
         workflow::register(registry)?;
         media::register(registry)?;
         view_image::register(registry, self.workspace.clone(), self.backend.clone())?;
         artifacts::register(registry)?;
         discovery::register(registry)
+    }
+}
+
+/// The `design_*` tools for Roder's `.design` documents. Not part of the
+/// built-in coding tools: a distribution opts in to them.
+#[derive(Clone)]
+pub struct DesignToolsContributor {
+    workspace: Workspace,
+}
+
+impl DesignToolsContributor {
+    pub fn new_with_path_scope(
+        workspace: impl Into<PathBuf>,
+        path_scope: ToolPathScope,
+    ) -> anyhow::Result<Self> {
+        Ok(Self {
+            workspace: Workspace::new_with_scope(workspace.into(), path_scope)?,
+        })
+    }
+}
+
+impl ToolContributor for DesignToolsContributor {
+    fn id(&self) -> ToolProviderId {
+        "builtin-design-tools".to_string()
+    }
+
+    fn contribute(&self, registry: &mut ToolRegistry) -> anyhow::Result<()> {
+        design::register(registry, self.workspace.clone())
     }
 }
 

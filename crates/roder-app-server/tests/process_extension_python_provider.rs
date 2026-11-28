@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use roder_api::extension::ExtensionRegistryBuilder;
 use roder_api::process_extension::{ProcessEventFilter, ProcessExtensionConfig};
-use roder_api::thread::ThreadStoreFactory;
 use roder_app_server::{AppServer, AppServerFeatureConfig, LocalAppClient};
 use roder_core::{Runtime, RuntimeConfig};
 use roder_ext_jsonl_thread_store::store::JsonlThreadStoreFactory;

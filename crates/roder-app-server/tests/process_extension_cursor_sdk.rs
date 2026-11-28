@@ -10,7 +10,7 @@
 //! a notice when either is missing so toolchain-free CI stays green.
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -80,7 +80,7 @@ impl InferenceEngine for InertEngine {
     }
 }
 
-fn cursor_sdk_config(example: &PathBuf, env: BTreeMap<String, String>) -> ProcessExtensionConfig {
+fn cursor_sdk_config(example: &Path, env: BTreeMap<String, String>) -> ProcessExtensionConfig {
     ProcessExtensionConfig {
         id: "cursor-sdk".to_string(),
         enabled: true,

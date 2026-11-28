@@ -5,15 +5,20 @@ mod thread_mode;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[cfg(feature = "webwright")]
 use anyhow::Context;
+#[cfg(feature = "webwright")]
 use futures::StreamExt;
 use roder_api::catalog::built_in_model_profile;
 use roder_api::events::{EventEnvelope, RoderEvent};
+#[cfg(feature = "webwright")]
 use roder_api::inference::{
-    AgentInferenceRequest, HostedWebSearchConfig, HostedWebSearchMode, InferenceEngine,
-    InferenceEvent, InferenceProviderContext, InferenceProviderMetadata, InferenceTurnContext,
-    InstructionBundle, ModelSelection, OutputConfig, ProviderAuthType, ReasoningConfig,
+    AgentInferenceRequest, HostedWebSearchConfig, InferenceEngine, InferenceEvent,
+    InferenceTurnContext, InstructionBundle, ModelSelection, OutputConfig, ReasoningConfig,
     RuntimeHints, RuntimeProfile,
+};
+use roder_api::inference::{
+    HostedWebSearchMode, InferenceProviderContext, InferenceProviderMetadata, ProviderAuthType,
 };
 use roder_api::inference_routing::ModelSelectionMode;
 use roder_api::media::{MediaArtifact, MediaAttachment, data_url};
@@ -21,7 +26,10 @@ use roder_api::memory::{MemoryProviderSelection, MemoryQuery, MemoryRecord};
 use roder_api::plan_review::{HunkRecord, PlanComment, PlanReview, PlanReviewStatus, PlanRewrite};
 use roder_api::policy_mode::PolicyDecision;
 use roder_api::thread::ThreadListOptions;
-use roder_api::tools::{ToolCall, ToolChoice, ToolExecutionContext};
+#[cfg(feature = "webwright")]
+use roder_api::tools::ToolChoice;
+use roder_api::tools::{ToolCall, ToolExecutionContext};
+#[cfg(feature = "webwright")]
 use roder_api::transcript::{InputImage, TranscriptItem, UserMessage};
 use roder_api::workflow::{
     WorkflowImportDecision, WorkflowImportDecisionKind, WorkflowImportItem, WorkflowImportScan,
@@ -407,8 +415,11 @@ impl AppServer {
             "auth/supergrok/login" => self.handle_supergrok_auth_login().await,
             "auth/supergrok/status" => self.handle_supergrok_auth_status().await,
             "auth/supergrok/logout" => self.handle_supergrok_auth_logout().await,
+            #[cfg(feature = "kimi-code")]
             "auth/kimi-code/login" => self.handle_kimi_code_auth_login().await,
+            #[cfg(feature = "kimi-code")]
             "auth/kimi-code/status" => self.handle_kimi_code_auth_status().await,
+            #[cfg(feature = "kimi-code")]
             "auth/kimi-code/logout" => self.handle_kimi_code_auth_logout().await,
             "thread/list" => {
                 self.decode_and(
@@ -1066,60 +1077,70 @@ impl AppServer {
                 .await
             }
             "tasks/subscribe" => self.handle_tasks_subscribe().await,
+            #[cfg(feature = "webwright")]
             "webwright/prepare" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_prepare(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/artifacts" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_artifacts(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/latestRun" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_latest_run(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/report" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_report(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/verify" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_verify(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/visualJudge" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_visual_judge(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/export" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_export(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/setup" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_setup(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/submit" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_submit(p).await
                 })
                 .await
             }
+            #[cfg(feature = "webwright")]
             "webwright/rerun" => {
                 self.decode_and(req.params, |p| async move {
                     self.handle_webwright_rerun(p).await
@@ -2717,6 +2738,7 @@ impl AppServer {
         .unwrap())
     }
 
+    #[cfg(feature = "kimi-code")]
     async fn handle_kimi_code_auth_login(&self) -> Result<serde_json::Value, JsonRpcError> {
         if !self.persist_user_config {
             return Err(internal_error(
@@ -2733,6 +2755,7 @@ impl AppServer {
         .unwrap())
     }
 
+    #[cfg(feature = "kimi-code")]
     async fn handle_kimi_code_auth_status(&self) -> Result<serde_json::Value, JsonRpcError> {
         let api_key_configured =
             roder_config::provider_api_key(roder_api::catalog::PROVIDER_KIMI_CODE).is_some()
@@ -2759,6 +2782,7 @@ impl AppServer {
         .unwrap())
     }
 
+    #[cfg(feature = "kimi-code")]
     async fn handle_kimi_code_auth_logout(&self) -> Result<serde_json::Value, JsonRpcError> {
         if !self.persist_user_config {
             return Err(internal_error(
@@ -3891,6 +3915,7 @@ impl AppServer {
         .unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_prepare(
         &self,
         params: WebwrightPrepareParams,
@@ -3902,6 +3927,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_artifacts(
         &self,
         params: WebwrightWorkspaceParams,
@@ -3913,6 +3939,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_latest_run(
         &self,
         params: WebwrightWorkspaceParams,
@@ -3924,6 +3951,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_report(
         &self,
         params: WebwrightWorkspaceParams,
@@ -3935,6 +3963,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_verify(
         &self,
         params: WebwrightWorkspaceParams,
@@ -3946,6 +3975,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_visual_judge(
         &self,
         params: WebwrightVisualJudgeParams,
@@ -4007,6 +4037,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_export(
         &self,
         params: WebwrightExportParams,
@@ -4018,6 +4049,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_setup(
         &self,
         params: WebwrightSetupParams,
@@ -4026,6 +4058,7 @@ impl AppServer {
         Ok(serde_json::to_value(result).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_submit(
         &self,
         params: WebwrightSubmitParams,
@@ -4043,6 +4076,7 @@ impl AppServer {
         Ok(serde_json::to_value(WebwrightSubmitResult { task }).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn handle_webwright_rerun(
         &self,
         params: WebwrightRerunParams,
@@ -4065,6 +4099,7 @@ impl AppServer {
         Ok(serde_json::to_value(crate::webwright::rerun_result(task, plan)).unwrap())
     }
 
+    #[cfg(feature = "webwright")]
     async fn webwright_workspace_root(
         &self,
         requested: Option<String>,
@@ -4073,6 +4108,7 @@ impl AppServer {
         crate::webwright::workspace_root(runtime_workspace, requested).map_err(invalid_params)
     }
 
+    #[cfg(feature = "webwright")]
     async fn run_webwright_visual_judge(
         &self,
         engine: Arc<dyn InferenceEngine>,
@@ -6112,6 +6148,7 @@ fn artifact_is_image(artifact: &MediaArtifact) -> bool {
         && artifact.mime_type.starts_with("image/")
 }
 
+#[cfg(feature = "webwright")]
 fn screenshot_data_url(path: &std::path::Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path)
         .map_err(anyhow::Error::from)
@@ -6172,6 +6209,7 @@ async fn provider_auth_status(
                 Ok(None) | Err(_) => (false, None),
             }
         }
+        #[cfg(feature = "kimi-code")]
         ProviderAuthType::OAuth if provider_id == roder_api::catalog::PROVIDER_KIMI_CODE => {
             if metadata.auth_configured == Some(true) {
                 return (true, metadata.auth_label.clone());

@@ -1703,7 +1703,10 @@ async fn failed_runner_initialization_is_retryable_without_local_fallback() {
     std::fs::write(scratch.join("retry-a.txt"), "host-only sentinel a").unwrap();
     std::fs::write(scratch.join("retry-b.txt"), "host-only sentinel b").unwrap();
     *provider.state.create_failures_remaining.lock().unwrap() = 1;
-    provider.state.create_delay_ms.store(25, Ordering::SeqCst);
+    // Long enough that the second read reaches the runner while the first
+    // is still creating it, even on a loaded machine; at 25ms the second read
+    // could arrive after the failure and start its own retry.
+    provider.state.create_delay_ms.store(500, Ordering::SeqCst);
     let runtime = coding_tools_runtime(
         session_dir.clone(),
         scratch.clone(),

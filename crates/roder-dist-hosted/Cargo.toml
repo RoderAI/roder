@@ -19,7 +19,7 @@ roder-app-server.workspace = true
 roder-config.workspace = true
 roder-core.workspace = true
 roder-ext-jsonl-thread-store.workspace = true
-roder-extension-host.workspace = true
+roder-extension-host = { workspace = true, features = ["base", "hosted-runners"] }
 serde_json.workspace = true
 time.workspace = true
 tokio = { workspace = true, features = ["full"] }

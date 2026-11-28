@@ -8,14 +8,16 @@ impl CodexBackend {
         &self,
         cwd: &std::path::Path,
     ) -> anyhow::Result<CodexSession> {
-        let mut child = Command::new(&self.program)
+        let mut command = Command::new(&self.program);
+        command
             .arg("app-server")
             .current_dir(cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .spawn()
+            .kill_on_drop(true);
+        let mut child = roder_api::spawn::spawn_retrying_busy(&mut command)
+            .await
             .with_context(|| format!("start {} app-server", self.program.display()))?;
         let stdin = child.stdin.take().context("Codex stdin unavailable")?;
         let stdout = child.stdout.take().context("Codex stdout unavailable")?;

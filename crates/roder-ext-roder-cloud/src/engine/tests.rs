@@ -423,7 +423,10 @@ async fn list_models_without_key_falls_back_to_catalog() {
         .await
         .unwrap();
 
-    assert_eq!(models.len(), 4);
+    assert_eq!(
+        models.len(),
+        roder_api::catalog::models_for_provider(PROVIDER_RODER_CLOUD, false).len()
+    );
     assert_eq!(models[0].id, "roder.cloud/free");
 }
 

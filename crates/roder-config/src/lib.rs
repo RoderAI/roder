@@ -1879,8 +1879,12 @@ fn load_config_file() -> anyhow::Result<Config> {
 fn load_config_file_from_path(path: impl AsRef<Path>) -> anyhow::Result<Config> {
     let path = path.as_ref();
     if path.exists() {
-        let contents = fs::read_to_string(path)?;
-        Ok(toml::from_str(&contents)?)
+        let contents = anyhow::Context::with_context(fs::read_to_string(path), || {
+            format!("read Roder config {}", path.display())
+        })?;
+        anyhow::Context::with_context(toml::from_str(&contents), || {
+            format!("parse Roder config {}", path.display())
+        })
     } else {
         Ok(Config::default())
     }

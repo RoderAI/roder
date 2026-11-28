@@ -357,7 +357,20 @@ async fn subagent_dispatch_failure_and_timeout_are_explicit() {
         .unwrap_err()
         .to_string();
     assert!(error.contains("timed out after 1s"), "{error}");
-    let cancelled = host.drain_extension_events().await;
+    // The child reports the cancellation asynchronously; on a loaded machine
+    // it can land just after the dispatch fails.
+    let mut cancelled = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        cancelled.extend(host.drain_extension_events().await);
+        let seen = cancelled
+            .iter()
+            .any(|event| event.event_kind == "fake.dispatch_cancelled");
+        if seen || std::time::Instant::now() >= deadline {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
     assert!(
         cancelled
             .iter()

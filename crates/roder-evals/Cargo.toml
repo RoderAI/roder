@@ -17,10 +17,14 @@ roder-ext-anthropic.workspace = true
 roder-ext-openai-responses.workspace = true
 roder-ext-task-ledger.workspace = true
 roder-ext-verification.workspace = true
-roder-ext-zerolang.workspace = true
+roder-ext-zerolang = { workspace = true, optional = true }
 roder-tools.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 time = { workspace = true, features = ["formatting", "parsing", "serde", "serde-well-known"] }
 tokio.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+
+[features]
+# Run eval fixtures tagged `zerolang`.
+zerolang = ["dep:roder-ext-zerolang"]

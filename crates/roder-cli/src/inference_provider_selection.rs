@@ -8,8 +8,18 @@ pub(super) fn stock_inference_providers(
         keys,
         std::env::var("KIMI_CODE_API_KEY").is_ok()
             || std::env::var("RODER_KIMI_CODE_API_KEY").is_ok()
-            || roder_ext_kimi_code::has_stored_tokens(),
+            || kimi_code_has_stored_tokens(),
     )
+}
+
+#[cfg(feature = "kimi-code")]
+fn kimi_code_has_stored_tokens() -> bool {
+    roder_ext_kimi_code::has_stored_tokens()
+}
+
+#[cfg(not(feature = "kimi-code"))]
+fn kimi_code_has_stored_tokens() -> bool {
+    false
 }
 
 pub(super) fn providers_from_keys(

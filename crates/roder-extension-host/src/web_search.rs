@@ -1,7 +1,11 @@
 use roder_api::extension::ExtensionRegistryBuilder;
+#[cfg(feature = "firecrawl-search")]
 use roder_ext_firecrawl_search::{FirecrawlSearchConfig, FirecrawlSearchExtension};
+#[cfg(feature = "parallel-search")]
 use roder_ext_parallel_search::{ParallelSearchConfig, ParallelSearchExtension};
+#[cfg(feature = "perplexity-search")]
 use roder_ext_perplexity_search::{PerplexitySearchConfig, PerplexitySearchExtension};
+#[cfg(feature = "synthetic-search")]
 use roder_ext_synthetic_search::{SyntheticSearchConfig, SyntheticSearchExtension};
 use roder_ext_tavily_search::{TavilySearchConfig, TavilySearchExtension};
 use roder_ext_web_search::{
@@ -57,6 +61,7 @@ pub(crate) fn install_web_search(
     // Parallel contributes extract (plus namespaced search) in addition to the
     // canonical web_search router. Install it for the selected Parallel provider
     // even when namespaced_tools is off so parallel_extract is available.
+    #[cfg(feature = "parallel-search")]
     if let (WebSearchRouterProvider::Parallel(provider_config), false) =
         (&selected, config.namespaced_tools)
     {
@@ -76,6 +81,12 @@ fn resolve_selected_web_search_provider(
     config: &DefaultWebSearchConfig,
 ) -> anyhow::Result<WebSearchRouterProvider> {
     if let Some(provider) = config.provider {
+        if !compiled_in(provider) {
+            anyhow::bail!(
+                "web_search provider {:?} is not built into this Roder distribution",
+                provider.as_str()
+            );
+        }
         return provider_from_config(config, provider).ok_or_else(|| {
             anyhow::anyhow!(
                 "web_search provider {:?} is enabled but no API key was configured",
@@ -116,18 +127,22 @@ fn install_namespaced_web_search_tools(
         WebSearchProviderKind::Synthetic,
     ] {
         match provider_from_config(config, kind) {
+            #[cfg(feature = "firecrawl-search")]
             Some(WebSearchRouterProvider::Firecrawl(provider_config)) => {
                 builder.install(FirecrawlSearchExtension::with_config(provider_config))?;
             }
+            #[cfg(feature = "perplexity-search")]
             Some(WebSearchRouterProvider::Perplexity(provider_config)) => {
                 builder.install(PerplexitySearchExtension::with_config(provider_config))?;
             }
             Some(WebSearchRouterProvider::Tavily(provider_config)) => {
                 builder.install(TavilySearchExtension::with_config(provider_config))?;
             }
+            #[cfg(feature = "parallel-search")]
             Some(WebSearchRouterProvider::Parallel(provider_config)) => {
                 builder.install(ParallelSearchExtension::with_config(provider_config))?;
             }
+            #[cfg(feature = "synthetic-search")]
             Some(WebSearchRouterProvider::Synthetic(provider_config)) => {
                 builder.install(SyntheticSearchExtension::with_config(provider_config))?;
             }
@@ -135,6 +150,19 @@ fn install_namespaced_web_search_tools(
         }
     }
     Ok(())
+}
+
+/// Whether this build includes the provider's backend. Tavily is always
+/// built in; the others follow their Cargo features.
+fn compiled_in(provider: WebSearchProviderKind) -> bool {
+    match provider {
+        WebSearchProviderKind::Tavily => true,
+        WebSearchProviderKind::Firecrawl => cfg!(feature = "firecrawl-search"),
+        WebSearchProviderKind::Perplexity => cfg!(feature = "perplexity-search"),
+        WebSearchProviderKind::Parallel => cfg!(feature = "parallel-search"),
+        WebSearchProviderKind::Synthetic => cfg!(feature = "synthetic-search"),
+        WebSearchProviderKind::Custom => false,
+    }
 }
 
 fn provider_from_config(
@@ -155,6 +183,7 @@ fn provider_from_config(
     }
     let timeout_seconds = config.timeout_seconds.unwrap_or(20);
     match provider {
+        #[cfg(feature = "firecrawl-search")]
         WebSearchProviderKind::Firecrawl => {
             let mut cfg = FirecrawlSearchConfig::new(api_key).with_timeout_seconds(timeout_seconds);
             if let Some(base_url) = provider_config.base_url.as_deref() {
@@ -163,6 +192,7 @@ fn provider_from_config(
             cfg = cfg.with_debug_raw_response(provider_config.debug_raw_response);
             Some(WebSearchRouterProvider::Firecrawl(cfg))
         }
+        #[cfg(feature = "perplexity-search")]
         WebSearchProviderKind::Perplexity => {
             let mut cfg =
                 PerplexitySearchConfig::new(api_key).with_timeout_seconds(timeout_seconds);
@@ -186,6 +216,7 @@ fn provider_from_config(
             cfg = cfg.with_debug_raw_response(provider_config.debug_raw_response);
             Some(WebSearchRouterProvider::Tavily(cfg))
         }
+        #[cfg(feature = "parallel-search")]
         WebSearchProviderKind::Parallel => {
             let mut cfg = ParallelSearchConfig::new(api_key).with_timeout_seconds(timeout_seconds);
             if let Some(base_url) = provider_config.base_url.as_deref() {
@@ -197,6 +228,7 @@ fn provider_from_config(
             cfg = cfg.with_debug_raw_response(provider_config.debug_raw_response);
             Some(WebSearchRouterProvider::Parallel(cfg))
         }
+        #[cfg(feature = "synthetic-search")]
         WebSearchProviderKind::Synthetic => {
             let mut cfg = SyntheticSearchConfig::new(api_key).with_timeout_seconds(timeout_seconds);
             if let Some(base_url) = provider_config.base_url.as_deref() {
@@ -205,7 +237,9 @@ fn provider_from_config(
             cfg = cfg.with_debug_raw_response(provider_config.debug_raw_response);
             Some(WebSearchRouterProvider::Synthetic(cfg))
         }
-        WebSearchProviderKind::Custom => None,
+        // Custom, plus any backend this build leaves out.
+        #[allow(unreachable_patterns)]
+        _ => None,
     }
 }
 
@@ -280,6 +314,7 @@ mod tests {
         assert!(names.contains(&"tavily_search".to_string()));
     }
 
+    #[cfg(feature = "parallel-search")]
     #[test]
     fn parallel_provider_installs_extract_tool_without_namespaced_flag() {
         let registry = build_default_registry(DefaultRegistryConfig {
@@ -299,6 +334,7 @@ mod tests {
         assert!(names.contains(&"parallel_extract".to_string()));
     }
 
+    #[cfg(feature = "synthetic-search")]
     #[test]
     fn default_registry_with_synthetic_search_installs_canonical_tool() {
         let registry = build_default_registry(DefaultRegistryConfig {
@@ -317,6 +353,7 @@ mod tests {
         assert!(!names.contains(&"synthetic_search".to_string()));
     }
 
+    #[cfg(feature = "synthetic-search")]
     #[test]
     fn synthetic_search_namespaced_tools_are_opt_in() {
         let registry = build_default_registry(DefaultRegistryConfig {

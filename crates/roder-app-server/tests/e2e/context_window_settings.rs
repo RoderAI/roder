@@ -62,7 +62,14 @@ async fn context_window_persistence_failure_leaves_live_override_unchanged() {
         "roder-context-window-failure-{}",
         uuid::Uuid::new_v4()
     ));
-    std::fs::create_dir_all(dir.join("config.toml")).unwrap();
+    // A read-only config makes the save fail while staying readable: other
+    // tests in this process read whichever config dir is set at the moment.
+    std::fs::create_dir_all(&dir).unwrap();
+    let config = dir.join("config.toml");
+    std::fs::write(&config, "").unwrap();
+    let mut permissions = std::fs::metadata(&config).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&config, permissions).unwrap();
     let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &dir);
     let runtime = Arc::new(Runtime::fake().unwrap());
     runtime
@@ -80,5 +87,6 @@ async fn context_window_persistence_failure_leaves_live_override_unchanged() {
     .await;
     assert_eq!(error.code, -32000);
     assert_eq!(runtime.status().await.model_context_window, Some(200_000));
+    assert_eq!(std::fs::read_to_string(&config).unwrap(), "");
     std::fs::remove_dir_all(dir).unwrap();
 }

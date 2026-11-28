@@ -1980,12 +1980,11 @@ async fn roadmap_methods_update_documents_threads_and_notifications() {
     )
     .await;
     assert!(
-        spawned["thread"]["thread_id"]
+        !spawned["thread"]["thread_id"]
             .as_str()
             .unwrap()
             .trim()
-            .len()
-            > 0
+            .is_empty()
     );
     let spawned_thread_id = spawned["thread"]["thread_id"].as_str().unwrap();
     let spawned_thread: serde_json::Value = request(
@@ -4041,6 +4040,10 @@ async fn providers_list_exposes_openrouter_grok_46_model_without_auth() {
         uuid::Uuid::new_v4()
     ));
     let _models_cache = EnvVarGuard::set("RODER_MODELS_CACHE_PATH", &cache_path);
+    let config_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&config_dir).unwrap();
+    let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
+    let _credentials = without_provider_credentials(&config_dir);
     let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
@@ -4270,7 +4273,7 @@ async fn providers_select_preserves_synthetic_model_ids() {
 #[tokio::test]
 async fn providers_list_exposes_claude_code_models_without_api_key() {
     let _guard = PROVIDER_TEST_LOCK.lock().await;
-    let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
+    let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
     let server = Arc::new(app_server(runtime));
     let client = LocalAppClient::new(server);
@@ -4329,7 +4332,7 @@ async fn providers_clear_removes_api_key() {
     let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
     let temp_dir = std::env::temp_dir().join(format!("roder-test-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir).unwrap();
-    let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", &temp_dir);
+    let _credentials = without_provider_credentials(&temp_dir);
 
     let registry = build_default_registry(isolated_default_registry_config()).unwrap();
     let runtime = Arc::new(Runtime::new(registry, Default::default()).unwrap());
@@ -6616,7 +6619,7 @@ async fn protocol_notifications_surface_tool_approval_requests_and_resolution() 
         Some(&thread_start.thread.id),
     )
     .await;
-    assert_eq!(approval.params["turnId"].as_str().is_some(), true);
+    assert!(approval.params["turnId"].as_str().is_some());
     assert_eq!(approval.params["approvalId"], "approval-shell-1");
     assert_eq!(approval.params["toolId"], "approval-shell-1");
     assert_eq!(approval.params["toolName"], "shell");
@@ -7356,7 +7359,7 @@ async fn discovery_methods_refresh_search_read_promote_list_and_clear() {
 
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
-        ..Default::default()
+        ..isolated_default_registry_config()
     })
     .unwrap();
     let runtime = Arc::new(
@@ -8295,6 +8298,7 @@ async fn webwright_setup_dry_run_exposes_selected_browser_install_plan() {
     let workspace =
         std::env::temp_dir().join(format!("roder-webwright-setup-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&workspace).unwrap();
+    let _config_guard = RODER_CONFIG_DIR_TEST_LOCK.lock().await;
     let _config_dir = EnvVarGuard::set("RODER_CONFIG_DIR", workspace.join(".roder"));
     let registry = build_default_registry(DefaultRegistryConfig {
         workspace: Some(workspace.clone()),
@@ -9123,11 +9127,10 @@ async fn request_user_input_tool_waits_for_app_server_resolution() {
     )
     .await;
     assert_eq!(requested_notification.params["questions"][0]["id"], "mode");
-    assert_eq!(
+    assert!(
         requested_notification.params["requestId"]
             .as_str()
-            .is_some(),
-        true
+            .is_some()
     );
 
     let mut request_id = None;
@@ -11260,12 +11263,14 @@ async fn request<T: serde::de::DeserializeOwned>(
     serde_json::from_value(res.result.unwrap()).unwrap()
 }
 
+/// A registry that keeps its threads, memory and code index in its own
+/// folder. Without `data_dir` it would use `RODER_CONFIG_DIR`, which other
+/// tests in this process point at temp folders they later delete.
 fn isolated_default_registry_config() -> DefaultRegistryConfig {
+    let id = uuid::Uuid::new_v4();
     DefaultRegistryConfig {
-        thread_dir: Some(std::env::temp_dir().join(format!(
-            "roder-app-server-e2e-threads-{}",
-            uuid::Uuid::new_v4()
-        ))),
+        thread_dir: Some(std::env::temp_dir().join(format!("roder-app-server-e2e-threads-{id}"))),
+        data_dir: Some(std::env::temp_dir().join(format!("roder-app-server-e2e-data-{id}"))),
         ..DefaultRegistryConfig::default()
     }
 }
@@ -11489,6 +11494,30 @@ impl EnvVarGuard {
         }
         Self { key, previous }
     }
+
+    fn remove(key: &'static str) -> Self {
+        let previous = std::env::var_os(key);
+        unsafe {
+            std::env::remove_var(key);
+        }
+        Self { key, previous }
+    }
+}
+
+/// Hide the machine's own provider credentials (env and user config) so
+/// tests that assert "not authenticated" don't depend on who runs them.
+fn without_provider_credentials(config_dir: &std::path::Path) -> Vec<EnvVarGuard> {
+    let mut guards = vec![EnvVarGuard::set("RODER_CONFIG_DIR", config_dir)];
+    for key in [
+        "CURSOR_API_KEY",
+        "RODER_CURSOR_API_KEY",
+        "CURSOR_ACCESS_TOKEN",
+        "OPENROUTER_API_KEY",
+        "RODER_OPENROUTER_API_KEY",
+    ] {
+        guards.push(EnvVarGuard::remove(key));
+    }
+    guards
 }
 
 impl Drop for EnvVarGuard {

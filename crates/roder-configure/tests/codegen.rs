@@ -156,3 +156,24 @@ fn file(files: &[roder_configure::codegen::GeneratedFile], path: &str) -> String
         .contents
         .clone()
 }
+
+#[test]
+fn codegen_builds_in_only_the_chosen_extensions() {
+    let catalog = Catalog::from_workspace(env!("CARGO_MANIFEST_DIR")).unwrap();
+    let profile = built_in_profile("zero-coder-edits").unwrap().unwrap();
+
+    let files = render(&profile.manifest, &catalog).unwrap();
+    let cargo_toml = file(&files, "Cargo.toml");
+    let roder = cargo_toml
+        .lines()
+        .find(|line| line.starts_with("roder = "))
+        .expect("roder dependency");
+    assert!(roder.contains("default-features = false"), "{roder}");
+    assert!(roder.contains("\"zerolang\""), "{roder}");
+    assert!(!roder.contains("\"xiaomi-mimo\""), "{roder}");
+
+    let minimal = built_in_profile("minimal").unwrap().unwrap();
+    let files = render(&minimal.manifest, &catalog).unwrap();
+    let cargo_toml = file(&files, "Cargo.toml");
+    assert!(cargo_toml.contains("default-features = false, features = []"));
+}

@@ -25,14 +25,21 @@ docs_url = ""
 anyhow.workspace = true
 async-trait.workspace = true
 roder-api.workspace = true
-roder-ext-firecrawl-search.workspace = true
-roder-ext-parallel-search.workspace = true
-roder-ext-perplexity-search.workspace = true
-roder-ext-synthetic-search.workspace = true
+roder-ext-firecrawl-search = { workspace = true, optional = true }
+roder-ext-parallel-search = { workspace = true, optional = true }
+roder-ext-perplexity-search = { workspace = true, optional = true }
+roder-ext-synthetic-search = { workspace = true, optional = true }
 roder-ext-tavily-search.workspace = true
 roder-web-search.workspace = true
 semver.workspace = true
 serde_json.workspace = true
+
+[features]
+# Tavily is always built in; the other backends are opt-in.
+firecrawl = ["dep:roder-ext-firecrawl-search"]
+parallel = ["dep:roder-ext-parallel-search"]
+perplexity = ["dep:roder-ext-perplexity-search"]
+synthetic = ["dep:roder-ext-synthetic-search"]
 
 [dev-dependencies]
 tokio.workspace = true

@@ -1,4 +1,5 @@
 mod codex_oauth;
+#[cfg(feature = "cua")]
 mod cua;
 #[cfg(test)]
 mod test_config;
@@ -15,6 +16,7 @@ use roder_api::catalog::{
     PROVIDER_RODER_CLOUD, PROVIDER_SUPERGROK, PROVIDER_SYNTHETIC, PROVIDER_VERTEX, PROVIDER_XAI,
     PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN, models_for_codex, models_for_provider,
 };
+#[cfg(any(feature = "memory", feature = "embeddings"))]
 use roder_api::embeddings::EmbeddingProvider;
 use roder_api::extension::{
     ExtensionManifest, ExtensionRegistry, ExtensionRegistryBuilder, ProvidedService, RoderExtension,
@@ -24,64 +26,108 @@ use roder_api::notifications::NotificationKind;
 use roder_api::policy_mode::PolicyMode;
 use roder_api::remote_runner::RunnerDestination;
 use roder_api::tui_status::{PaletteSourceDescriptor, built_in_status_segments};
+#[cfg(feature = "anthropic")]
 use roder_ext_anthropic::AnthropicExtension;
+#[cfg(feature = "browser-use")]
 use roder_ext_browser_use::BrowserUseExtension;
+#[cfg(feature = "chrome")]
 use roder_ext_chrome::ChromeExtension;
+#[cfg(feature = "claude-code")]
 use roder_ext_claude_code::{ClaudeCodeConfig, ClaudeCodeExtension};
+#[cfg(feature = "cursor")]
 use roder_ext_cursor::{CursorConfig, CursorExtension};
+#[cfg(feature = "deepseek")]
 use roder_ext_deepseek::{DeepSeekConfig, DeepSeekExtension};
+#[cfg(feature = "fireworks")]
 use roder_ext_fireworks::{FireworksConfig, FireworksExtension};
+#[cfg(feature = "gemini")]
 use roder_ext_gemini::GeminiExtension;
 use roder_ext_git::GitExtension;
 use roder_ext_github_review::{GithubReviewConfig, GithubReviewExtension};
+#[cfg(feature = "embeddings")]
 use roder_ext_google_embeddings::{
     DEFAULT_ENDPOINT as GOOGLE_EMBEDDINGS_DEFAULT_ENDPOINT, GoogleEmbeddingProvider,
     GoogleEmbeddingsConfig, GoogleEmbeddingsExtension,
 };
+#[cfg(feature = "images")]
 use roder_ext_google_images::{GoogleImagesConfig, GoogleImagesExtension};
+#[cfg(feature = "speech")]
 use roder_ext_google_speech::{GoogleSpeechConfig, GoogleSpeechExtension};
+#[cfg(feature = "honcho")]
 use roder_ext_honcho::{HonchoMemoryConfig, HonchoMemoryExtension};
+#[cfg(feature = "hopper")]
 use roder_ext_hopper::{HopperConfig, HopperExtension};
 use roder_ext_inference_router::{
     LOCAL_INFERENCE_ROUTER_ID, LocalInferenceRouterConfig, LocalInferenceRouterExtension,
 };
+#[cfg(feature = "jev")]
 use roder_ext_jev::JevExtension;
 use roder_ext_jsonl_thread_store::JsonlThreadStoreExtension;
+#[cfg(feature = "kimi-code")]
 use roder_ext_kimi_code::{KimiCodeConfig, KimiCodeExtension};
+#[cfg(feature = "knowledge")]
 use roder_ext_knowledge_md::KnowledgeMdExtension;
+#[cfg(feature = "memory")]
 use roder_ext_memory::MemoryExtension;
+#[cfg(feature = "mysql-session")]
 use roder_ext_mysql_session::{MysqlSessionConfig, MysqlSessionExtension};
+#[cfg(feature = "embeddings")]
 use roder_ext_openai_embeddings::{OpenAiEmbeddingProvider, OpenAiEmbeddingsExtension};
+#[cfg(feature = "images")]
 use roder_ext_openai_images::{OpenAiImagesConfig, OpenAiImagesExtension};
-use roder_ext_openai_responses::{OpenAiResponsesEngine, OpenAiResponsesExtension};
+use roder_ext_openai_responses::{
+    OpenAiResponsesEngine, OpenAiResponsesExtension, OpenRouterRouting,
+};
+#[cfg(feature = "speech")]
 use roder_ext_openai_speech::OpenAiSpeechExtension;
+#[cfg(feature = "opencode")]
 use roder_ext_opencode::{OpenCodeConfig, OpenCodeExtension};
-use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension, OpenRouterRouting};
+#[cfg(feature = "openrouter")]
+use roder_ext_openrouter::{OpenRouterConfig, OpenRouterExtension};
+#[cfg(feature = "poolside")]
 use roder_ext_poolside::{PoolsideConfig, PoolsideExtension};
+#[cfg(feature = "postgres-session")]
 use roder_ext_postgres_session::{
     PostgresSessionConfig, PostgresSessionExtension, redact_database_url,
 };
+#[cfg(feature = "roder-cloud")]
 use roder_ext_roder_cloud::{RoderCloudConfig, RoderCloudExtension};
+#[cfg(feature = "runner-blaxel")]
 use roder_ext_runner_blaxel::BlaxelRunnerExtension;
+#[cfg(feature = "runner-cloudflare")]
 use roder_ext_runner_cloudflare::CloudflareRunnerExtension;
+#[cfg(feature = "runner-daytona")]
 use roder_ext_runner_daytona::DaytonaRunnerExtension;
+#[cfg(feature = "runner-docker")]
 use roder_ext_runner_docker::DockerRunnerExtension;
+#[cfg(feature = "runner-e2b")]
 use roder_ext_runner_e2b::E2bRunnerExtension;
+#[cfg(feature = "runner-modal")]
 use roder_ext_runner_modal::ModalRunnerExtension;
+#[cfg(feature = "runner-runloop")]
 use roder_ext_runner_runloop::RunloopRunnerExtension;
+#[cfg(feature = "runner-sprites")]
 use roder_ext_runner_sprites::SpritesRunnerExtension;
 use roder_ext_runner_unix_local::UnixLocalRunnerExtension;
+#[cfg(feature = "runner-vercel")]
 use roder_ext_runner_vercel::VercelRunnerExtension;
+#[cfg(feature = "synthetic")]
 use roder_ext_synthetic::{SyntheticConfig, SyntheticExtension};
+#[cfg(feature = "vertex")]
 use roder_ext_vertex::{VertexConfig, VertexExtension};
+#[cfg(feature = "webwright")]
 use roder_ext_webwright::WebwrightExtension;
+#[cfg(feature = "xai")]
 use roder_ext_xai::{XaiConfig, XaiExtension};
+#[cfg(feature = "xiaomi-mimo")]
 use roder_ext_xiaomi_mimo::{XiaomiMimoConfig, XiaomiMimoExtension};
+#[cfg(feature = "embeddings")]
 use roder_ext_zeroentropy_embeddings::{
     DEFAULT_ENDPOINT as ZEROENTROPY_EMBEDDINGS_DEFAULT_ENDPOINT, ZeroEntropyEmbeddingProvider,
     ZeroEntropyEmbeddingsConfig, ZeroEntropyEmbeddingsExtension, ZeroEntropyEncodingFormat,
     ZeroEntropyLatency,
 };
+#[cfg(feature = "zerolang")]
 use roder_ext_zerolang::{ZerolangConfig, ZerolangExtension};
 use semver::Version;
 
@@ -180,7 +226,8 @@ pub struct DefaultRegistryConfig {
     pub command_shell: String,
     pub web_search: Option<DefaultWebSearchConfig>,
     pub subagents: Option<DefaultSubagentsConfig>,
-    pub zerolang: Option<ZerolangConfig>,
+    /// `[zerolang]` settings; used only when the `zerolang` feature is built in.
+    pub zerolang: Option<roder_config::ZerolangConfig>,
     /// `[browser_use]` settings; the provider is installed only when enabled.
     /// Its LLM keys come from `openai_api_key` / `anthropic_api_key`.
     pub browser_use: Option<roder_config::BrowserUseConfig>,
@@ -346,6 +393,7 @@ impl Default for DefaultRegistryConfig {
     }
 }
 
+#[cfg(feature = "browser-use")]
 /// The browser-use provider's settings: `[browser_use]` plus the OpenAI and
 /// Anthropic keys Roder already resolved, which only the browser-use server
 /// process receives.
@@ -372,9 +420,12 @@ pub fn browser_use_config(
 pub enum SessionStoreConfig {
     #[default]
     Jsonl,
+    #[cfg(feature = "postgres-session")]
     Postgres(PostgresSessionConfig),
+    #[cfg(feature = "mysql-session")]
     Mysql(MysqlSessionConfig),
     /// Bind persistence to a previously acquired durable runtime generation.
+    #[cfg(feature = "mysql-session")]
     MysqlOwned {
         config: MysqlSessionConfig,
         owner: roder_ext_mysql_session::ownership::RuntimeOwnerLease,
@@ -407,6 +458,8 @@ impl Default for DefaultNotificationsConfig {
 
 pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<ExtensionRegistry> {
     let mut builder = ExtensionRegistryBuilder::new();
+    #[cfg(feature = "embeddings")]
+    let embeddings = EmbeddingProviders::from_config(&config);
 
     builder.install(FakeProviderExtension)?;
     builder.install(CodexOAuthProviderExtension)?;
@@ -417,12 +470,14 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     // error instead of vanishing from `review/publishers/list`.
     builder.install(GithubReviewExtension::new(config.github_review.clone()))?;
 
+    #[cfg(feature = "speech")]
     builder.install(OpenAiSpeechExtension::new(
         config
             .openai_speech_api_key
             .clone()
             .or_else(|| config.openai_api_key.clone()),
     ))?;
+    #[cfg(feature = "speech")]
     builder.install(GoogleSpeechExtension::new(GoogleSpeechConfig {
         access_token: config.google_speech_access_token,
         api_key: config.google_speech_api_key,
@@ -433,26 +488,16 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         ..GoogleSpeechConfig::default()
     }))?;
 
-    let openai_embedding_key = config
-        .openai_api_key
-        .clone()
-        .or_else(|| env_nonempty("OPENAI_API_KEY"));
-    let google_embeddings_config = google_embeddings_config(config.gemini_api_key.clone());
-    let zeroentropy_embeddings_config = zeroentropy_embeddings_config();
-    let google_embedding_provider = Arc::new(GoogleEmbeddingProvider::new(
-        google_embeddings_config.clone(),
-    )) as Arc<dyn EmbeddingProvider>;
-    let zeroentropy_embedding_provider = Arc::new(ZeroEntropyEmbeddingProvider::new(
-        zeroentropy_embeddings_config.clone(),
-    )) as Arc<dyn EmbeddingProvider>;
-    let openai_embedding_provider = openai_embedding_key
-        .clone()
-        .map(|key| Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>);
-    let memory_embedding_provider = match selected_memory_embedding_provider_id().as_deref() {
-        Some("google") => Some(google_embedding_provider.clone()),
-        Some("zeroentropy") => Some(zeroentropy_embedding_provider.clone()),
-        Some("openai") | None => openai_embedding_provider.clone(),
-        Some(_) => None,
+    #[cfg(feature = "memory")]
+    let memory_embedding_provider: Option<Arc<dyn EmbeddingProvider>> = {
+        #[cfg(feature = "embeddings")]
+        {
+            embeddings.for_memory()
+        }
+        #[cfg(not(feature = "embeddings"))]
+        {
+            None
+        }
     };
 
     let declared =
@@ -463,9 +508,11 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
                 .with_service_tier(config.openai_service_tier.clone()),
         )?;
     }
+    #[cfg(feature = "anthropic")]
     if declared(InferenceProviderSelection::Anthropic) {
         builder.install(AnthropicExtension::new(config.anthropic_api_key.clone()))?;
     }
+    #[cfg(feature = "claude-code")]
     builder.install(ClaudeCodeExtension::new(ClaudeCodeConfig {
         cli_path: config.claude_code_cli_path,
         permission_mode: config.claude_code_permission_mode,
@@ -479,9 +526,11 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         // RODER_CLAUDE_CODE_ENABLE_CHROME / CLAUDE_CODE_ENABLE_CHROME env vars).
         enable_claude_in_chrome: None,
     }))?;
+    #[cfg(feature = "gemini")]
     if declared(InferenceProviderSelection::Gemini) {
         builder.install(GeminiExtension::new(config.gemini_api_key.clone()))?;
     }
+    #[cfg(feature = "vertex")]
     if declared(InferenceProviderSelection::Vertex) {
         builder.install(VertexExtension::new(VertexConfig {
             credentials_path: config.vertex_credentials_path.clone(),
@@ -490,12 +539,14 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             location: config.vertex_location.clone(),
         }))?;
     }
+    #[cfg(feature = "xai")]
     builder.install(XaiExtension::new(
         declared(InferenceProviderSelection::Xai).then(|| XaiConfig {
             api_key: config.xai_api_key.clone(),
             base_url: config.xai_base_url.clone(),
         }),
     ))?;
+    #[cfg(feature = "opencode")]
     builder.install(OpenCodeExtension::new_with_go(
         OpenCodeConfig {
             api_key: config.opencode_api_key,
@@ -508,6 +559,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             project_id: config.opencode_go_project_id,
         },
     ))?;
+    #[cfg(feature = "openrouter")]
     builder.install(OpenRouterExtension::new(OpenRouterConfig {
         api_key: config.openrouter_api_key,
         base_url: config.openrouter_base_url,
@@ -515,19 +567,23 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         app_title: config.openrouter_app_title,
         routing: config.openrouter_routing,
     }))?;
+    #[cfg(feature = "fireworks")]
     builder.install(FireworksExtension::new(FireworksConfig {
         api_key: config.fireworks_api_key,
         base_url: config.fireworks_base_url,
     }))?;
+    #[cfg(feature = "roder-cloud")]
     builder.install(RoderCloudExtension::new(RoderCloudConfig {
         api_key: config.roder_cloud_api_key,
         base_url: config.roder_cloud_base_url,
         web_url: config.roder_cloud_web_url,
     }))?;
+    #[cfg(feature = "poolside")]
     builder.install(PoolsideExtension::new(PoolsideConfig {
         api_key: config.poolside_api_key,
         base_url: config.poolside_base_url,
     }))?;
+    #[cfg(feature = "cursor")]
     builder.install(CursorExtension::new(CursorConfig {
         api_key: config.cursor_api_key,
         access_token: config.cursor_access_token,
@@ -535,24 +591,29 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         backend_base_url: config.cursor_backend_base_url,
         workspace: config.workspace.clone(),
     }))?;
+    #[cfg(feature = "xiaomi-mimo")]
     builder.install(XiaomiMimoExtension::new(XiaomiMimoConfig {
         api_key: config.xiaomi_mimo_api_key,
         base_url: config.xiaomi_mimo_base_url,
         token_plan_api_key: config.xiaomi_mimo_token_plan_api_key,
         token_plan_base_url: config.xiaomi_mimo_token_plan_base_url,
     }))?;
+    #[cfg(feature = "kimi-code")]
     builder.install(KimiCodeExtension::new(KimiCodeConfig {
         api_key: config.kimi_code_api_key.clone(),
         base_url: config.kimi_code_base_url.clone(),
     }))?;
+    #[cfg(feature = "synthetic")]
     builder.install(SyntheticExtension::new(SyntheticConfig {
         api_key: config.synthetic_api_key.clone(),
         base_url: config.synthetic_base_url.clone(),
     }))?;
+    #[cfg(feature = "deepseek")]
     builder.install(DeepSeekExtension::new(DeepSeekConfig {
         api_key: config.deepseek_api_key.clone(),
         base_url: config.deepseek_base_url.clone(),
     }))?;
+    #[cfg(feature = "hopper")]
     builder.install(HopperExtension::new(HopperConfig {
         api_key: config.hopper_api_key.clone(),
         base_url: config.hopper_base_url.clone(),
@@ -595,23 +656,39 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(roder_ext_task_ledger::TaskLedgerExtension)?;
     builder.install(roder_ext_verification::VerificationExtension)?;
     builder.install(UnixLocalRunnerExtension)?;
+    #[cfg(feature = "runner-docker")]
     builder.install(DockerRunnerExtension)?;
+    #[cfg(feature = "runner-blaxel")]
     builder.install(BlaxelRunnerExtension)?;
+    #[cfg(feature = "runner-cloudflare")]
     builder.install(CloudflareRunnerExtension)?;
+    #[cfg(feature = "runner-daytona")]
     builder.install(DaytonaRunnerExtension)?;
+    #[cfg(feature = "runner-e2b")]
     builder.install(E2bRunnerExtension)?;
+    #[cfg(feature = "runner-modal")]
     builder.install(ModalRunnerExtension)?;
+    #[cfg(feature = "runner-runloop")]
     builder.install(RunloopRunnerExtension)?;
+    #[cfg(feature = "runner-sprites")]
     builder.install(SpritesRunnerExtension)?;
+    #[cfg(feature = "runner-vercel")]
     builder.install(VercelRunnerExtension)?;
     builder.install(roder_ext_task_process::ProcessTaskExtension)?;
+    #[cfg(feature = "webwright")]
     builder.install(WebwrightExtension)?;
+    #[cfg(feature = "chrome")]
     builder.install(ChromeExtension::new())?;
+    #[cfg(feature = "cua")]
     cua::install(&mut builder, config.cua.as_ref())?;
     // After every inference engine: Jev's automatic fallback drives the
     // session's model through them.
-    let engines = builder.inference_engines.clone();
-    builder.install(JevExtension::new().with_inference_engines(engines))?;
+    #[cfg(feature = "jev")]
+    {
+        let engines = builder.inference_engines.clone();
+        builder.install(JevExtension::new().with_inference_engines(engines))?;
+    }
+    #[cfg(feature = "browser-use")]
     if let Some(browser_use) = config.browser_use.as_ref().filter(|b| b.enabled) {
         builder.install(BrowserUseExtension::new(browser_use_config(
             browser_use,
@@ -619,7 +696,14 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             config.anthropic_api_key.clone(),
         )))?;
     }
-    builder.install(ZerolangExtension::new(config.zerolang.unwrap_or_default()))?;
+    #[cfg(feature = "zerolang")]
+    builder.install(ZerolangExtension::new(
+        config
+            .zerolang
+            .as_ref()
+            .map(zerolang_config)
+            .unwrap_or_default(),
+    ))?;
     if config.notifications.enabled && config.notifications.terminal {
         builder.install(roder_ext_notify_terminal::TerminalNotifyExtension::new(
             config.notifications.enabled_kinds.clone(),
@@ -645,12 +729,18 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
         path_scope: config.tool_path_scope,
         command_shell: config.command_shell,
     })?;
+    #[cfg(feature = "design")]
+    builder.install(DesignToolsExtension {
+        workspace: workspace.clone(),
+        path_scope: config.tool_path_scope,
+    })?;
     context::install_context_planner(&mut builder, &workspace);
 
     if let Some(subagents) = config.subagents {
         subagents::install_subagents(&mut builder, subagents)?;
     }
 
+    #[cfg(feature = "knowledge")]
     let host_data_dir = config.data_dir.is_some();
     let roder_home = match config.data_dir {
         Some(dir) => dir,
@@ -666,6 +756,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
                 .unwrap_or_else(|| roder_home.join("threads"));
             builder.install(JsonlThreadStoreExtension::new(thread_dir))?;
         }
+        #[cfg(feature = "postgres-session")]
         SessionStoreConfig::Postgres(postgres) => {
             postgres.validate().map_err(|err| {
                 anyhow::anyhow!(
@@ -675,6 +766,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             })?;
             builder.install(PostgresSessionExtension::new(postgres))?;
         }
+        #[cfg(feature = "mysql-session")]
         SessionStoreConfig::Mysql(mysql) => {
             mysql.validate().map_err(|err| {
                 anyhow::anyhow!(
@@ -684,6 +776,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             })?;
             builder.install(MysqlSessionExtension::new(mysql))?;
         }
+        #[cfg(feature = "mysql-session")]
         SessionStoreConfig::MysqlOwned { config, owner } => {
             let store = roder_ext_mysql_session::MysqlSessionStore::connect_blocking(&config)?;
             builder.install(MysqlSessionExtension::from_store(
@@ -691,9 +784,15 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             ))?;
         }
     }
+    #[cfg(feature = "memory")]
     match selected_memory_backend().as_deref() {
         _ if !config.memory => {}
+        #[cfg(feature = "honcho")]
         Some("honcho") => builder.install(honcho_memory_extension()?)?,
+        #[cfg(not(feature = "honcho"))]
+        Some("honcho") => {
+            anyhow::bail!("memory backend \"honcho\" is not built into this Roder distribution")
+        }
         None | Some("sqlite") => builder.install(
             MemoryExtension::new(roder_home.join("memory"))
                 .with_embedding_provider(memory_embedding_provider.clone()),
@@ -702,6 +801,7 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             anyhow::bail!("unknown memory backend {other:?}; expected \"sqlite\" or \"honcho\"")
         }
     }
+    #[cfg(feature = "knowledge")]
     if config.knowledge {
         let knowledge = roder_config::load_config()
             .ok()
@@ -727,24 +827,19 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
             }
         }
     }
-    if let Some(key) = openai_embedding_key {
-        builder.install(OpenAiEmbeddingsExtension::with_api_key(key))?;
-    } else {
-        builder.install(OpenAiEmbeddingsExtension::from_env())?;
-    }
-    builder.install(GoogleEmbeddingsExtension::new(google_embeddings_config))?;
-    builder.install(ZeroEntropyEmbeddingsExtension::new(
-        zeroentropy_embeddings_config,
-    ))?;
+    #[cfg(feature = "embeddings")]
+    embeddings.install(&mut builder)?;
 
     // First-party image generation providers. Installed whenever enabled
     // (default) so provider listings can show them; generation fails at call
     // time with an actionable error when no API key is configured. Live
     // network calls only happen when a turn or client explicitly requests
     // image generation from a live provider.
+    #[cfg(feature = "images")]
     if let Some(openai_images) = openai_images_config(config.openai_api_key.clone()) {
         builder.install(OpenAiImagesExtension::with_config(openai_images))?;
     }
+    #[cfg(feature = "images")]
     if let Some(google_images) = google_images_config(config.gemini_api_key.clone()) {
         builder.install(GoogleImagesExtension::with_config(google_images))?;
     }
@@ -840,6 +935,7 @@ fn known_provider_id(id: &str) -> bool {
 
 /// `RODER_MEMORY_BACKEND` overrides `[memories] backend` via the config
 /// loader's env overrides.
+#[cfg(feature = "memory")]
 fn selected_memory_backend() -> Option<String> {
     roder_config::load_config()
         .ok()
@@ -849,6 +945,7 @@ fn selected_memory_backend() -> Option<String> {
         .filter(|backend| !backend.is_empty())
 }
 
+#[cfg(feature = "honcho")]
 /// Env wins over the `[memories.honcho]` table for every connection and
 /// identity field, mirroring `RODER_MEMORY_BACKEND`'s env-overrides-config
 /// precedence. Hosts inject per-process tenancy (workspace/peer/session)
@@ -886,6 +983,7 @@ fn honcho_memory_extension() -> anyhow::Result<HonchoMemoryExtension> {
     }))
 }
 
+#[cfg(all(feature = "memory", feature = "embeddings"))]
 fn selected_memory_embedding_provider_id() -> Option<String> {
     if let Some(provider) = env_nonempty("RODER_MEMORY_EMBEDDING_PROVIDER") {
         return Some(provider);
@@ -896,6 +994,7 @@ fn selected_memory_embedding_provider_id() -> Option<String> {
         .filter(|provider| !provider.trim().is_empty())
 }
 
+#[cfg(feature = "embeddings")]
 fn google_embeddings_config(gemini_api_key: Option<String>) -> GoogleEmbeddingsConfig {
     let config = roder_config::load_config().unwrap_or_default();
     let provider_config = config.embedding_providers.get("google");
@@ -917,6 +1016,7 @@ fn google_embeddings_config(gemini_api_key: Option<String>) -> GoogleEmbeddingsC
     GoogleEmbeddingsConfig { api_key, endpoint }
 }
 
+#[cfg(feature = "images")]
 fn image_provider_config(provider_id: &str) -> Option<roder_config::ImageProviderConfig> {
     roder_config::load_config()
         .unwrap_or_default()
@@ -927,6 +1027,7 @@ fn image_provider_config(provider_id: &str) -> Option<roder_config::ImageProvide
         .cloned()
 }
 
+#[cfg(feature = "images")]
 /// Returns `None` when the provider is explicitly disabled in
 /// `[media.image_generation.providers.openai]`.
 fn openai_images_config(openai_api_key: Option<String>) -> Option<OpenAiImagesConfig> {
@@ -953,6 +1054,7 @@ fn openai_images_config(openai_api_key: Option<String>) -> Option<OpenAiImagesCo
     Some(images_config)
 }
 
+#[cfg(feature = "images")]
 /// Returns `None` when the provider is explicitly disabled in
 /// `[media.image_generation.providers.google]`.
 fn google_images_config(gemini_api_key: Option<String>) -> Option<GoogleImagesConfig> {
@@ -981,6 +1083,7 @@ fn google_images_config(gemini_api_key: Option<String>) -> Option<GoogleImagesCo
     Some(images_config)
 }
 
+#[cfg(feature = "embeddings")]
 fn zeroentropy_embeddings_config() -> ZeroEntropyEmbeddingsConfig {
     let config = roder_config::load_config().unwrap_or_default();
     let provider_config = config.embedding_providers.get("zeroentropy");
@@ -1009,6 +1112,7 @@ fn zeroentropy_embeddings_config() -> ZeroEntropyEmbeddingsConfig {
     }
 }
 
+#[cfg(feature = "embeddings")]
 fn parse_zeroentropy_encoding_format(value: &str) -> Option<ZeroEntropyEncodingFormat> {
     match value.trim().to_ascii_lowercase().as_str() {
         "float" => Some(ZeroEntropyEncodingFormat::Float),
@@ -1017,6 +1121,7 @@ fn parse_zeroentropy_encoding_format(value: &str) -> Option<ZeroEntropyEncodingF
     }
 }
 
+#[cfg(feature = "embeddings")]
 fn parse_zeroentropy_latency(value: &str) -> Option<ZeroEntropyLatency> {
     match value.trim().to_ascii_lowercase().as_str() {
         "fast" => Some(ZeroEntropyLatency::Fast),
@@ -1025,6 +1130,62 @@ fn parse_zeroentropy_latency(value: &str) -> Option<ZeroEntropyLatency> {
     }
 }
 
+#[cfg(feature = "zerolang")]
+fn zerolang_config(config: &roder_config::ZerolangConfig) -> ZerolangConfig {
+    ZerolangConfig {
+        binary: config.binary.clone(),
+        timeout_seconds: config.timeout_seconds,
+        artifact_dir: config.artifact_dir.clone(),
+    }
+}
+
+/// The OpenAI, Google and ZeroEntropy embedding providers, resolved once so
+/// memory recall and the embedding extensions share the same settings.
+#[cfg(feature = "embeddings")]
+struct EmbeddingProviders {
+    openai_key: Option<String>,
+    google: GoogleEmbeddingsConfig,
+    zeroentropy: ZeroEntropyEmbeddingsConfig,
+}
+
+#[cfg(feature = "embeddings")]
+impl EmbeddingProviders {
+    fn from_config(config: &DefaultRegistryConfig) -> Self {
+        Self {
+            openai_key: config
+                .openai_api_key
+                .clone()
+                .or_else(|| env_nonempty("OPENAI_API_KEY")),
+            google: google_embeddings_config(config.gemini_api_key.clone()),
+            zeroentropy: zeroentropy_embeddings_config(),
+        }
+    }
+
+    #[cfg(feature = "memory")]
+    fn for_memory(&self) -> Option<Arc<dyn EmbeddingProvider>> {
+        match selected_memory_embedding_provider_id().as_deref() {
+            Some("google") => Some(Arc::new(GoogleEmbeddingProvider::new(self.google.clone()))),
+            Some("zeroentropy") => Some(Arc::new(ZeroEntropyEmbeddingProvider::new(
+                self.zeroentropy.clone(),
+            ))),
+            Some("openai") | None => self.openai_key.clone().map(|key| {
+                Arc::new(OpenAiEmbeddingProvider::new(Some(key))) as Arc<dyn EmbeddingProvider>
+            }),
+            Some(_) => None,
+        }
+    }
+
+    fn install(self, builder: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        match self.openai_key {
+            Some(key) => builder.install(OpenAiEmbeddingsExtension::with_api_key(key))?,
+            None => builder.install(OpenAiEmbeddingsExtension::from_env())?,
+        }
+        builder.install(GoogleEmbeddingsExtension::new(self.google))?;
+        builder.install(ZeroEntropyEmbeddingsExtension::new(self.zeroentropy))
+    }
+}
+
+#[cfg(any(feature = "embeddings", feature = "images", feature = "honcho"))]
 fn env_nonempty(name: &str) -> Option<String> {
     std::env::var(name)
         .ok()
@@ -1066,6 +1227,42 @@ impl RoderExtension for EchoToolsExtension {
 
     fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
         registry.tool_contributor(roder_tools::echo_tool_contributor());
+        Ok(())
+    }
+}
+
+#[cfg(feature = "design")]
+struct DesignToolsExtension {
+    workspace: PathBuf,
+    path_scope: roder_tools::ToolPathScope,
+}
+
+#[cfg(feature = "design")]
+impl RoderExtension for DesignToolsExtension {
+    fn manifest(&self) -> ExtensionManifest {
+        ExtensionManifest {
+            id: "roder-ext-builtin-design-tools".to_string(),
+            name: "Design Tools".to_string(),
+            version: Version::new(0, 1, 0),
+            api_version: "0.1.0".to_string(),
+            description: Some("Tools that read and edit .design documents".to_string()),
+            provides: vec![ProvidedService::ToolProvider(
+                "builtin-design-tools".to_string(),
+            )],
+            required_capabilities: vec![
+                CapabilityRequest::new("fs.read.workspace"),
+                CapabilityRequest::new("fs.write.workspace"),
+            ],
+        }
+    }
+
+    fn install(&self, registry: &mut ExtensionRegistryBuilder) -> anyhow::Result<()> {
+        registry.tool_contributor(Arc::new(
+            roder_tools::DesignToolsContributor::new_with_path_scope(
+                self.workspace.clone(),
+                self.path_scope,
+            )?,
+        ));
         Ok(())
     }
 }
@@ -1307,11 +1504,6 @@ mod tests {
     };
 
     use super::*;
-    use roder_api::catalog::{
-        PROVIDER_ANTHROPIC, PROVIDER_CURSOR, PROVIDER_GEMINI, PROVIDER_OPENAI, PROVIDER_OPENCODE,
-        PROVIDER_OPENCODE_GO, PROVIDER_POOLSIDE, PROVIDER_SUPERGROK, PROVIDER_XAI,
-        PROVIDER_XIAOMI_MIMO, PROVIDER_XIAOMI_MIMO_TOKEN_PLAN,
-    };
     use roder_api::interactive::{
         HandlerOutcome, HoverCursor, InteractiveEvent, InteractiveRegion, InteractiveRegionHandler,
         RegionKind, RegionRect,
@@ -1374,6 +1566,7 @@ mod tests {
         assert!(registry.inference_engine(PROVIDER_MOCK).is_some());
     }
 
+    #[cfg(feature = "speech")]
     #[test]
     fn default_registry_installs_speech_transcribers_without_keys() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1382,6 +1575,7 @@ mod tests {
         assert!(registry.speech_transcriber("google-speech").is_some());
     }
 
+    #[cfg(feature = "embeddings")]
     #[test]
     fn default_registry_installs_google_embedding_provider_without_keys() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1394,6 +1588,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "embeddings")]
     #[test]
     fn default_registry_installs_zeroentropy_embedding_provider_without_keys() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1406,6 +1601,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "images")]
     #[test]
     fn default_registry_installs_image_generation_providers_without_keys() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1448,6 +1644,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "webwright")]
     #[test]
     fn default_registry_installs_webwright_task_and_tools() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1466,6 +1663,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "runner-sprites")]
     #[test]
     fn default_registry_installs_sprites_runner_without_credentials() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1570,6 +1768,7 @@ mod tests {
         assert!(capabilities.dry_run);
     }
 
+    #[cfg(feature = "browser-use")]
     #[test]
     fn browser_use_provider_is_opt_in() {
         let has_browser_use = |registry: &roder_api::extension::ExtensionRegistry| {
@@ -1599,6 +1798,7 @@ mod tests {
         assert!(has_browser_use(&registry));
     }
 
+    #[cfg(feature = "browser-use")]
     #[test]
     fn browser_use_config_takes_resolved_keys_and_defaults_the_package() {
         let config = browser_use_config(
@@ -1740,9 +1940,11 @@ mod tests {
         })
         .unwrap();
 
-        let ids = context_provider_ids(&registry);
-        assert!(ids.iter().any(|id| id == "memory-context"), "{ids:?}");
-        assert!(data_dir.path().join("memory").exists());
+        if cfg!(feature = "memory") {
+            let ids = context_provider_ids(&registry);
+            assert!(ids.iter().any(|id| id == "memory-context"), "{ids:?}");
+            assert!(data_dir.path().join("memory").exists());
+        }
         assert!(data_dir.path().join("code-index").exists());
     }
 
@@ -1770,6 +1972,7 @@ mod tests {
         assert!(!data_dir.path().join("code-index").exists());
     }
 
+    #[cfg(feature = "zerolang")]
     #[test]
     fn default_registry_installs_zerolang_tools_without_zero_binary() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -1847,6 +2050,14 @@ mod tests {
         assert!(custom_config.tiers.is_empty());
     }
 
+    #[cfg(all(
+        feature = "vertex",
+        feature = "opencode",
+        feature = "fireworks",
+        feature = "poolside",
+        feature = "cursor",
+        feature = "xiaomi-mimo"
+    ))]
     #[test]
     fn default_registry_with_keys_has_gode_provider_ids() {
         let registry = build_default_registry(DefaultRegistryConfig {
@@ -2021,6 +2232,7 @@ mod tests {
         assert_eq!(models[0].context_window, Some(16_384));
     }
 
+    #[cfg(feature = "xiaomi-mimo")]
     #[test]
     fn default_registry_installs_xiaomi_speech_synthesis_surfaces_without_keys() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -2039,6 +2251,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "xai")]
     #[test]
     fn default_registry_exposes_supergrok_without_xai_api_key() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -2047,6 +2260,7 @@ mod tests {
         assert!(registry.inference_engine(PROVIDER_XAI).is_none());
     }
 
+    #[cfg(feature = "kimi-code")]
     #[test]
     fn default_registry_exposes_kimi_code_without_api_key() {
         use roder_api::catalog::PROVIDER_KIMI_CODE;
@@ -2056,6 +2270,7 @@ mod tests {
         assert!(registry.inference_engine(PROVIDER_KIMI_CODE).is_some());
     }
 
+    #[cfg(feature = "fireworks")]
     #[test]
     fn default_registry_exposes_fireworks_without_api_key() {
         let registry = build_default_registry(DefaultRegistryConfig::default()).unwrap();
@@ -2070,6 +2285,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "synthetic")]
     #[test]
     fn default_registry_installs_synthetic_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_SYNTHETIC;
@@ -2090,6 +2306,7 @@ mod tests {
         assert_eq!(metadata.auth_configured, Some(false));
     }
 
+    #[cfg(feature = "synthetic")]
     #[test]
     fn default_registry_synthetic_provider_reports_configured_with_key() {
         use roder_api::catalog::PROVIDER_SYNTHETIC;
@@ -2103,6 +2320,7 @@ mod tests {
         assert_eq!(engine.metadata().auth_configured, Some(true));
     }
 
+    #[cfg(feature = "deepseek")]
     #[test]
     fn default_registry_installs_deepseek_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_DEEPSEEK;
@@ -2124,6 +2342,7 @@ mod tests {
         assert_eq!(metadata.auth_label.as_deref(), Some("DEEPSEEK_API_KEY"));
     }
 
+    #[cfg(feature = "deepseek")]
     #[test]
     fn default_registry_deepseek_provider_reports_configured_with_key() {
         use roder_api::catalog::PROVIDER_DEEPSEEK;
@@ -2137,6 +2356,7 @@ mod tests {
         assert_eq!(engine.metadata().auth_configured, Some(true));
     }
 
+    #[cfg(feature = "hopper")]
     #[test]
     fn default_registry_installs_hopper_provider_without_credentials() {
         use roder_api::catalog::PROVIDER_HOPPER;
@@ -2158,6 +2378,7 @@ mod tests {
         assert_eq!(metadata.auth_label.as_deref(), Some("HOPPER_API_KEY"));
     }
 
+    #[cfg(feature = "hopper")]
     #[test]
     fn default_registry_hopper_provider_reports_configured_with_key() {
         use roder_api::catalog::PROVIDER_HOPPER;
@@ -2171,6 +2392,7 @@ mod tests {
         assert_eq!(engine.metadata().auth_configured, Some(true));
     }
 
+    #[cfg(feature = "vertex")]
     #[test]
     fn declared_providers_register_without_keys_and_report_unauthenticated() {
         let registry = build_default_registry(DefaultRegistryConfig {

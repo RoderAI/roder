@@ -9,6 +9,8 @@ use roder_ext_openai_responses::OpenAiResponsesEngine;
 use serde_json::{Value, json};
 use tokio::io::AsyncWriteExt;
 
+// Shared with the chrome example, which uses every helper.
+#[allow(dead_code)]
 #[path = "../../roder-ext-chrome/examples/native_computer/support.rs"]
 mod support;
 

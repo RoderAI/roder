@@ -1,5 +1,7 @@
 //! Noninteractive entry points must not install software or start Google login.
 
+#![cfg(feature = "antigravity")]
+
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

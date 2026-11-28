@@ -5,7 +5,7 @@ use std::sync::Arc;
 use roder_api::events::{ThreadId, TurnId};
 use roder_api::tools::ToolCall;
 use roder_api::version_control::{
-    RegistryVcsProviderResolver, VcsBase, VcsChangedFile, VcsChangedFileStatus, VcsError,
+    RegistryVcsProviderResolver, VcsBase, VcsChangedFile, VcsChangedFileStatus,
     VcsListChangesRequest, VcsProvider, VcsProviderResolution, VcsProviderResolver,
     VcsResolveRequest,
 };
@@ -75,9 +75,7 @@ impl WorkspaceChangeBaseline {
         turn_id: &TurnId,
         call: &ToolCall,
     ) -> Option<WorkspaceChangeObservation> {
-        let after = current_files(&self.provider, &self.root, self.base)
-            .await
-            .ok()?;
+        let after = current_files(&self.provider, &self.root, self.base).await?;
         let mut files = after
             .into_iter()
             .filter(|(path, fingerprint)| self.files.get(path) != Some(fingerprint))
@@ -110,7 +108,7 @@ async fn current_files(
     provider: &Arc<dyn VcsProvider>,
     root: &Path,
     base: Option<VcsBase>,
-) -> Result<BTreeMap<String, FileFingerprint>, VcsError> {
+) -> Option<BTreeMap<String, FileFingerprint>> {
     let files = provider
         .list_changes_against_base(
             VcsListChangesRequest {
@@ -118,8 +116,9 @@ async fn current_files(
             },
             base,
         )
-        .await?;
-    Ok(fingerprints(files))
+        .await
+        .ok()?;
+    Some(fingerprints(files))
 }
 
 fn fingerprints(files: Vec<VcsChangedFile>) -> BTreeMap<String, FileFingerprint> {
@@ -170,6 +169,7 @@ mod tests {
     use roder_api::workspace_changes::{WorkspaceChangeConfidence, WorkspaceChangeStatus};
 
     use super::*;
+    use roder_api::version_control::VcsError;
 
     #[tokio::test]
     async fn shell_reconciliation_reports_provider_neutral_changes_after_baseline() {

@@ -114,8 +114,8 @@ pub async fn runtime_version(path: &Path) -> anyhow::Result<String> {
         .kill_on_drop(true);
     #[cfg(unix)]
     command.process_group(0);
-    let child = command
-        .spawn()
+    let child = roder_api::spawn::spawn_retrying_busy(&mut command)
+        .await
         .context("Cannot start Antigravity CLI version check")?;
     #[cfg(unix)]
     let group = child.id();
