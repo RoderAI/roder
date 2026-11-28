@@ -81,7 +81,7 @@ uuid = "1.29.0"
 wasm-bindgen = "0.2.129"
 which = "8.0.6"
 
-roder-api = { path = "crates/roder-api", version = "0.3.6" }
+roder-api = { path = "crates/roder-api", version = "0.3.7" }
 roder-api-transcript = { path = "crates/roder-api-transcript", version = "0.1.0" }
 roder-automations = { path = "crates/roder-automations", version = "0.3.0" }
 roder-app-server = { path = "crates/roder-app-server", version = "0.7.7" }
@@ -89,7 +89,7 @@ roder-codex-auth = { path = "crates/roder-codex-auth", version = "0.2.0" }
 roder-commands = { path = "crates/roder-commands", version = "0.3.0" }
 roder-config = { path = "crates/roder-config", version = "0.4.1" }
 roder-context = { path = "crates/roder-context", version = "0.3.0" }
-roder-core = { path = "crates/roder-core", version = "0.5.2" }
+roder-core = { path = "crates/roder-core", version = "0.5.3" }
 roder-dist-hosted = { path = "crates/roder-dist-hosted", version = "0.4.2" }
 roder-code-index = { path = "crates/roder-code-index", version = "0.3.1" }
 roder-dynamic-workflows = { path = "crates/roder-dynamic-workflows", version = "0.3.0" }
@@ -100,7 +100,7 @@ roder-ext-anthropic = { path = "crates/roder-ext-anthropic", version = "0.3.2" }
 roder-ext-cua = { path = "crates/roder-ext-cua", version = "0.2.1" }
 roder-ext-chrome = { path = "crates/roder-ext-chrome", version = "0.3.5" }
 roder-ext-jev = { path = "crates/roder-ext-jev", version = "0.6.3" }
-roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.4" }
+roder-ext-claude-code = { path = "crates/roder-ext-claude-code", version = "0.4.5" }
 roder-ext-cursor = { path = "crates/roder-ext-cursor", version = "0.3.1" }
 roder-ext-deepseek = { path = "crates/roder-ext-deepseek", version = "0.3.2" }
 roder-ext-hopper = { path = "crates/roder-ext-hopper", version = "0.1.2" }
