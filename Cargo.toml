@@ -165,7 +165,7 @@ roder-ext-web-search = { path = "crates/roder-ext-web-search", version = "0.3.1"
 roder-ext-xai = { path = "crates/roder-ext-xai", version = "0.3.0" }
 roder-ext-xiaomi-mimo = { path = "crates/roder-ext-xiaomi-mimo", version = "0.3.2" }
 roder-ext-zerolang = { path = "crates/roder-ext-zerolang", version = "0.3.1" }
-roder-extension-host = { path = "crates/roder-extension-host", version = "0.7.6", default-features = false }
+roder-extension-host = { path = "crates/roder-extension-host", version = "0.7.7", default-features = false }
 roder-evals = { path = "crates/roder-evals", version = "0.4.3" }
 roder-protocol = { path = "crates/roder-protocol", version = "0.5.1" }
 roder-sandbox = { path = "crates/roder-sandbox", version = "0.3.0" }
