@@ -96,7 +96,7 @@ tokio.workspace = true
 # Build-time distributions. `base` is what the released `roder` binary ships;
 # everything else is opt-in. `full` turns every extension on.
 default = ["base"]
-base = ["anthropic", "claude-code", "gemini", "xai", "openrouter", "roder-cloud", "runner-docker"]
+base = ["anthropic", "claude-code", "gemini", "xai", "openrouter", "roder-cloud", "runner-docker", "cua"]
 hosted-runners = ["runner-blaxel", "runner-cloudflare", "runner-daytona", "runner-e2b", "runner-modal", "runner-runloop", "runner-sprites", "runner-vercel"]
 full = ["vertex", "opencode", "fireworks", "poolside", "cursor", "xiaomi-mimo", "kimi-code", "synthetic", "deepseek", "hopper", "webwright", "chrome", "cua", "jev", "browser-use", "zerolang", "memory", "honcho", "knowledge", "design", "embeddings", "images", "speech", "firecrawl-search", "parallel-search", "perplexity-search", "synthetic-search", "mysql-session", "postgres-session", "base", "hosted-runners"]
 anthropic = ["dep:roder-ext-anthropic"]

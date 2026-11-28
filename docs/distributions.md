@@ -8,11 +8,11 @@ The configurator binary is `roder-configure`.
 
 What a Roder binary contains is decided at build time by Cargo features on `roder` (the CLI crate) and `roder-extension-host`. A feature that is off leaves its extension out of the build, so its tools, providers, and commands never appear.
 
-- `base` (the default) is what the released `roder` binary, npm package, and Homebrew formula ship: Anthropic, Claude Code, Gemini, xAI, OpenRouter, and roder.cloud, plus the Docker runner. Every build also includes OpenAI Responses and Codex, custom OpenAI-compatible providers, git, plan mode, the task ledger, verification, subagents, process tasks, process-hosted extensions, the local runner, MCP, the inference router, terminal and desktop notifications, GitHub review, fork rift, JSONL sessions, and web search through Tavily.
+- `base` (the default) is what the released `roder` binary, npm package, and Homebrew formula ship: Anthropic, Claude Code, Gemini, xAI, OpenRouter, and roder.cloud, the Docker runner, and the cua desktop tools (still off until `[cua] enabled = true`). Every build also includes OpenAI Responses and Codex, custom OpenAI-compatible providers, git, plan mode, the task ledger, verification, subagents, process tasks, process-hosted extensions, the local runner, MCP, the inference router, terminal and desktop notifications, GitHub review, fork rift, JSONL sessions, and web search through Tavily.
 - `full` turns on every extension.
 - Each opt-in extension has its own feature:
   - Providers: `vertex`, `opencode`, `fireworks`, `poolside`, `cursor`, `xiaomi-mimo`, `kimi-code`, `synthetic`, `deepseek`, `hopper`, and (CLI only) `antigravity`.
-  - Tools: `zerolang`, `design`, `webwright`, `jev`, `chrome`, `browser-use`, `cua`, `knowledge`, `memory`, `honcho`, `embeddings`, `images`, `speech`.
+  - Tools: `zerolang`, `design`, `webwright`, `jev`, `chrome`, `browser-use`, `knowledge`, `memory`, `honcho`, `embeddings`, `images`, `speech`.
   - Search backends: `firecrawl-search`, `parallel-search`, `perplexity-search`, `synthetic-search`.
   - Runners: `runner-blaxel`, `runner-cloudflare`, `runner-daytona`, `runner-e2b`, `runner-modal`, `runner-runloop`, `runner-sprites`, `runner-vercel`, or all of them with `hosted-runners`.
   - Session stores: `mysql-session`, `postgres-session`.

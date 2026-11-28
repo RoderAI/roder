@@ -681,6 +681,10 @@ pub fn build_default_registry(config: DefaultRegistryConfig) -> anyhow::Result<E
     builder.install(ChromeExtension::new())?;
     #[cfg(feature = "cua")]
     cua::install(&mut builder, config.cua.as_ref())?;
+    #[cfg(not(feature = "cua"))]
+    if config.cua.as_ref().is_some_and(|cua| cua.enabled) {
+        anyhow::bail!("cua desktop tools are not built into this Roder distribution");
+    }
     // After every inference engine: Jev's automatic fallback drives the
     // session's model through them.
     #[cfg(feature = "jev")]
