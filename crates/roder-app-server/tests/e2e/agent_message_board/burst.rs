@@ -105,7 +105,7 @@ pub(super) async fn exercise_burst(post_count: usize) -> BurstTimings {
         false
     );
     reader.finish("Subscription closed.");
-    wait_for_notification(&mut notifications, "team/member/completed", None).await;
+    wait_for_board_notification(&mut notifications, "team/member/completed", None).await;
     let writer = eval.sample_after_mail(writer, "Subscription closed.").await;
 
     writer.board(
@@ -133,7 +133,7 @@ pub(super) async fn exercise_burst(post_count: usize) -> BurstTimings {
     assert_eq!(pending.len(), 1);
     assert!(pending[0].text.starts_with(&idle_notice));
     writer.finish("Board burst verified.");
-    wait_for_notification(&mut notifications, "turn/completed", Some(&root)).await;
+    wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
     assert!(matches!(
         eval.runtime
             .drain_active_turns(Duration::from_secs(5))
@@ -158,7 +158,7 @@ pub(super) async fn exercise_burst(post_count: usize) -> BurstTimings {
     let reader = eval.sample(reader_id).await;
     assert_eq!(reader.output("read-idle")["text"], IDLE_NOTICE_BODY);
     reader.finish("Idle board post recovered.");
-    wait_for_notification(&mut notifications, "team/member/completed", None).await;
+    wait_for_board_notification(&mut notifications, "team/member/completed", None).await;
     let saved = eval.team(&team.id).await;
     assert_eq!(
         saved

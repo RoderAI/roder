@@ -314,3 +314,30 @@ impl BoardEvaluation {
         self.client.subscribe_notifications()
     }
 }
+
+pub(super) async fn wait_for_board_notification(
+    notifications: &mut tokio::sync::broadcast::Receiver<roder_protocol::JsonRpcNotification>,
+    method: &str,
+    thread_id: Option<&str>,
+) -> roder_protocol::JsonRpcNotification {
+    let mut last_seen = None;
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let notification = notifications.recv().await.unwrap_or_else(|err| {
+                panic!(
+                    "notification stream failed while waiting for {method} on {thread_id:?}: {err}"
+                )
+            });
+            let event_thread = notification.params.get("threadId").and_then(Value::as_str);
+            if notification.method == method && thread_id.is_none_or(|id| event_thread == Some(id))
+            {
+                return notification;
+            }
+            last_seen = Some(notification.method);
+        }
+    })
+    .await
+    .unwrap_or_else(|_| {
+        panic!("timed out waiting for {method} on {thread_id:?}, last notification {last_seen:?}")
+    })
+}

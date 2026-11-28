@@ -32,12 +32,14 @@ async fn agent_message_board_measure_scenarios() {
     let mut idle = Vec::new();
     let mut post_bytes = 0;
     let mut notice_bytes = 0;
-    for _ in 0..REPEATS {
+    for trial in 1..=REPEATS {
+        eprintln!("Agent board measurement {trial}/{REPEATS}: handoff");
         let timing = exercise_handoff(false).await;
         claim.push(timing.claim_race);
         direct.push(timing.direct_delivery);
         handoff.push(timing.handoff_delivery);
         interrupt.push(timing.interrupt_recovery);
+        eprintln!("Agent board measurement {trial}/{REPEATS}: burst");
         let timing = exercise_burst(POSTS).await;
         post.extend(timing.post_round_trips);
         burst.push(timing.burst_delivery);

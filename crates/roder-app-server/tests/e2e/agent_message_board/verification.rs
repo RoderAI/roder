@@ -116,6 +116,7 @@ async fn agent_message_board_evidence_flows_through_ledger_and_verification_gate
     assert!(!review.is_error);
     assert!(review.result.starts_with("Verification completed"));
     sample.finish("Verified and complete.");
-    let terminal = wait_for_notification(&mut notifications, "turn/completed", Some(&root)).await;
+    let terminal =
+        wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
     assert_eq!(terminal.params["turn"]["status"], "completed");
 }

@@ -8,7 +8,7 @@ use super::*;
 
 #[path = "agent_message_board/harness.rs"]
 mod harness;
-use harness::BoardEvaluation;
+use harness::{BoardEvaluation, wait_for_board_notification};
 
 #[path = "agent_message_board/burst.rs"]
 mod burst;
@@ -194,7 +194,7 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
 
     // Child terminal replies are queued while the root is still sampling.
     for _ in 0..2 {
-        wait_for_notification(&mut notifications, "team/member/completed", None).await;
+        wait_for_board_notification(&mut notifications, "team/member/completed", None).await;
     }
     let team = eval.team(&team_id).await;
     assert_eq!(
@@ -221,7 +221,7 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
         eval.turn(&root, "Summarize the verified work.").await;
     }
     let interrupted =
-        wait_for_notification(&mut notifications, "turn/completed", Some(&root)).await;
+        wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
     assert_eq!(interrupted.params["turn"]["status"], "interrupted");
     if restart_before_resume {
         assert!(matches!(
@@ -241,7 +241,7 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
     assert_eq!(sample.mail_count("Synthetic verifying child finished."), 1);
     assert_eq!(sample.mail_count("Synthetic peer-only message."), 0);
     sample.finish("Verification complete.");
-    wait_for_notification(&mut notifications, "turn/completed", Some(&root)).await;
+    wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
     let drained = eval
         .runtime
         .drain_active_turns(Duration::from_secs(5))
@@ -291,7 +291,7 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
     let sample = eval.sample(&root).await;
     assert!(!sample.result("idle-peer").is_error);
     sample.finish("Stored board verified.");
-    wait_for_notification(&mut notifications, "turn/completed", Some(&root)).await;
+    wait_for_board_notification(&mut notifications, "turn/completed", Some(&root)).await;
     let team = eval.team(&team_id).await;
     assert!(team.messages.iter().any(|message| {
         message.to_member_id == peer.id
@@ -303,7 +303,7 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
     let sample = eval.sample(&peer.thread_id).await;
     assert_eq!(sample.mail_count("Synthetic idle peer mail."), 1);
     sample.finish("Idle mail received.");
-    wait_for_notification(&mut notifications, "team/member/completed", None).await;
+    wait_for_board_notification(&mut notifications, "team/member/completed", None).await;
 
     let outsider = eval.new_thread(&workspace).await;
     eval.turn(&outsider, "Inspect my own board.").await;
@@ -320,7 +320,7 @@ pub(super) async fn exercise_handoff(restart_before_resume: bool) -> HandoffTimi
     let sample = eval.sample(&outsider).await;
     assert!(sample.result("outside-notify").is_error);
     sample.finish("No access to the other team.");
-    wait_for_notification(&mut notifications, "turn/completed", Some(&outsider)).await;
+    wait_for_board_notification(&mut notifications, "turn/completed", Some(&outsider)).await;
     HandoffTimings {
         claim_race,
         direct_delivery,
