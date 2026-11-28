@@ -138,17 +138,11 @@ impl TeamManager {
             .ok_or_else(|| anyhow::anyhow!("unknown team {team_id:?}"))?;
         ensure_active_member(&team, actor)?;
         let mut recipients = BTreeSet::new();
-        if let Some(result) = action.read(&team.board, actor) {
-            return Ok(BoardResult {
-                value: result?,
-                recipients,
-            });
-        }
         let value = match action {
             BoardAction::ListChannels
             | BoardAction::ListPosts { .. }
             | BoardAction::ReadPost { .. } => {
-                unreachable!("read-only board actions return before mutation")
+                anyhow::bail!("read-only board actions do not require a team mutation")
             }
             BoardAction::CreateChannel {
                 channel,

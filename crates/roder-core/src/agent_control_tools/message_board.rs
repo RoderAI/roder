@@ -76,6 +76,12 @@ impl Runtime {
         caller: &ThreadId,
         mut action: BoardAction,
     ) -> anyhow::Result<Value> {
+        if action.is_read_only() {
+            self.ensure_execution_authority()?;
+            // Scan an owned team snapshot without holding the team's mutation lock.
+            let teams = self.caller_agents(caller).await;
+            return action.read(teams.first(), caller);
+        }
         // Serialize lazy root-team creation with spawn_agent, so the first post and children
         // always land in the same team.
         let _guard = self.agent_team_spawn_lock.lock().await;
@@ -83,9 +89,6 @@ impl Runtime {
         let team = match self.caller_agents(caller).await.into_iter().next() {
             Some(team) => team,
             None => {
-                if let Some(result) = action.read_empty_board() {
-                    return result;
-                }
                 self.start_team(TeamStartRequest {
                     lead_thread_id: Some(caller.clone()),
                     display_mode: AgentTeamDisplayMode::InProcess,

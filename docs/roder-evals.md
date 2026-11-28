@@ -25,7 +25,7 @@ mise exec -- cargo test --locked -p roder-app-server --features e2e-tests --test
 
 | Scenario | Assertions |
 | --- | --- |
-| First board reads | An empty board exposes its default channel without creating a team or writing to disk. |
+| First board reads | An empty board exposes its default channel without creating a team or writing board state. |
 | Peer coordination | One of two agents wins the claim. The loser cannot release it. Sibling mail and handoff reach their intended recipient once. The parent receives both child replies once after interruption. |
 | Cold recovery | The app-server restarts after the parent is interrupted and before its next turn. Both unconsumed replies arrive, and the stored board retains the claim and evidence. |
 | Delivery burst | Sixteen posts reach a subscriber once and in order. Explicit targeting and subscription deduplicate, the author receives no echo, and unsubscribe suppresses subsequent channel notices. An explicit notice queued to the idle agent survives restart. |

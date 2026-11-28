@@ -1,29 +1,42 @@
 use super::*;
 
 impl BoardAction {
-    pub(crate) fn read_empty_board(&self) -> Option<anyhow::Result<Value>> {
-        self.read(&TeamMessageBoard::default(), "")
+    pub(crate) fn is_read_only(&self) -> bool {
+        matches!(
+            self,
+            Self::ListChannels | Self::ListPosts { .. } | Self::ReadPost { .. }
+        )
     }
 
-    pub(super) fn read(
-        &self,
-        board: &TeamMessageBoard,
-        actor: &str,
-    ) -> Option<anyhow::Result<Value>> {
+    pub(crate) fn read(&self, team: Option<&TeamState>, caller: &str) -> anyhow::Result<Value> {
+        let empty = TeamMessageBoard::default();
+        let (board, actor) = match team {
+            None => (&empty, ""),
+            Some(team) => {
+                let actor = team
+                    .members
+                    .iter()
+                    .find(|member| {
+                        member.thread_id == caller && member.status != TeamMemberStatus::Closed
+                    })
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("caller is not an active member of this team")
+                    })?;
+                (&team.board, actor.id.as_str())
+            }
+        };
         match self {
-            Self::ListChannels => Some(Ok(board.0.channels_for(actor))),
+            Self::ListChannels => Ok(board.0.channels_for(actor)),
             Self::ListPosts {
                 channel,
                 query,
                 before,
                 limit,
-            } => Some(
-                board
-                    .0
-                    .list_posts(channel.as_deref(), query.as_deref(), *before, *limit),
-            ),
-            Self::ReadPost { post_id } => Some(board.0.post(*post_id).map(|post| json!(post))),
-            _ => None,
+            } => board
+                .0
+                .list_posts(channel.as_deref(), query.as_deref(), *before, *limit),
+            Self::ReadPost { post_id } => board.0.post(*post_id).map(|post| json!(post)),
+            _ => anyhow::bail!("expected a read-only board action"),
         }
     }
 }
@@ -55,12 +68,24 @@ impl BoardState {
                 .ok_or_else(|| anyhow::anyhow!("unknown board cursor {id}"))?,
             None => self.posts.len(),
         };
-        let query = query.map(|value| value.to_lowercase());
+        let query = query
+            .map(|value| {
+                anyhow::ensure!(
+                    value.len() <= MAX_TEXT_BYTES,
+                    "board query exceeds {MAX_TEXT_BYTES} bytes"
+                );
+                Ok::<_, anyhow::Error>(
+                    regex::RegexBuilder::new(&regex::escape(value))
+                        .case_insensitive(true)
+                        .build()?,
+                )
+            })
+            .transpose()?;
         let mut matches = self.posts[..end].iter().rev().filter(|post| {
             channel.is_none_or(|channel| post.channel == channel)
                 && query
                     .as_ref()
-                    .is_none_or(|query| post.text.to_lowercase().contains(query))
+                    .is_none_or(|query| query.is_match(&post.text))
         });
         let mut posts = Vec::new();
         let mut last = None;
